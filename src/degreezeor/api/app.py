@@ -7,8 +7,11 @@ audit the path from score back to official source.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from degreezeor import __version__
 from degreezeor.api import presentation
@@ -81,3 +84,9 @@ def methodology() -> dict:
         "components_value_laden_off_by_default": ["cost", "distribution"],
         "confidence_publish_threshold": float(settings.confidence_publish_threshold),
     }
+
+
+# --- Static explainability UI (zero-build SPA; a pure client of /api) ---
+_WEB_DIR = Path(__file__).resolve().parents[3] / "web"
+if _WEB_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")

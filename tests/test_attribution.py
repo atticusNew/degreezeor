@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from degreezeor.core.interfaces import AttributionContext
+from degreezeor.core.interfaces import AttributionContext, AttributionContribution
+from degreezeor.core.numeric import D
 from degreezeor.scoring.attribution import (
     MAX_HUMAN_TOTAL,
     build_attribution,
     normalize,
     pivotality_from_margin,
 )
-from degreezeor.core.interfaces import AttributionContribution
-from degreezeor.core.numeric import D
 
 
 def test_pivotality_decreases_with_margin() -> None:

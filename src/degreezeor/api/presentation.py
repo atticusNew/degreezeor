@@ -7,6 +7,7 @@ generated mechanically from those quantities — no editorializing, no labels.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy import select
@@ -137,11 +138,24 @@ def build_scorecard(session: Session, eu_id: int) -> dict[str, Any] | None:
     if objective is not None:
         relevant_urls.add(objective.source_url)
     relevant_series = {metric.native_series_id} if metric is not None else set()
-    landings = [
-        land
-        for land in session.execute(select(RawLanding).order_by(RawLanding.id.asc())).scalars().all()
-        if land.source_url in relevant_urls or land.native_identifier in relevant_series
-    ]
+    enacted_year = law.enacted_date.year if law and law.enacted_date else None
+
+    def _series_window_covers(url: str) -> bool:
+        # Keep only the outcome-series snapshot whose year window brackets the
+        # evaluation period, so one EU's trail never shows another EU's window.
+        if enacted_year is None:
+            return True
+        m = re.search(r"startyear=(\d{4}).*endyear=(\d{4})", url)
+        if not m:
+            return True
+        return int(m.group(1)) <= enacted_year <= int(m.group(2))
+
+    landings = []
+    for land in session.execute(select(RawLanding).order_by(RawLanding.id.asc())).scalars().all():
+        if land.source_url in relevant_urls or (
+            land.native_identifier in relevant_series and _series_window_covers(land.source_url)
+        ):
+            landings.append(land)
 
     return {
         "evaluation_unit": {

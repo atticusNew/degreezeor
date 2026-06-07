@@ -249,11 +249,69 @@ async function renderDetail(id) {
           el("td", { class: "mono" }, (s.retrieved_at || "").slice(0, 19))))))));
 }
 
+async function renderOfficials() {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.appendChild(el("p", { class: "muted" },
+    "Official-level roll-up: the attribution-weighted mean composite over each official's " +
+    "SCORED actions — always shown with coverage. \u201CInsufficient evidence\u201D means none of " +
+    "their actions cleared the confidence gate (never a low score)."));
+  const officials = await getJSON("/api/officials");
+  for (const o of officials) {
+    const scoredText = o.composite !== null
+      ? `composite ${fmt(o.composite, 1)} · confidence ${(o.confidence * 100).toFixed(0)}%`
+      : "insufficient evidence";
+    app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
+      el("div", {}, el("div", { class: "title" }, o.name || `Official #${o.id}`),
+        el("div", { class: "muted mono" }, `${o.scored_actions}/${o.total_actions} actions scored · coverage ${(o.coverage * 100).toFixed(0)}%`)),
+      el("div", { style: "text-align:right" },
+        o.composite !== null ? el("span", { class: "badge scored" }, scoredText)
+          : el("span", { class: "badge insufficient_evidence" }, scoredText))));
+  }
+}
+
+async function renderOfficialDetail(id) {
+  const app = $("#app");
+  app.innerHTML = "Loading…";
+  const card = await getJSON(`/api/officials/${id}`);
+  app.innerHTML = "";
+  app.appendChild(el("a", { class: "back", href: "#/officials" }, "← all officials"));
+  app.appendChild(el("h2", { style: "margin:6px 0" }, card.official.name));
+  if (card.official.bioguide_id) app.appendChild(el("div", { class: "muted mono" }, `Bioguide ${card.official.bioguide_id}`));
+
+  const r = card.rollup;
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "Roll-up (attribution-weighted, with coverage)"),
+    el("div", { class: "kpi" },
+      el("div", { class: "item" }, el("div", { class: "n" }, r.composite !== null ? fmt(r.composite, 1) : "—"), el("div", { class: "l" }, "composite")),
+      el("div", { class: "item" }, el("div", { class: "n" }, r.confidence !== null ? (r.confidence * 100).toFixed(0) + "%" : "—"), el("div", { class: "l" }, "confidence")),
+      el("div", { class: "item" }, el("div", { class: "n" }, `${r.scored_actions}/${r.total_actions}`), el("div", { class: "l" }, "scored / total")),
+      el("div", { class: "item" }, el("div", { class: "n" }, (r.coverage * 100).toFixed(0) + "%"), el("div", { class: "l" }, "coverage"))),
+    r.composite === null ? el("div", { class: "gate-banner gated", style: "margin-top:10px" },
+      "INSUFFICIENT EVIDENCE — none of this official's attributable actions cleared the confidence gate. This is not a low score.") : null,
+    el("p", { class: "muted", style: "font-size:12px" }, r.note)));
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "Attributable actions"),
+    el("table", {},
+      el("thead", {}, el("tr", {}, el("th", {}, "action"), el("th", {}, "role"), el("th", { class: "right" }, "attribution"), el("th", {}, "status"), el("th", { class: "right" }, "composite"))),
+      el("tbody", {}, ...card.actions.map((a) =>
+        el("tr", {},
+          el("td", {}, el("a", { href: `#/eu/${a.eu_id}` }, a.action_title || `EU ${a.eu_id}`)),
+          el("td", {}, a.role),
+          el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
+          el("td", {}, statusBadge(a.status || "pending")),
+          el("td", { class: "right mono" }, a.composite !== null ? fmt(a.composite, 1) : "—")))))));
+}
+
 async function route() {
   await renderAuditStatus();
-  const m = location.hash.match(/#\/eu\/(\d+)/);
+  const eu = location.hash.match(/#\/eu\/(\d+)/);
+  const off = location.hash.match(/#\/official\/(\d+)/);
   try {
-    if (m) await renderDetail(m[1]);
+    if (eu) await renderDetail(eu[1]);
+    else if (off) await renderOfficialDetail(off[1]);
+    else if (location.hash.startsWith("#/officials")) await renderOfficials();
     else await renderList();
   } catch (e) {
     $("#app").innerHTML = `<div class="card">Error: ${e.message}. Is the API running?</div>`;

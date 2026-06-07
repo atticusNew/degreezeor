@@ -118,6 +118,21 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         lag_window_months=48,
         signer_name="Sam Brownback",
     ),
+    "NC-2013-TAX": StatePolicySpec(
+        key="NC-2013-TAX",
+        title="North Carolina 2013 tax reform",
+        state_fips="37",
+        state_name="North Carolina",
+        # Regional comparison pool (Southeast/border states).
+        donor_fips=["45", "51", "13", "47", "21", "29", "01"],  # SC VA GA TN KY MO AL
+        source_url="https://www.ncleg.gov/Sessions/2013/Bills/House/PDF/H998v7.pdf",
+        objective_text=(
+            "Lower and simplify income tax rates to grow the North Carolina economy and "
+            "create jobs and employment."
+        ),
+        enacted_year=2013, enacted_month=7, lag_window_months=48,
+        signer_name="Pat McCrory",
+    ),
 }
 
 
@@ -1239,6 +1254,21 @@ def ingest_budget_execution(
             results.append(score_budget_execution(session, code, name, fiscal_year, realized_kind))
         except Exception as exc:  # noqa: BLE001
             log.warning("budget execution %s FY%s failed: %s", name, fiscal_year, exc)
+    return results
+
+
+def ingest_state_policies(session: Session, keys: list[str] | None = None) -> list[ScoreOutcome]:
+    """Tier-4 batch: score curated state policies via synthetic control. The pre-fit gate
+    decides which are scoreable (poor donor fit -> honest non-scoreable)."""
+    results: list[ScoreOutcome] = []
+    for key in (keys or list(STATE_POLICIES)):
+        spec = STATE_POLICIES.get(key)
+        if spec is None:
+            continue
+        try:
+            results.append(score_state_policy(session, spec))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("state policy %s failed: %s", key, exc)
     return results
 
 

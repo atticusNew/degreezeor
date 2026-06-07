@@ -42,6 +42,16 @@ def cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_state_policies(args: argparse.Namespace) -> int:
+    from collections import Counter
+
+    from degreezeor.pipeline import ingest_state_policies
+    with session_scope() as s:
+        rs = ingest_state_policies(s)
+    print("state policies:", dict(Counter(r.status for r in rs)), "total", len(rs))
+    return 0
+
+
 def cmd_score_state(args: argparse.Namespace) -> int:
     spec = STATE_POLICIES.get(args.key)
     if spec is None:
@@ -204,6 +214,9 @@ def main(argv: list[str] | None = None) -> int:
     ss = sub.add_parser("score-state")
     ss.add_argument("key", help=f"state policy key (one of: {', '.join(STATE_POLICIES)})")
     ss.set_defaults(func=cmd_score_state)
+
+    sps = sub.add_parser("ingest-state-policies", help="score all curated state policies (synthetic control)")
+    sps.set_defaults(func=lambda a: cmd_ingest_state_policies(a))
 
     se = sub.add_parser("score-eo")
     se.add_argument("document_number", nargs="?", help="Federal Register document number, e.g. 2021-09263")

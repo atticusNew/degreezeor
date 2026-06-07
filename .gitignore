@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Env / secrets
+.env
+*.local
+
+# Data landing (immutable raw snapshots are regenerated; keep out of git by default)
+data/landing/
+*.duckdb
+
+# Node / web
+web/node_modules/
+web/.next/
+web/out/
+
+# OS
+.DS_Store

@@ -95,9 +95,22 @@ function valueWeightPanel(card) {
   const present = FACTUAL.filter((n) => n in comps);
   const weights = Object.fromEntries(present.map((n) => [n, 1]));
   const out = el("div", {});
+  const mark = el("div", {});
   const result = el("div", { class: "mono", style: "margin-top:10px;font-size:14px" });
 
+  const isNeutral = () => present.every((n) => Math.abs(weights[n] - 1) < 1e-9);
+
   function recompute() {
+    // Watermark only when the user departs from the neutral (equal-weight) default.
+    if (isNeutral()) {
+      mark.className = "muted";
+      mark.style.fontSize = "12px";
+      mark.textContent = "Neutral default: equal weight across factual components only (value-laden lenses off).";
+    } else {
+      mark.className = "watermark";
+      mark.style.fontSize = "12px";
+      mark.textContent = "⚠ CUSTOM VALUE WEIGHTS — value-laden, not the neutral default.";
+    }
     const total = present.reduce((a, n) => a + weights[n], 0) || 1;
     const weighted = present.reduce((a, n) => a + (weights[n] / total) * comps[n], 0);
     const gated = card.score && card.score.gated;
@@ -119,7 +132,7 @@ function valueWeightPanel(card) {
     slider.addEventListener("input", () => { weights[n] = Number(slider.value); val.textContent = Number(slider.value).toFixed(1); recompute(); });
     wrap.appendChild(el("label", {}, el("span", {}, n), slider, val));
   }
-  out.appendChild(el("div", { class: "watermark" }, "⚠ CUSTOM VALUE WEIGHTS — value-laden, not the neutral default. Default weights are equal across factual components only."));
+  out.appendChild(mark);
   out.appendChild(wrap);
   out.appendChild(result);
   recompute();

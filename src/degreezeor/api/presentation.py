@@ -131,10 +131,17 @@ def build_scorecard(session: Session, eu_id: int) -> dict[str, Any] | None:
         o = session.get(Official, oid)
         return o.full_name if o else None
 
-    # Source trail: the immutable raw landing entries (each with url + content hash).
-    landings = session.execute(
-        select(RawLanding).order_by(RawLanding.id.asc())
-    ).scalars().all()
+    # Source trail filtered to THIS evaluation unit: the action record, the objective
+    # source, and the outcome series — each an immutable landing with url + content hash.
+    relevant_urls = {action.source_url}
+    if objective is not None:
+        relevant_urls.add(objective.source_url)
+    relevant_series = {metric.native_series_id} if metric is not None else set()
+    landings = [
+        land
+        for land in session.execute(select(RawLanding).order_by(RawLanding.id.asc())).scalars().all()
+        if land.source_url in relevant_urls or land.native_identifier in relevant_series
+    ]
 
     return {
         "evaluation_unit": {

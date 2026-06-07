@@ -65,7 +65,7 @@ async function sensitivityCard(euId, unit) {
         el("td", {}, p.eval_period),
         el("td", { class: "right mono", style: `color:${p.delta_toward_goal >= 0 ? "var(--good)" : "var(--bad)"}` }, fmt(p.delta_toward_goal, 1)),
         el("td", { class: "right mono" }, fmt(p.z, 2)),
-        el("td", {}, p.significant ? el("span", { class: "badge scored" }, "yes") : el("span", { class: "pill" }, "within noise"))))));
+        el("td", {}, p.significant ? el("span", { class: "badge scored" }, "yes") : el("span", { class: "pill" }, "within noise")))))));
   card.appendChild(el("p", { class: "muted", style: "font-size:12px" },
     "A directionally stable, significant effect across horizons is strong evidence; a sign that " +
     "flips with the horizon indicates the result depends on an analyst choice and should temper confidence."));

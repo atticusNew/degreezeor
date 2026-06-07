@@ -101,6 +101,18 @@ C = c_design · c_data · c_attrib · c_modeldep · c_sensitivity   # each ∈ [
 If `C < 0.60` (default), the composite is **suppressed** and the EU renders **"insufficient
 evidence."** This is the correct, humble behavior — not a failure.
 
+## 7b. Two evaluation modes
+
+- **Baseline-relative (causal effect):** "did the metric move vs. a defensible counterfactual?"
+  (pre/post, DiD, synthetic control). Identification is the hard part.
+- **Target-relative (promise-keeping):** "did the policy deliver its own pre-registered, source-linked
+  numeric target?" Realized = official data; target = the policy's CBO/statutory number.
+  **Integrity guardrail:** target-relative earns high identification (`declared_target_direct`, 0.90)
+  **only when the realized series is directly attributable to the action** (e.g. a law's own
+  DEFC-tagged USAspending total). Economy-wide realized series are `declared_target_confounded`
+  (0.35) and stay gated. This is how target-relative scoring reduces "insufficient evidence"
+  *legitimately* — it only scores what's genuinely attributable.
+
 ## 8. Default output vs. opt-in composite
 
 - **Default (public):** the decomposed factual component vector — `outcome, evidence, attribution,

@@ -16,10 +16,30 @@ from degreezeor.core.numeric import D, clamp01, dprod
 # Identification strength of the available design. Pre-trend projection on a single
 # federal series cannot separate the policy from concurrent macro shocks, so its
 # ceiling is deliberately modest. Stronger designs (DiD, synthetic control) raise this.
+# A comparison group (DiD / synthetic control) addresses the confounding that
+# pre/post on a single series cannot, so its identification ceiling is higher.
+# Synthetic control with a tight pre-fit is the strongest design in the slice.
 DESIGN_BASE = {
+    "synthetic_control": D("0.85"),
+    "difference_in_differences": D("0.78"),
     "pretrend_projection": D("0.50"),
     "flat_last_value": D("0.30"),
 }
+
+# Strongest-first preference when choosing the headline identification design.
+DESIGN_PREFERENCE = [
+    "synthetic_control",
+    "difference_in_differences",
+    "pretrend_projection",
+    "flat_last_value",
+]
+
+
+def best_design(method_names: list[str]) -> str:
+    for name in DESIGN_PREFERENCE:
+        if name in method_names:
+            return name
+    return method_names[0] if method_names else "flat_last_value"
 
 
 @dataclass(frozen=True)

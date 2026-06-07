@@ -13,9 +13,18 @@ from datetime import date
 
 import numpy as np
 
-from degreezeor.core.interfaces import BASELINE_METHODS, BaselineContext, BaselineEstimate
+from degreezeor.core.interfaces import (
+    BASELINE_METHODS,
+    BaselineContext,
+    BaselineEstimate,
+    TimePoint,
+)
 from degreezeor.core.numeric import D, clamp01, q_score
 from degreezeor.scoring.baseline import _eval_index, _month_index, split_series
+
+# Comparison designs that address confounding (used preferentially over naive
+# single-series baselines when eligible).
+_STRONG_METHODS = {"synthetic_control", "difference_in_differences"}
 
 
 @dataclass(frozen=True)
@@ -50,12 +59,16 @@ def compute_outcome(
     lag_window_months: int,
     sign_goal: int,
     seed: int,
+    donor_observations: dict[str, list[tuple[str, object]]] | None = None,
 ) -> OutcomeComputation | None:
     pre, post = split_series(observations, event_period)
     if len(pre) < 6 or not post:
         return None
 
     origin = date.fromisoformat(pre[0].period)
+    donors: dict[str, list[TimePoint]] = {}
+    for unit, series in (donor_observations or {}).items():
+        donors[unit] = [TimePoint(period=p, value=D(v)) for p, v in sorted(series)]
     ctx = BaselineContext(
         eu_id=0,
         metric_code="",
@@ -63,6 +76,7 @@ def compute_outcome(
         lag_window_months=lag_window_months,
         pre_series=pre,
         post_series=post,
+        donors=donors,
     )
     eval_idx = _eval_index(ctx)
     at = _value_at(post, eval_idx, origin)
@@ -74,9 +88,16 @@ def compute_outcome(
     if not estimates:
         return None
 
-    baselines = np.array([float(e.baseline_value) for e in estimates])
+    # Tiered pooling: if a comparison design (DiD / synthetic control) is available,
+    # it drives the estimate — naive single-series baselines are reported for
+    # transparency but must NOT dilute a well-identified counterfactual. Naive
+    # baselines pool together only when no comparison design is eligible.
+    strong = [e for e in estimates if e.method in _STRONG_METHODS]
+    active = strong if strong else estimates
+
+    baselines = np.array([float(e.baseline_value) for e in active])
     pooled = float(np.mean(baselines))
-    deltas = observed - baselines  # per-method
+    deltas = observed - baselines  # per active method
     delta = observed - pooled
 
     # Model dependence: sign disagreement dominates; otherwise normalized spread.

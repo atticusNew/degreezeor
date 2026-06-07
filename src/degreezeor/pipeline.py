@@ -37,7 +37,7 @@ from degreezeor.ingestion.loader import ensure_bls_source, load_law, load_observ
 from degreezeor.provenance import current_git_sha, data_snapshot_id
 from degreezeor.scoring.attribution import build_attribution
 from degreezeor.scoring.baseline import split_series  # noqa: F401  (ensures registration import)
-from degreezeor.scoring.confidence import compute_confidence
+from degreezeor.scoring.confidence import best_design, compute_confidence
 from degreezeor.scoring.objective import (
     ensure_metric,
     mask_party_and_name,
@@ -177,9 +177,7 @@ def score_law(session: Session, congress: int, law_number: int, law_type: str = 
     human_widths = [D(a.attr_ci_high) - D(a.attr_ci_low) for a in attributions if not a.is_residual]
 
     # --- Confidence ---
-    best_method = "pretrend_projection" if any(
-        e.method == "pretrend_projection" for e in comp.per_method
-    ) else comp.per_method[0].method
+    best_method = best_design([e.method for e in comp.per_method])
     conf = compute_confidence(
         best_method=best_method,
         ci_low=comp.ci_low, ci_high=comp.ci_high,

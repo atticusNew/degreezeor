@@ -18,6 +18,7 @@ import math
 from datetime import date
 
 import numpy as np
+from scipy.optimize import nnls
 
 from degreezeor.core.interfaces import (
     BASELINE_METHODS,
@@ -98,8 +99,148 @@ class FlatLastValue(BaselineMethod):
         )
 
 
+def _pre_value_vector(series: list[TimePoint], periods: list[str]) -> np.ndarray | None:
+    """Donor values aligned to the treated unit's pre-period dates (exact match)."""
+    lookup = {tp.period: float(tp.value) for tp in series}
+    if not all(p in lookup for p in periods):
+        return None
+    return np.array([lookup[p] for p in periods], dtype=float)
+
+
+def _donor_value_at(series: list[TimePoint], origin: date, eval_idx: int) -> float | None:
+    best, best_dist = None, None
+    for tp in series:
+        idx = _month_index(tp.period, origin)
+        dist = abs(idx - eval_idx)
+        if best_dist is None or dist < best_dist:
+            best_dist, best = dist, float(tp.value)
+    return best
+
+
+def _pre_slope(values: np.ndarray) -> float:
+    xs = np.arange(len(values), dtype=float)
+    b, _a = np.polyfit(xs, values, 1)
+    return float(b)
+
+
+class DifferenceInDifferences(BaselineMethod):
+    """Counterfactual = treated pre-level + the control group's pre→post change.
+
+    Identifies the effect by *differencing out* shocks common to treated and control
+    units (the parallel-trends assumption), which a single-series pre/post cannot do.
+    """
+
+    name = "difference_in_differences"
+
+    def _aligned(self, ctx: BaselineContext):
+        pre_periods = [p.period for p in ctx.pre_series]
+        treated_pre = np.array([float(p.value) for p in ctx.pre_series], dtype=float)
+        origin = date.fromisoformat(pre_periods[0])
+        eval_idx = _eval_index(ctx)
+        donor_pre, donor_eval = [], []
+        for series in ctx.donors.values():
+            vp = _pre_value_vector(series, pre_periods)
+            ve = _donor_value_at(series, origin, eval_idx)
+            if vp is not None and ve is not None:
+                donor_pre.append(vp)
+                donor_eval.append(ve)
+        return treated_pre, donor_pre, donor_eval, origin, eval_idx
+
+    def eligible(self, ctx: BaselineContext) -> bool:
+        if len(ctx.pre_series) < 6 or not ctx.donors:
+            return False
+        treated_pre, donor_pre, donor_eval, _o, _e = self._aligned(ctx)
+        if not donor_pre:
+            return False
+        # Parallel pre-trends: treated and average-control slopes must be similar.
+        control_pre = np.mean(np.vstack(donor_pre), axis=0)
+        ts, cs = _pre_slope(treated_pre), _pre_slope(control_pre)
+        scale = abs(ts) + abs(cs) + 1e-9
+        return abs(ts - cs) / scale <= 0.5
+
+    def estimate(self, ctx: BaselineContext) -> BaselineEstimate:
+        treated_pre, donor_pre, donor_eval, _o, eval_idx = self._aligned(ctx)
+        treated_pre_mean = float(np.mean(treated_pre))
+        donor_pre_means = np.array([float(np.mean(dp)) for dp in donor_pre])
+        donor_eval_arr = np.array(donor_eval, dtype=float)
+        # Each donor implies a counterfactual; average them, band from their spread.
+        implied = treated_pre_mean + (donor_eval_arr - donor_pre_means)
+        cf = float(np.mean(implied))
+        sd = float(np.std(implied)) if len(implied) > 1 else 0.0
+        return BaselineEstimate(
+            method=self.name,
+            baseline_value=D(cf),
+            ci_low=D(cf - 1.96 * sd),
+            ci_high=D(cf + 1.96 * sd),
+            spec={"n_donors": len(donor_eval), "control_change": round(float(np.mean(donor_eval_arr - donor_pre_means)), 4)},
+        )
+
+
+class SyntheticControl(BaselineMethod):
+    """Counterfactual = a nonneg, sum-to-one weighted blend of donors that best
+    matches the treated unit's PRE-period path (Abadie-style). Strong identification
+    when the pre-fit is tight."""
+
+    name = "synthetic_control"
+
+    def _solve_weights(self, treated_pre: np.ndarray, donor_pre_matrix: np.ndarray):
+        # donor_pre_matrix: shape (n_pre, n_donors). Solve nnls then project to simplex.
+        w, _resid = nnls(donor_pre_matrix, treated_pre)
+        total = w.sum()
+        w = np.ones_like(w) / len(w) if total <= 0 else w / total
+        return w
+
+    def _matrix(self, ctx: BaselineContext):
+        pre_periods = [p.period for p in ctx.pre_series]
+        treated_pre = np.array([float(p.value) for p in ctx.pre_series], dtype=float)
+        origin = date.fromisoformat(pre_periods[0])
+        eval_idx = _eval_index(ctx)
+        cols, evals = [], []
+        for series in ctx.donors.values():
+            vp = _pre_value_vector(series, pre_periods)
+            ve = _donor_value_at(series, origin, eval_idx)
+            if vp is not None and ve is not None:
+                cols.append(vp)
+                evals.append(ve)
+        if not cols:
+            return treated_pre, None, None
+        return treated_pre, np.column_stack(cols), np.array(evals, dtype=float)
+
+    def eligible(self, ctx: BaselineContext) -> bool:
+        if len(ctx.pre_series) < 6 or len(ctx.donors) < 2:
+            return False
+        treated_pre, dmat, _ev = self._matrix(ctx)
+        if dmat is None or dmat.shape[1] < 2:
+            return False
+        w = self._solve_weights(treated_pre, dmat)
+        synth_pre = dmat @ w
+        rmspe = float(np.sqrt(np.mean((treated_pre - synth_pre) ** 2)))
+        pre_sd = float(np.std(treated_pre)) or 1.0
+        return rmspe <= 0.5 * pre_sd  # accept only a tight pre-period fit
+
+    def estimate(self, ctx: BaselineContext) -> BaselineEstimate:
+        treated_pre, dmat, evals = self._matrix(ctx)
+        w = self._solve_weights(treated_pre, dmat)
+        cf = float(evals @ w)
+        synth_pre = dmat @ w
+        rmspe = float(np.sqrt(np.mean((treated_pre - synth_pre) ** 2)))
+        return BaselineEstimate(
+            method=self.name,
+            baseline_value=D(cf),
+            ci_low=D(cf - 1.96 * rmspe),
+            ci_high=D(cf + 1.96 * rmspe),
+            spec={
+                "n_donors": int(dmat.shape[1]),
+                "pre_fit_rmspe": round(rmspe, 4),
+                "top_weights": sorted((round(float(x), 3) for x in w), reverse=True)[:3],
+            },
+        )
+
+
 pretrend = BASELINE_METHODS.register(PretrendProjection())
 flat = BASELINE_METHODS.register(FlatLastValue())
+did = BASELINE_METHODS.register(DifferenceInDifferences())
+synthetic_control = BASELINE_METHODS.register(SyntheticControl())
 
 
 def split_series(

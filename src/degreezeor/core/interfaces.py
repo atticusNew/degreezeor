@@ -63,6 +63,10 @@ class BaselineContext:
     post_series: list[TimePoint]
     # Optional comparators for adjusted methods (e.g. national index for de-trending).
     national_series: list[TimePoint] = field(default_factory=list)
+    # Control/donor units for comparison designs (DiD, synthetic control):
+    # unit_id -> full series spanning pre AND post periods. Empty for federal
+    # single-series cases (which therefore only support pre/post baselines).
+    donors: dict[str, list[TimePoint]] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
 
 

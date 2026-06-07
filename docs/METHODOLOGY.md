@@ -125,6 +125,12 @@ evidence."** This is the correct, humble behavior — not a failure.
 6. Uncertainty always shown; composite gated by confidence.
 7. Append-only, hash-chained audit log; pinned, bit-reproducible score runs.
 8. Always a large unattributable residual.
+9. **Sensitivity analysis** — each scoreable EU re-evaluates its outcome across defensible lag
+   horizons (12–60 months) and reports robustness (direction stability + significance fraction);
+   a sign that flips with the horizon is flagged as not-robust. (`/api/evaluation-units/{id}/sensitivity`.)
+10. **Dispute / appeal process** — anyone can trigger an independent, deterministic re-run; the
+    result (reproduced vs. corrected) + public diff is recorded on the audit chain.
+11. **Relationship graph** — officials↔actions↔jurisdictions↔metrics exposed for transparency.
 
 ## 10. What cannot be made fully empirical
 

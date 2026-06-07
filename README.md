@@ -35,8 +35,12 @@ End-to-end, on **real official data**:
 - **Reproducibility**: every score run is pinned to `{data_snapshot, methodology_version, git_sha, seed}`
   and produces a bit-stable `reproducible_hash`.
 - **Auditability**: append-only, hash-chained audit log (tamper-detecting).
-- **API + UI**: FastAPI read API and a zero-build explainability scorecard (decomposed vector, gate
-  banner, baseline ensemble, attribution, source trail, reproducibility panel, user value-weights).
+- **API + UI**: FastAPI read API and a zero-build explainability UI — scorecards (decomposed vector,
+  gate banner, baseline ensemble, attribution, source trail, reproducibility panel, user value-weights,
+  **lag-window sensitivity band**, **challenge/appeal**), an **Officials** roll-up view, and a
+  **relationship Graph** view.
+- **Governance**: dispute/appeal workflow (independent reproducible re-run + public diff, audit-logged)
+  and lag-window sensitivity analysis for every scoreable unit.
 
 ## Quickstart
 

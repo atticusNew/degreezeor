@@ -8,8 +8,8 @@ and their *outputs* are quantized back to Decimal at fixed precision before stor
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from decimal import ROUND_HALF_EVEN, Decimal, getcontext
-from typing import Iterable
 
 # A generous, fixed precision so reproducibility does not depend on host defaults.
 getcontext().prec = 50
@@ -19,7 +19,7 @@ Q_SCORE = Decimal("0.0001")  # 0..100 scores and 0..1 weights/probabilities
 Q_MONEY = Decimal("0.01")  # USD
 
 
-def D(value: object) -> Decimal:
+def D(value: object) -> Decimal:  # noqa: N802  (deliberate ergonomic Decimal alias)
     """Coerce to Decimal deterministically (via str to avoid float artifacts)."""
     if isinstance(value, Decimal):
         return value

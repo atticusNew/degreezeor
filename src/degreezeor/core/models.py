@@ -30,7 +30,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
@@ -79,7 +79,7 @@ class OfficeTerm(Base):
     __tablename__ = "office_terms"
     id: Mapped[int] = mapped_column(primary_key=True)
     official_id: Mapped[int] = mapped_column(ForeignKey("officials.id"))
-    office_id: Mapped[int] = mapped_column(ForeignKey("offices.id"))
+    office_id: Mapped[int | None] = mapped_column(ForeignKey("offices.id"), nullable=True)
     jurisdiction_id: Mapped[int | None] = mapped_column(ForeignKey("jurisdictions.id"))
     party_id: Mapped[int | None] = mapped_column(ForeignKey("parties.id"))
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)

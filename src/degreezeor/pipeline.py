@@ -13,6 +13,7 @@ import os
 from dataclasses import dataclass
 from datetime import date
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -197,6 +198,14 @@ def _finalize(
     gate, persistence, and reproducibility hash are identical across action types.
     """
     eu.alignment = q_score(D(alignment))  # persist for faithful re-runs (disputes)
+
+    # OutcomeResult / Baseline / AttributionWeight describe the EU's CURRENT result and
+    # are keyed by eu_id; a re-run (e.g. dispute resolution) replaces them. Run-level
+    # history is preserved via versioned ScoreRun + components + reproducible_hash.
+    for model in (OutcomeResult, Baseline, AttributionWeight):
+        session.execute(sa_delete(model).where(model.eu_id == eu.id))
+    session.flush()
+
     residual = next((a.attribution for a in attributions if a.is_residual), D(0))
     human_widths = [D(a.attr_ci_high) - D(a.attr_ci_low) for a in attributions if not a.is_residual]
 

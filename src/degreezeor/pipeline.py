@@ -639,15 +639,23 @@ def _rescore_target_eu(session: Session, eu, action, metric) -> ScoreOutcome:
     from degreezeor.ingestion.adapters.usaspending import usaspending_adapter
     from degreezeor.scoring.target_outcome import compute_target_outcome
 
-    # native_series_id = "DEFC:<code>:<kind>" (disaster) | "DEFCGEN:<code>:obligation" (general)
-    prefix, defc, realized_kind = metric.native_series_id.split(":")
+    # native_series_id: "DEFC:<code>:<kind>" | "DEFCGEN:<code>:obligation" |
+    #                    "AGENCYBUDGET:<toptier>:<fy>:<kind>"
+    parts = metric.native_series_id.split(":")
+    prefix = parts[0]
     prev = os.environ.get("DZ_HTTP_CACHE")
     os.environ["DZ_HTTP_CACHE"] = "1"
     try:
-        if prefix == "DEFCGEN":
+        if prefix == "AGENCYBUDGET":
+            _, toptier, fy, realized_kind = parts
+            rfetch = usaspending_adapter.fetch_agency_budget(toptier)
+            realized = usaspending_adapter.parse_agency_budget(rfetch.content, int(fy))[realized_kind]
+        elif prefix == "DEFCGEN":
+            defc = parts[1]
             rfetch = usaspending_adapter.fetch_general_obligations(defc, action.action_date.year - 1, 2025)
             realized = usaspending_adapter.parse_general_obligation(rfetch.content)
         else:
+            defc, realized_kind = parts[1], parts[2]
             rfetch = usaspending_adapter.fetch(defc)
             realized = usaspending_adapter.parse_amounts(rfetch.content)[realized_kind]
     finally:
@@ -662,10 +670,18 @@ def _rescore_target_eu(session: Session, eu, action, metric) -> ScoreOutcome:
     )
     bill = session.get(Bill, action.id)
     law = session.get(Law, action.id)
+    eo = session.get(ExecutiveOrder, action.id)
+    signer = (law.signed_by_official_id if law else None) or (eo.signing_official_id if eo else None)
+    if signer is None and action.type == "budget":
+        # Budget actions store no Law/EO row; re-derive the executing president from the
+        # action date (same as scoring) so the attribution reproduces exactly.
+        from degreezeor.core.reference import president_on
+        pres = president_on(session, action.action_date)
+        signer = pres.id if pres else None
     actx = AttributionContext(
         eu_id=eu.id, action_type=action.type,
         sponsor_official_id=bill.sponsor_official_id if bill else None,
-        signer_official_id=law.signed_by_official_id if law else None,
+        signer_official_id=signer,
         vote_margin=None, member_on_winning_side=None,
     )
     attributions = build_attribution(actx)
@@ -979,6 +995,127 @@ def batch_score_executive_orders(session: Session, limit: int = 25) -> list[Scor
             results.append(score_executive_order(session, doc_number))
         except Exception as exc:  # noqa: BLE001
             log.warning("batch EO %s failed: %s", doc_number, exc)
+    return results
+
+
+def score_budget_execution(
+    session: Session, toptier_code: str, agency_name: str, fiscal_year: int,
+    realized_kind: str = "obligated",
+) -> ScoreOutcome:
+    """#2 — account-level budget execution: did the agency obligate/outlay the budgetary
+    resources available to it in a fiscal year? Stable + commensurable by construction
+    (obligated/outlayed <= resources). Directly attributable to the administration (with a
+    large residual, since execution is diffuse across the agency and career staff)."""
+    from degreezeor.core.reference import ensure_us_federal, president_on
+    from degreezeor.ingestion.adapters.usaspending import usaspending_adapter
+    from degreezeor.scoring.target_outcome import compute_target_outcome
+
+    usa_src = ensure_source(session, name=usaspending_adapter.name, tier=usaspending_adapter.tier,
+                            base_url=usaspending_adapter.base_url)
+    jur = ensure_us_federal(session)
+    native_id = f"BUDGET:{toptier_code}:{fiscal_year}"
+    fy_end = date(fiscal_year, 9, 30)
+
+    bfetch = usaspending_adapter.fetch_agency_budget(toptier_code)
+    amounts = usaspending_adapter.parse_agency_budget(bfetch.content, fiscal_year)
+
+    existing = session.execute(
+        select(Action).where(Action.native_identifier == native_id, Action.type == "budget")
+    ).scalar_one_or_none()
+    if existing is not None:
+        out = _existing_outcome(session, existing.id)
+        if out is not None:
+            return out
+        action = existing
+    else:
+        action = Action(
+            type="budget", title=f"{agency_name} — FY{fiscal_year} budget execution",
+            action_date=fy_end, jurisdiction_id=jur.id, source_id=usa_src.id,
+            source_url=bfetch.source_url, native_identifier=native_id,
+            content_hash=bfetch.content_hash, domain="Economics and Public Finance",
+            implemented=True,
+        )
+        session.add(action)
+        session.flush()
+    land(session, bfetch)
+
+    eu = EvaluationUnit(action_id=action.id, status="pending", evaluation_mode="target",
+                        sign_goal=1, lag_window_months=0, directly_attributable=True)
+    if amounts is None or amounts["resources"] <= 0:
+        eu.status = "non_scoreable_no_metric"
+        eu.non_scoreable_reason = f"No budgetary-resources data for {agency_name} FY{fiscal_year}."
+        session.add(eu)
+        session.flush()
+        return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+
+    metric = session.execute(
+        select(Metric).where(Metric.code == f"agency_budget_{toptier_code}_{fiscal_year}_{realized_kind}")
+    ).scalar_one_or_none()
+    if metric is None:
+        metric = Metric(
+            code=f"agency_budget_{toptier_code}_{fiscal_year}_{realized_kind}",
+            name=f"{agency_name} FY{fiscal_year} {realized_kind} (USAspending)",
+            unit="USD", direction_good="up", source_id=usa_src.id,
+            native_series_id=f"AGENCYBUDGET:{toptier_code}:{fiscal_year}:{realized_kind}",
+            domain="Economics and Public Finance",
+        )
+        session.add(metric)
+        session.flush()
+    obj = Objective(action_id=action.id, source_id=usa_src.id, source_url=bfetch.source_url,
+                    objective_level="operational",
+                    text=(f"Obligate/outlay the budgetary resources available to {agency_name} "
+                          f"in FY{fiscal_year} (execution of appropriated funds)."))
+    session.add(obj)
+    session.flush()
+    eu.objective_id = obj.id
+    eu.metric_id = metric.id
+    eu.target_value = D(str(amounts["resources"]))
+    session.add(eu)
+    session.flush()
+
+    preregister(session, eu, action_native_id=native_id, metric_code=metric.code,
+                objective_level="operational", sign_goal=1, lag_window_months=0,
+                masked_objective=f"budget_execution {agency_name} FY{fiscal_year} {realized_kind}"[:280])
+
+    realized = amounts[realized_kind]
+    tc = compute_target_outcome(realized=realized, target=amounts["resources"], sign_goal=1,
+                                directly_attributable=True, eval_period=f"{fiscal_year}-09-01")
+    signer = president_on(session, fy_end)
+    actx = AttributionContext(
+        eu_id=eu.id, action_type="budget", sponsor_official_id=None,
+        signer_official_id=signer.id if signer else None,
+        vote_margin=None, member_on_winning_side=None,
+    )
+    attributions = build_attribution(actx)
+    return _finalize(session, eu, action, tc.outcome, attributions, alignment=D("0.95"),
+                     observations=[], metric=metric, sign_goal=1,
+                     event_period=f"{fiscal_year}-09-01", extra_source_urls=[bfetch.source_url],
+                     s_outcome_override=tc.s_outcome)
+
+
+def ingest_budget_execution(
+    session: Session, fiscal_year: int, agencies: list[tuple[str, str]] | None = None,
+    realized_kind: str = "obligated", limit: int | None = None,
+) -> list[ScoreOutcome]:
+    """Batch budget-execution scores. ``agencies`` = list of (toptier_code, name); if None,
+    use the major cabinet departments."""
+    import json as _json
+
+    from degreezeor.ingestion.adapters.usaspending import usaspending_adapter
+
+    if agencies is None:
+        allag = _json.loads(usaspending_adapter.fetch_toptier_agencies()).get("results", [])
+        wanted = {"Department of"}  # cabinet departments
+        agencies = [(a["toptier_code"], a["agency_name"]) for a in allag
+                    if any(a["agency_name"].startswith(w) for w in wanted)]
+    results: list[ScoreOutcome] = []
+    for code, name in agencies:
+        if limit is not None and len(results) >= limit:
+            break
+        try:
+            results.append(score_budget_execution(session, code, name, fiscal_year, realized_kind))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("budget execution %s FY%s failed: %s", name, fiscal_year, exc)
     return results
 
 

@@ -80,6 +80,16 @@ def cmd_score_target(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_budget_execution(args: argparse.Namespace) -> int:
+    from collections import Counter
+
+    from degreezeor.pipeline import ingest_budget_execution
+    with session_scope() as s:
+        rs = ingest_budget_execution(s, args.fiscal_year, realized_kind=args.kind, limit=args.limit)
+    print("budget execution:", dict(Counter(r.status for r in rs)), "total", len(rs))
+    return 0
+
+
 def cmd_enrich_names(args: argparse.Namespace) -> int:
     from degreezeor.ingestion.loader import enrich_official_names
 
@@ -199,6 +209,12 @@ def main(argv: list[str] | None = None) -> int:
     be = sub.add_parser("batch-eos", help="batch-ingest+score recent executive orders")
     be.add_argument("--limit", type=int, default=25)
     be.set_defaults(func=cmd_batch_eos)
+
+    bx = sub.add_parser("budget-execution", help="score agency budget execution (obligation/outlay rate) for a FY")
+    bx.add_argument("fiscal_year", type=int)
+    bx.add_argument("--kind", default="obligated", choices=["obligated", "outlayed"])
+    bx.add_argument("--limit", type=int, default=None)
+    bx.set_defaults(func=cmd_budget_execution)
 
     en = sub.add_parser("enrich-names", help="fill in full official names from Congress.gov")
     en.add_argument("--limit", type=int, default=None)

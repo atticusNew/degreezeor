@@ -51,9 +51,15 @@ class SignerChannel(AttributionChannel):
             return []
         # Formal authority depends on the instrument (PLAN.md §7): signing a law that
         # Congress passed is shared authority (~0.15); directing an executive order or
-        # regulation is a unilateral executive act, so the signer's authority is high.
+        # regulation is a unilateral executive act, so the signer's authority is high;
+        # budget EXECUTION is the administration's core duty but diffuse across the agency
+        # and career staff, so moderate authority with a large unattributable residual.
         if ctx.action_type in ("eo", "regulation"):
             authority, lo, hi = D("0.60"), D("0.40"), D("0.85")
+        elif ctx.action_type == "budget":
+            # Moderate, reasonably-certain share (the diffuseness shows up as the large
+            # unattributable residual, not as an uncertain band).
+            authority, lo, hi = D("0.30"), D("0.20"), D("0.40")
         else:
             authority, lo, hi = D("0.15"), D("0.10"), D("0.25")
         return [

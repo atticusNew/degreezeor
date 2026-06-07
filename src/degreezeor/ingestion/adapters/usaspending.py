@@ -41,6 +41,34 @@ class UsaSpendingAdapter(SourceAdapter):
             content_hash=sha256_hex(content), retrieved_at=datetime.now(UTC),
         )
 
+    def fetch_toptier_agencies(self) -> bytes:
+        return client.get_bytes(f"{API}/references/toptier_agencies/")
+
+    def fetch_agency_budget(self, toptier_code: str) -> RawFetch:
+        """Agency budgetary resources by fiscal year: agency_budgetary_resources (the
+        appropriation/authority available), agency_total_obligated, agency_total_outlayed.
+        These are authoritative account-level figures (obligated/outlayed <= resources by
+        construction), so execution rates are stable + commensurable — unlike DEFC award
+        aggregates."""
+        url = f"{API}/agency/{toptier_code}/budgetary_resources/"
+        content = client.get_bytes(url)
+        return RawFetch(
+            source_name=self.name, tier=self.tier, source_url=url,
+            native_identifier=f"AGENCYBUDGET:{toptier_code}", content=content,
+            content_hash=sha256_hex(content), retrieved_at=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def parse_agency_budget(content: bytes, fiscal_year: int) -> dict[str, float] | None:
+        for y in json.loads(content).get("agency_data_by_year", []):
+            if y.get("fiscal_year") == fiscal_year:
+                return {
+                    "resources": float(y.get("agency_budgetary_resources") or 0.0),
+                    "obligated": float(y.get("agency_total_obligated") or 0.0),
+                    "outlayed": float(y.get("agency_total_outlayed") or 0.0),
+                }
+        return None
+
     def fetch_general_obligations(self, defc: str, start_year: int, end_year: int) -> RawFetch:
         """Total award OBLIGATIONS for any DEFC (incl. non-COVID) via spending_by_geography.
 

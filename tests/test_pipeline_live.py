@@ -152,6 +152,25 @@ def test_noncovid_delivery_integrity_guards() -> None:
         os.environ.pop("DZ_HTTP_CACHE", None)
 
 
+def test_budget_execution_scores_and_reproduces() -> None:
+    from sqlalchemy import select
+
+    from degreezeor.core.models import ScoreRun
+    from degreezeor.pipeline import rescore_eu, score_budget_execution
+
+    s = _fresh_session()
+    try:
+        r = score_budget_execution(s, "036", "Department of Veterans Affairs", 2024, "obligated")
+        s.commit()
+        assert r.status == "scored"  # execution rate is verifiable + directly attributable
+        run = s.execute(
+            select(ScoreRun).where(ScoreRun.eu_id == r.eu_id).order_by(ScoreRun.id.desc()).limit(1)
+        ).scalar_one()
+        assert run.reproducible_hash == rescore_eu(s, r.eu_id).reproducible_hash
+    finally:
+        s.close()
+
+
 def test_executive_order_ingests_and_scores() -> None:
     from degreezeor.core.models import Action, AttributionWeight, ExecutiveOrder
     from degreezeor.pipeline import score_executive_order

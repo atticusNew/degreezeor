@@ -387,10 +387,13 @@ async function renderGraph() {
   app.appendChild(legend);
 
   const g = await getJSON("/api/graph");
-  // Deterministic layered layout: one column per node type.
+  // Deterministic layered layout: one column per node type. Generous horizontal
+  // spacing + per-type label truncation + right-anchored labels so columns never collide.
   const cols = COLUMN_ORDER.map((t) => g.nodes.filter((n) => n.type === t));
-  const colX = { official: 120, action: 440, jurisdiction: 760, metric: 980 };
-  const rowH = 70, padY = 40, width = 1120;
+  const colX = { official: 150, action: 560, jurisdiction: 960, metric: 1230 };
+  const truncLen = { official: 26, action: 34, jurisdiction: 20, metric: 30 };
+  const trunc = (s, n) => (s.length <= n ? s : s.slice(0, n - 1) + "\u2026");
+  const rowH = 64, padY = 44, width = 1560;
   const maxRows = Math.max(1, ...cols.map((c) => c.length));
   const height = padY * 2 + maxRows * rowH;
   const pos = {};
@@ -417,11 +420,16 @@ async function renderGraph() {
     line.setAttribute("x2", t.x); line.setAttribute("y2", t.y);
     line.setAttribute("stroke", "#2a3650"); line.setAttribute("stroke-width", "1.5");
     svg.appendChild(line);
-    const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
+    // Place the relation label ~32% along the edge (toward the source/left side, away
+    // from the long right-column node labels) and nudge it off the line.
+    const f = 0.32;
+    const mx = s.x + f * (t.x - s.x), my = s.y + f * (t.y - s.y);
     const lbl = document.createElementNS(NS, "text");
-    lbl.setAttribute("x", mx); lbl.setAttribute("y", my - 3);
-    lbl.setAttribute("fill", "#6b7a90"); lbl.setAttribute("font-size", "10");
-    lbl.setAttribute("text-anchor", "middle"); lbl.textContent = e.relation;
+    lbl.setAttribute("x", mx); lbl.setAttribute("y", my - 4);
+    lbl.setAttribute("fill", "#7c8aa0"); lbl.setAttribute("font-size", "10");
+    lbl.setAttribute("text-anchor", "middle");
+    lbl.style.pointerEvents = "none";
+    lbl.textContent = e.relation;
     svg.appendChild(lbl);
   }
 
@@ -434,12 +442,11 @@ async function renderGraph() {
     c.setAttribute("fill", NODE_COLORS[n.type]);
     grp.appendChild(c);
     const txt = document.createElementNS(NS, "text");
-    const leftSide = n.type === "metric" || n.type === "jurisdiction";
-    txt.setAttribute("x", p.x + (leftSide ? -14 : 14));
+    txt.setAttribute("x", p.x + 14);  // all labels extend rightward (no column collisions)
     txt.setAttribute("y", p.y + 4);
     txt.setAttribute("fill", "var(--text)"); txt.setAttribute("font-size", "12");
-    txt.setAttribute("text-anchor", leftSide ? "end" : "start");
-    txt.textContent = n.label;
+    txt.setAttribute("text-anchor", "start");
+    txt.textContent = trunc(n.label, truncLen[n.type] || 30);
     grp.appendChild(txt);
     if (n.type === "official") grp.addEventListener("click", () => { location.hash = `#/official/${n.ref_id}`; });
     if (n.type === "action") grp.addEventListener("click", () => { location.hash = `#/eu/${n.eu_id}`; });

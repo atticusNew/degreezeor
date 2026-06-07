@@ -24,3 +24,6 @@ web/out/
 
 # OS
 .DS_Store
+
+# Test artifacts
+screenshots/

@@ -247,6 +247,102 @@ def build_scorecard(session: Session, eu_id: int) -> dict[str, Any] | None:
     }
 
 
+def _official_contributions(session: Session, official_id: int):
+    """Gather this official's (non-residual) attributable EUs + their latest score."""
+    from degreezeor.scoring.rollup import ActionContribution
+
+    rows = session.execute(
+        select(AttributionWeight).where(
+            AttributionWeight.official_id == official_id,
+            AttributionWeight.is_residual.is_(False),
+        )
+    ).scalars().all()
+    contributions = []
+    details = []
+    seen: set[int] = set()
+    for aw in rows:
+        if aw.eu_id in seen:
+            continue
+        seen.add(aw.eu_id)
+        eu = session.get(EvaluationUnit, aw.eu_id)
+        action = session.get(Action, eu.action_id) if eu else None
+        run = _latest_run(session, aw.eu_id)
+        score = (
+            session.execute(select(EUScore).where(EUScore.score_run_id == run.id)).scalar_one_or_none()
+            if run else None
+        )
+        composite = score.composite if score else None
+        gated = bool(score.gated) if score else True
+        contributions.append(ActionContribution(
+            eu_id=aw.eu_id, attribution=aw.attribution,
+            composite=composite, confidence=score.confidence if score else None, gated=gated,
+        ))
+        details.append({
+            "eu_id": aw.eu_id,
+            "action_title": action.title if action else None,
+            "action_type": action.type if action else None,
+            "role": aw.role,
+            "attribution": _num(aw.attribution),
+            "status": eu.status if eu else None,
+            "composite": _num(composite),
+            "confidence": _num(score.confidence) if score else None,
+        })
+    return contributions, details
+
+
+def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
+    from degreezeor.scoring.rollup import rollup
+
+    official = session.get(Official, official_id)
+    if official is None:
+        return None
+    contributions, details = _official_contributions(session, official_id)
+    r = rollup(contributions)
+    return {
+        "official": {"id": official.id, "name": official.full_name, "bioguide_id": official.bioguide_id},
+        "rollup": {
+            "total_actions": r.total_actions,
+            "scored_actions": r.scored_actions,
+            "coverage": _num(r.coverage),
+            "composite": _num(r.composite),  # None => insufficient evidence
+            "confidence": _num(r.confidence),
+            "note": (
+                "Attribution-weighted mean composite over this official's SCORED actions, "
+                "shown only with coverage. None => no action cleared the confidence gate "
+                "(insufficient evidence), never a low score."
+            ),
+        },
+        "actions": details,
+    }
+
+
+def list_officials(session: Session) -> list[dict[str, Any]]:
+    from degreezeor.scoring.rollup import rollup
+
+    ids = session.execute(
+        select(AttributionWeight.official_id).where(
+            AttributionWeight.official_id.is_not(None),
+            AttributionWeight.is_residual.is_(False),
+        ).distinct()
+    ).scalars().all()
+    out = []
+    for oid in ids:
+        official = session.get(Official, oid)
+        contributions, _ = _official_contributions(session, oid)
+        r = rollup(contributions)
+        out.append({
+            "id": oid,
+            "name": official.full_name if official else None,
+            "total_actions": r.total_actions,
+            "scored_actions": r.scored_actions,
+            "coverage": _num(r.coverage),
+            "composite": _num(r.composite),
+            "confidence": _num(r.confidence),
+        })
+    out.sort(key=lambda x: (-(x["scored_actions"]), x["name"] or ""))
+    return out
+
+
 def list_units(session: Session) -> list[dict[str, Any]]:
     rows = session.execute(
         select(EvaluationUnit, Action).join(Action, Action.id == EvaluationUnit.action_id)

@@ -57,6 +57,21 @@ def get_evaluation_unit(eu_id: int) -> dict:
     return card
 
 
+@app.get("/api/officials")
+def list_officials() -> list[dict]:
+    with session_scope() as s:
+        return presentation.list_officials(s)
+
+
+@app.get("/api/officials/{official_id}")
+def get_official(official_id: int) -> dict:
+    with session_scope() as s:
+        card = presentation.build_official(s, official_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="official not found")
+    return card
+
+
 @app.get("/api/audit/verify")
 def verify_audit() -> dict:
     with session_scope() as s:

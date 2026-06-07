@@ -11,6 +11,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +22,18 @@ class Settings(BaseSettings):
 
     # --- Database ---
     database_url: str = "postgresql+psycopg://degreezeor:degreezeor@localhost:5432/degreezeor"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_db_url(cls, v: str) -> str:
+        # Managed Postgres (e.g. Render) provides 'postgres://' or 'postgresql://' without a
+        # driver; SQLAlchemy 2.0 needs the explicit psycopg (v3) driver.
+        if isinstance(v, str):
+            if v.startswith("postgres://"):
+                return "postgresql+psycopg://" + v[len("postgres://"):]
+            if v.startswith("postgresql://"):
+                return "postgresql+psycopg://" + v[len("postgresql://"):]
+        return v
 
     # --- Official source API keys (DEMO_KEY works for Congress.gov + GovInfo) ---
     congress_api_key: str = "DEMO_KEY"

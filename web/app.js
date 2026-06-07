@@ -3,7 +3,9 @@
 // Demonstrates the platform's default output: a decomposed, source-linked,
 // confidence-gated scorecard — NOT a single normative verdict.
 
-const API = ""; // same origin (FastAPI serves both)
+// API base: same-origin by default; set window.DZ_API_BASE (config.js) for a split
+// static-frontend + separate-API deployment (e.g. Render).
+const API = (typeof window !== "undefined" && window.DZ_API_BASE) || "";
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);

@@ -1,0 +1,81 @@
+# Render Blueprint — production deployment.
+#
+# Architecture: ingestion/scoring (slow, batch) is decoupled from serving (fast, read-only).
+#   - Postgres            : system of record + precomputed scores
+#   - API web service     : read-only FastAPI; serves precomputed scores in milliseconds
+#   - Static site         : the zero-build SPA (web/), points at the API
+#   - Cron job            : nightly idempotent ingestion/scoring (off the request path)
+#
+# Set the API keys (DZ_CONGRESS_API_KEY, DZ_BLS_API_KEY, optional DZ_COURTLISTENER_TOKEN)
+# as secret env vars in the Render dashboard (sync: false) — never commit them.
+
+databases:
+  - name: degreezeor-db
+    plan: starter            # or 'free' for trials
+    postgresMajorVersion: "16"
+
+services:
+  # ---- Read-only API ----
+  - type: web
+    name: degreezeor-api
+    runtime: python
+    plan: starter
+    buildCommand: "pip install -e ."
+    preDeployCommand: "degreezeor migrate"          # apply migrations before each deploy
+    startCommand: "uvicorn degreezeor.api.app:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/health
+    disk:
+      name: data
+      mountPath: /var/data                          # durable cache/landing
+      sizeGB: 1
+    envVars:
+      - key: DZ_DATABASE_URL
+        fromDatabase: { name: degreezeor-db, property: connectionString }
+      - key: DZ_DATA_DIR
+        value: /var/data
+      - key: DZ_HTTP_CACHE
+        value: "1"
+      - key: DZ_CONGRESS_API_KEY
+        sync: false
+      - key: DZ_BLS_API_KEY
+        sync: false
+      - key: DZ_COURTLISTENER_TOKEN
+        sync: false
+
+  # ---- Static frontend (SPA) ----
+  - type: web
+    name: degreezeor-web
+    runtime: static
+    # Inject the API base URL into config.js at build time from the API service host.
+    buildCommand: "printf 'window.DZ_API_BASE=\"https://%s\";\\n' \"$API_HOST\" > web/config.js"
+    staticPublishPath: web
+    envVars:
+      - key: API_HOST
+        fromService: { type: web, name: degreezeor-api, property: host }
+    routes:
+      - type: rewrite                                # SPA uses hash routing; serve index for all
+        source: /*
+        destination: /index.html
+
+  # ---- Nightly ingestion + scoring (cron) ----
+  - type: cron
+    name: degreezeor-ingest
+    runtime: python
+    schedule: "0 7 * * *"                            # 07:00 UTC daily
+    buildCommand: "pip install -e ."
+    startCommand: "degreezeor migrate && degreezeor refresh"
+    disk:
+      name: ingest-data
+      mountPath: /var/data
+      sizeGB: 2
+    envVars:
+      - key: DZ_DATABASE_URL
+        fromDatabase: { name: degreezeor-db, property: connectionString }
+      - key: DZ_DATA_DIR
+        value: /var/data
+      - key: DZ_CONGRESS_API_KEY
+        sync: false
+      - key: DZ_BLS_API_KEY
+        sync: false
+      - key: DZ_COURTLISTENER_TOKEN
+        sync: false

@@ -84,6 +84,15 @@ DZ_RUN_LIVE=1 pytest   # + live end-to-end + reproducibility (needs network + Po
 Key guards: party-blindness (scoring code may never read party), audit-chain tamper detection,
 outcome determinism, attribution residual/normalization, and confidence-gate behavior.
 
+## Deployment
+
+Production runs as four Render resources (ingestion decoupled from serving): a managed
+**Postgres**, a read-only **FastAPI web service**, a **static frontend**, and a nightly
+**cron** that runs `degreezeor refresh` (idempotent ingestion + scoring). Schema is managed
+by **Alembic** (`degreezeor migrate`). See [`docs/DEPLOY.md`](docs/DEPLOY.md) and
+[`render.yaml`](render.yaml). The API serves precomputed, deterministic scores in
+milliseconds — no live official-API calls on the request path.
+
 ## Status & roadmap
 
 This is the **Phase-1 vertical slice**. The architecture is built behind pluggable interfaces

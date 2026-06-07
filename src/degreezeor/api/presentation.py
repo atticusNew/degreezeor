@@ -53,6 +53,27 @@ def _narrative(action: Action, metric: Metric | None, outcome: OutcomeResult | N
             f"because: {eu.non_scoreable_reason or 'no operational metric / outcome'}. "
             "Absence of evidence is reported as such — not as a low score."
         )
+    gated = score.gated if score else True
+    if eu.evaluation_mode == "target":
+        # Promise-keeping framing (the baseline value here is the committed TARGET).
+        target = float(outcome.baseline_pooled)
+        observed = float(outcome.observed)
+        pct = (observed / target * 100) if target else 0.0
+        attrib = ("directly attributable to the action (its own funds/output)"
+                  if eu.directly_attributable else "NOT directly attributable (economy-wide)")
+        base = (
+            f"This is a TARGET-RELATIVE (promise-keeping) score: did the policy deliver its own "
+            f"committed number? Its target for '{metric.name}' was {target:,.0f} {metric.unit}; "
+            f"official data shows {observed:,.0f} {metric.unit} delivered (~{pct:.0f}%). "
+            f"The realized series is {attrib}."
+        )
+        if gated:
+            base += (" Confidence is below the publish threshold (the realized series isn't "
+                     "directly attributable), so no composite is issued — insufficient evidence.")
+        else:
+            base += (f" Because the realized series is the action's own output, confidence cleared "
+                     f"the gate; composite {_num(score.composite) if score else None}/100.")
+        return base
     direction = "toward" if float(outcome.delta) * (eu.sign_goal or 1) >= 0 else "away from"
     gated = score.gated if score else True
     goal_phrase = "reduce" if (eu.sign_goal or 1) < 0 else "increase"
@@ -171,6 +192,9 @@ def build_scorecard(session: Session, eu_id: int) -> dict[str, Any] | None:
             "non_scoreable_reason": eu.non_scoreable_reason,
             "lag_window_months": eu.lag_window_months,
             "sign_goal": eu.sign_goal,
+            "evaluation_mode": eu.evaluation_mode,
+            "target_value": _num(eu.target_value),
+            "directly_attributable": eu.directly_attributable,
             "prereg_hash": eu.prereg_hash,
             "prereg_at": eu.prereg_at.isoformat() if eu.prereg_at else None,
         },

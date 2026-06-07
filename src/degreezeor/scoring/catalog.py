@@ -68,7 +68,7 @@ CATALOG: list[MetricSpec] = [
         source_name="BLS",
         native_series_id="CES0500000003",
         domain="Economics and Public Finance",
-        keywords=("minimum wage", "wage", "wages", "earnings", "pay", "salary", "income"),
+        keywords=("minimum wage", "hourly wage", "hourly earnings", "wage rate", "raise wages"),
         default_lag_months=24,
     ),
     MetricSpec(

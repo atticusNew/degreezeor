@@ -9,6 +9,7 @@ Order is significant for neutrality:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import date
 
@@ -120,6 +121,27 @@ class ScoreOutcome:
     reproducible_hash: str | None
 
 
+def _obs_window(enacted: date, lag_months: int) -> tuple[str, str]:
+    """Inclusive ISO bounds for an EU's outcome series, so EUs that share a metric
+    (e.g. two laws both scored on nonfarm employment) never pollute each other's
+    observation set — which keeps every score run deterministic and reproducible."""
+    start = f"{enacted.year - 3}-01-01"
+    end = f"{enacted.year + (lag_months // 12) + 2}-12-31"
+    return start, end
+
+
+def _windowed_observations(session: Session, metric_id: int, enacted: date, lag_months: int):
+    start, end = _obs_window(enacted, lag_months)
+    rows = session.execute(
+        select(Observation.period, Observation.value).where(
+            Observation.metric_id == metric_id,
+            Observation.period >= start,
+            Observation.period <= end,
+        ).order_by(Observation.period)
+    ).all()
+    return [(p, v) for p, v in rows]
+
+
 def _ensure_methodology(session: Session) -> MethodologyVersion:
     mv = session.execute(
         select(MethodologyVersion).where(MethodologyVersion.semver == settings.methodology_version)
@@ -174,6 +196,7 @@ def _finalize(
     Used by every scoring pipeline (federal laws, state policies, …) so the formula,
     gate, persistence, and reproducibility hash are identical across action types.
     """
+    eu.alignment = q_score(D(alignment))  # persist for faithful re-runs (disputes)
     residual = next((a.attribution for a in attributions if a.is_residual), D(0))
     human_widths = [D(a.attr_ci_high) - D(a.attr_ci_low) for a in attributions if not a.is_residual]
 
@@ -335,11 +358,7 @@ def score_law(session: Session, congress: int, law_number: int, law_type: str = 
     end_year = enacted.year + (lag // 12) + 2
     load_observations(session, metric, start_year, end_year)
 
-    rows = session.execute(
-        select(Observation.period, Observation.value).where(Observation.metric_id == metric.id)
-        .order_by(Observation.period)
-    ).all()
-    observations = [(p, v) for p, v in rows]
+    observations = _windowed_observations(session, metric.id, enacted, lag)
     event_period = f"{enacted.year}-{enacted.month:02d}-01"
 
     comp = compute_outcome(
@@ -412,11 +431,7 @@ def score_executive_order(session: Session, document_number: str) -> ScoreOutcom
 
     enacted = action.action_date
     load_observations(session, metric, enacted.year - 3, enacted.year + (lag // 12) + 2)
-    rows = session.execute(
-        select(Observation.period, Observation.value).where(Observation.metric_id == metric.id)
-        .order_by(Observation.period)
-    ).all()
-    observations = [(p, v) for p, v in rows]
+    observations = _windowed_observations(session, metric.id, enacted, lag)
     event_period = f"{enacted.year}-{enacted.month:02d}-01"
 
     comp = compute_outcome(observations, event_period=event_period, lag_window_months=lag,
@@ -438,6 +453,76 @@ def score_executive_order(session: Session, document_number: str) -> ScoreOutcom
     return _finalize(
         session, eu, action, comp, attributions,
         alignment=D(primary.alignment), observations=observations, metric=metric, sign_goal=sign_goal,
+    )
+
+
+def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
+    """Deterministically RE-RUN an existing evaluation unit from stored inputs.
+
+    Reads the EU's persisted objective/metric/observations/alignment and rebuilds the
+    attribution context from the action — refetching outcome series ONLY from the URL
+    replay cache (no new network calls). Donor series for state comparison designs are
+    reconstructed (cache-first) from the policy spec. Produces a fresh, pinned ScoreRun;
+    a faithful re-run yields the SAME reproducible_hash. This is the engine behind the
+    dispute/appeal process: anyone can trigger an independent, reproducible re-run.
+    """
+    eu = session.get(EvaluationUnit, eu_id)
+    if eu is None or eu.metric_id is None or eu.objective_id is None:
+        raise ValueError(f"EU {eu_id} is not in a re-scoreable state")
+    action = session.get(Action, eu.action_id)
+    metric = session.get(Metric, eu.metric_id)
+
+    enacted = action.action_date
+    lag = eu.lag_window_months
+    observations = _windowed_observations(session, metric.id, enacted, lag)
+    event_period = f"{enacted.year}-{enacted.month:02d}-01"
+
+    # Reconstruct donor series (cache-first) for state comparison-design policies.
+    donor_observations: dict[str, list[tuple[str, object]]] = {}
+    donor_source_urls: list[str] = []
+    spec = STATE_POLICIES.get(action.native_identifier or "")
+    if spec is not None and spec.donor_fips:
+        prev = os.environ.get("DZ_HTTP_CACHE")
+        os.environ["DZ_HTTP_CACHE"] = "1"  # replay donors from cache; never new network
+        try:
+            sy = spec.enacted_year - 3
+            ey = spec.enacted_year + (spec.lag_window_months // 12) + 2
+            for dfips in spec.donor_fips:
+                dfetch = bls_adapter.fetch(state_employment_series_id(dfips), start_year=sy, end_year=ey)
+                donor_source_urls.append(dfetch.source_url)
+                dseries = json.loads(dfetch.content)["Results"]["series"][0]
+                donor_observations[dfips] = [
+                    (f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
+                    for pt in dseries["data"] if pt["period"].startswith("M")
+                ]
+        finally:
+            if prev is None:
+                os.environ.pop("DZ_HTTP_CACHE", None)
+            else:
+                os.environ["DZ_HTTP_CACHE"] = prev
+
+    comp = compute_outcome(
+        observations, event_period=event_period, lag_window_months=lag,
+        sign_goal=eu.sign_goal, seed=settings.deterministic_seed,
+        donor_observations=donor_observations or None,
+    )
+    if comp is None:
+        raise ValueError(f"EU {eu_id} has insufficient stored observations to re-run")
+
+    bill = session.get(Bill, action.id)
+    law = session.get(Law, action.id)
+    eo = session.get(ExecutiveOrder, action.id)
+    signer = (law.signed_by_official_id if law else None) or (eo.signing_official_id if eo else None)
+    actx = AttributionContext(
+        eu_id=eu.id, action_type=action.type,
+        sponsor_official_id=bill.sponsor_official_id if bill else None,
+        signer_official_id=signer, vote_margin=None, member_on_winning_side=None,
+    )
+    attributions = build_attribution(actx)
+    return _finalize(
+        session, eu, action, comp, attributions,
+        alignment=eu.alignment, observations=observations, metric=metric, sign_goal=eu.sign_goal,
+        extra_source_urls=donor_source_urls,
     )
 
 
@@ -533,11 +618,9 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     start_year = spec.enacted_year - 3
     end_year = spec.enacted_year + (spec.lag_window_months // 12) + 2
     load_observations(session, metric, start_year, end_year)
-    rows = session.execute(
-        select(Observation.period, Observation.value).where(Observation.metric_id == metric.id)
-        .order_by(Observation.period)
-    ).all()
-    observations = [(p, v) for p, v in rows]
+    observations = _windowed_observations(
+        session, metric.id, date(spec.enacted_year, spec.enacted_month, 1), spec.lag_window_months
+    )
     event_period = f"{spec.enacted_year}-{spec.enacted_month:02d}-01"
 
     # Donor (control) states: land for provenance + build in-memory series for the design.

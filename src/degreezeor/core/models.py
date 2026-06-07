@@ -255,6 +255,8 @@ class EvaluationUnit(Base):
     metric_id: Mapped[int | None] = mapped_column(ForeignKey("metrics.id"))
     lag_window_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sign_goal: Mapped[int | None] = mapped_column(Integer, nullable=True)  # +1 / -1
+    # Objective->metric fidelity used for scoring (persisted so re-runs are faithful).
+    alignment: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="pending")
     # pending|scored|non_scoreable_no_objective|non_scoreable_no_metric|
     # non_scoreable_not_implemented|insufficient_evidence|high_model_dependence

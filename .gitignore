@@ -15,6 +15,7 @@ dist/
 
 # Data landing (immutable raw snapshots are regenerated; keep out of git by default)
 data/landing/
+data/http_cache/
 *.duckdb
 
 # Node / web

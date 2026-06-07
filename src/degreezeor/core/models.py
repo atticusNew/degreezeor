@@ -155,6 +155,14 @@ class Law(Base):
     signed_by_official_id: Mapped[int | None] = mapped_column(ForeignKey("officials.id"))
 
 
+class ExecutiveOrder(Base):
+    __tablename__ = "executive_orders"
+    action_id: Mapped[int] = mapped_column(ForeignKey("actions.id"), primary_key=True)
+    eo_number: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)
+    signing_official_id: Mapped[int | None] = mapped_column(ForeignKey("officials.id"))
+    fr_doc_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
 class Vote(Base):
     __tablename__ = "votes"
     id: Mapped[int] = mapped_column(primary_key=True)

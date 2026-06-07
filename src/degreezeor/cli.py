@@ -17,7 +17,13 @@ from sqlalchemy import select
 from degreezeor.core import audit
 from degreezeor.core.db import engine, session_scope
 from degreezeor.core.models import Action, Base, EUScore, EvaluationUnit, ScoreRun
-from degreezeor.pipeline import STATE_POLICIES, score_law, score_state_policy
+from degreezeor.ingestion.adapters.federalregister import federal_register_adapter
+from degreezeor.pipeline import (
+    STATE_POLICIES,
+    score_executive_order,
+    score_law,
+    score_state_policy,
+)
 
 
 def cmd_initdb(_: argparse.Namespace) -> int:
@@ -41,6 +47,20 @@ def cmd_score_state(args: argparse.Namespace) -> int:
         return 2
     with session_scope() as s:
         result = score_state_policy(s, spec)
+    print(f"action_id={result.action_id} eu_id={result.eu_id} status={result.status}")
+    print(f"score_run_id={result.score_run_id} reproducible_hash={result.reproducible_hash}")
+    return 0
+
+
+def cmd_score_eo(args: argparse.Namespace) -> int:
+    doc = args.document_number
+    if args.eo_number:
+        doc = federal_register_adapter.find_executive_order(args.eo_number)
+        if doc is None:
+            print(f"could not resolve EO number {args.eo_number} to a Federal Register document")
+            return 2
+    with session_scope() as s:
+        result = score_executive_order(s, doc)
     print(f"action_id={result.action_id} eu_id={result.eu_id} status={result.status}")
     print(f"score_run_id={result.score_run_id} reproducible_hash={result.reproducible_hash}")
     return 0
@@ -91,6 +111,11 @@ def main(argv: list[str] | None = None) -> int:
     ss = sub.add_parser("score-state")
     ss.add_argument("key", help=f"state policy key (one of: {', '.join(STATE_POLICIES)})")
     ss.set_defaults(func=cmd_score_state)
+
+    se = sub.add_parser("score-eo")
+    se.add_argument("document_number", nargs="?", help="Federal Register document number, e.g. 2021-09263")
+    se.add_argument("--eo-number", type=int, help="resolve by executive order number, e.g. 14026")
+    se.set_defaults(func=cmd_score_eo)
 
     args = p.parse_args(argv)
     return int(args.func(args))

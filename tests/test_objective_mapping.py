@@ -30,6 +30,15 @@ def test_unemployment_objective_selects_unemployment_or_jobs_metric() -> None:
     assert primary.spec.code in {"unemployment_rate", "nonfarm_employment"}
 
 
+def test_executive_order_wage_objective_maps_to_earnings() -> None:
+    # An EO's own stated objective is the yardstick, same as any action.
+    primary, _side = select_metrics(
+        "Increasing the Minimum Wage for Federal Contractors", "Economics and Public Finance"
+    )
+    assert primary is not None
+    assert primary.spec.code == "avg_hourly_earnings"
+
+
 def test_no_match_returns_none() -> None:
     primary, side = select_metrics("a resolution honoring the national peach festival", None)
     assert primary is None

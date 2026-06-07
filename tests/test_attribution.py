@@ -43,6 +43,26 @@ def test_residual_is_large_no_human_gets_everything() -> None:
     assert float(residual.attribution) >= 0.30
 
 
+def test_eo_signer_has_higher_authority_than_law_signer() -> None:
+    # Directing an executive order is unilateral => high authority; signing a law that
+    # Congress passed is shared => low authority (PLAN.md §7).
+    eo = build_attribution(AttributionContext(
+        eu_id=1, action_type="eo", sponsor_official_id=None, signer_official_id=42,
+        vote_margin=None, member_on_winning_side=None,
+    ))
+    law = build_attribution(AttributionContext(
+        eu_id=1, action_type="law", sponsor_official_id=None, signer_official_id=42,
+        vote_margin=None, member_on_winning_side=None,
+    ))
+    eo_signer = next(r for r in eo if r.role == "signer")
+    law_signer = next(r for r in law if r.role == "signer")
+    assert float(eo_signer.attribution) > float(law_signer.attribution)
+    assert float(eo_signer.attribution) >= 0.5  # unilateral executive authority
+    # Even a unilateral EO leaves a meaningful unattributable residual.
+    eo_residual = next(r for r in eo if r.is_residual)
+    assert float(eo_residual.attribution) > 0.0
+
+
 def test_normalization_caps_human_total() -> None:
     # Five heavy contributors would exceed the cap; normalization must scale them down.
     contribs = [

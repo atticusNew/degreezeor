@@ -61,6 +61,17 @@ CATALOG: list[MetricSpec] = [
         default_lag_months=18,
     ),
     MetricSpec(
+        code="avg_hourly_earnings",
+        name="Average Hourly Earnings, Total Private (SA)",
+        unit="dollars/hour",
+        direction_good="up",
+        source_name="BLS",
+        native_series_id="CES0500000003",
+        domain="Economics and Public Finance",
+        keywords=("minimum wage", "wage", "wages", "earnings", "pay", "salary", "income"),
+        default_lag_months=24,
+    ),
+    MetricSpec(
         code="labor_force_participation",
         name="Labor Force Participation Rate (seasonally adjusted)",
         unit="percent",

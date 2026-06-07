@@ -49,15 +49,22 @@ class SignerChannel(AttributionChannel):
     def contributions(self, ctx: AttributionContext) -> list[AttributionContribution]:
         if ctx.signer_official_id is None:
             return []
+        # Formal authority depends on the instrument (PLAN.md §7): signing a law that
+        # Congress passed is shared authority (~0.15); directing an executive order or
+        # regulation is a unilateral executive act, so the signer's authority is high.
+        if ctx.action_type in ("eo", "regulation"):
+            authority, lo, hi = D("0.60"), D("0.40"), D("0.85")
+        else:
+            authority, lo, hi = D("0.15"), D("0.10"), D("0.25")
         return [
             AttributionContribution(
                 official_id=ctx.signer_official_id,
                 role="signer",
-                authority=D("0.15"),
+                authority=authority,
                 pivotality=D("1.0"),
-                raw_weight=D("0.15"),
-                raw_low=D("0.10"),
-                raw_high=D("0.25"),
+                raw_weight=authority,
+                raw_low=lo,
+                raw_high=hi,
             )
         ]
 

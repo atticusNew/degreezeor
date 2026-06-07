@@ -125,7 +125,18 @@ class HttpClient:
                 breaker.record_success()
                 cache_path.write_bytes(resp.content)  # persist only validated responses
                 return resp.content
-            except (httpx.TransportError, httpx.HTTPStatusError, RetryableContentError) as exc:
+            except httpx.HTTPStatusError as exc:
+                # Only transient statuses are retried; client errors (400/404/...) fail fast.
+                if exc.response is not None and exc.response.status_code not in _RETRYABLE_STATUS:
+                    breaker.record_success()  # server reachable; this is a request-level error
+                    raise
+                last_exc = exc
+                breaker.record_failure()
+                if attempt < self.max_retries:
+                    backoff = (2**attempt) + random.uniform(0, 0.5)
+                    log.warning("GET %s failed (%s); retry in %.1fs", url, exc, backoff)
+                    time.sleep(backoff)
+            except (httpx.TransportError, RetryableContentError) as exc:
                 last_exc = exc
                 breaker.record_failure()
                 if attempt < self.max_retries:

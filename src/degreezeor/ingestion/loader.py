@@ -21,6 +21,7 @@ from degreezeor.core.models import (
     Action,
     Bill,
     DataSource,
+    ExecutiveOrder,
     Law,
     Metric,
     Objective,
@@ -32,6 +33,7 @@ from degreezeor.core.models import (
 from degreezeor.core.reference import ensure_us_federal, president_on
 from degreezeor.ingestion.adapters.bls import bls_adapter
 from degreezeor.ingestion.adapters.congress import congress_adapter
+from degreezeor.ingestion.adapters.federalregister import federal_register_adapter
 from degreezeor.ingestion.landing import ensure_source, land
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -169,6 +171,68 @@ def load_law(session: Session, congress: int, law_number: int, law_type: str = "
                         objective_level="agency",
                     )
                 )
+    return action
+
+
+def load_executive_order(session: Session, document_number: str) -> Action:
+    """Ingest one executive order (Federal Register) into Action(type='eo') + signer."""
+    fetch = federal_register_adapter.fetch(document_number)
+    land(session, fetch)
+    doc = json.loads(fetch.content)
+
+    src = session.execute(
+        select(DataSource).where(DataSource.name == federal_register_adapter.name)
+    ).scalar_one()
+    jur = ensure_us_federal(session)
+
+    eo_number = doc.get("executive_order_number")
+    native_id = f"EO{eo_number}" if eo_number else f"FR{document_number}"
+    signing = doc.get("signing_date") or doc.get("publication_date")
+    signing_date: date | None = dtparse.parse(signing).date() if signing else None
+
+    existing = session.execute(
+        select(Action).where(Action.native_identifier == native_id, Action.type == "eo")
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    signer = president_on(session, signing_date) if signing_date else None
+    title = doc.get("title", "")
+    abstract = _strip_html(doc.get("abstract") or "")
+
+    action = Action(
+        type="eo",
+        title=title,
+        action_date=signing_date,
+        jurisdiction_id=jur.id,
+        source_id=src.id,
+        source_url=fetch.source_url,
+        native_identifier=native_id,
+        content_hash=fetch.content_hash,
+        domain="Economics and Public Finance",
+        implemented=True,
+    )
+    session.add(action)
+    session.flush()
+    session.add(
+        ExecutiveOrder(
+            action_id=action.id,
+            eo_number=str(eo_number) if eo_number else None,
+            signing_official_id=signer.id if signer else None,
+            fr_doc_number=document_number,
+        )
+    )
+    # Objective from the EO's own title (+ abstract when present) — its stated purpose.
+    objective_text = f"{title}. {abstract}".strip(". ").strip() or title
+    session.add(
+        Objective(
+            action_id=action.id,
+            text=objective_text,
+            source_id=src.id,
+            source_url=fetch.source_url,
+            objective_level="executive",
+        )
+    )
     return action
 
 

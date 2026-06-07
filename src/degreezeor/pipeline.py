@@ -28,6 +28,7 @@ from degreezeor.core.models import (
     DataSource,
     EUScore,
     EvaluationUnit,
+    ExecutiveOrder,
     Jurisdiction,
     Law,
     MethodologyVersion,
@@ -43,7 +44,12 @@ from degreezeor.core.numeric import D, q_score
 from degreezeor.ingestion.adapters.bls import bls_adapter
 from degreezeor.ingestion.adapters.generic import generic_url_adapter
 from degreezeor.ingestion.landing import land
-from degreezeor.ingestion.loader import ensure_bls_source, load_law, load_observations
+from degreezeor.ingestion.loader import (
+    ensure_bls_source,
+    load_executive_order,
+    load_law,
+    load_observations,
+)
 from degreezeor.provenance import current_git_sha, data_snapshot_id
 from degreezeor.scoring.attribution import build_attribution
 from degreezeor.scoring.baseline import split_series  # noqa: F401  (ensures registration import)
@@ -356,6 +362,77 @@ def score_law(session: Session, congress: int, law_number: int, law_type: str = 
         signer_official_id=law.signed_by_official_id if law else None,
         vote_margin=None,
         member_on_winning_side=None,
+    )
+    attributions = build_attribution(actx)
+    return _finalize(
+        session, eu, action, comp, attributions,
+        alignment=D(primary.alignment), observations=observations, metric=metric, sign_goal=sign_goal,
+    )
+
+
+def score_executive_order(session: Session, document_number: str) -> ScoreOutcome:
+    """Ingest + score one executive order (Federal Register) end-to-end.
+
+    Same neutral machinery as laws; attribution gives the signing president high
+    executive authority (EOs are unilateral). Most EOs will be non-scoreable or
+    insufficient-evidence (narrow / diffuse objectives) — reported honestly.
+    """
+    ensure_bls_source(session)
+    action = load_executive_order(session, document_number)
+
+    obj = _objective_for_matching(session, action.id)
+    if obj is None:
+        eu = EvaluationUnit(action_id=action.id, status="non_scoreable_no_objective",
+                            non_scoreable_reason="No stated objective found.")
+        session.add(eu)
+        session.flush()
+        return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+
+    primary, _side = select_metrics(obj.text, action.domain)
+    if primary is None:
+        eu = EvaluationUnit(action_id=action.id, objective_id=obj.id, status="non_scoreable_no_metric",
+                            non_scoreable_reason="No official metric operationalizes the stated objective.")
+        session.add(eu)
+        session.flush()
+        return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+
+    metric = ensure_metric(session, primary.spec)
+    sign_goal = sign_goal_for(primary.spec)
+    lag = primary.spec.default_lag_months
+    eu = EvaluationUnit(action_id=action.id, objective_id=obj.id, metric_id=metric.id,
+                        lag_window_months=lag, sign_goal=sign_goal, status="pending")
+    session.add(eu)
+    session.flush()
+
+    preregister(
+        session, eu, action_native_id=action.native_identifier, metric_code=primary.spec.code,
+        objective_level=obj.objective_level, sign_goal=sign_goal, lag_window_months=lag,
+        masked_objective=mask_party_and_name(obj.text)[:280],
+    )
+
+    enacted = action.action_date
+    load_observations(session, metric, enacted.year - 3, enacted.year + (lag // 12) + 2)
+    rows = session.execute(
+        select(Observation.period, Observation.value).where(Observation.metric_id == metric.id)
+        .order_by(Observation.period)
+    ).all()
+    observations = [(p, v) for p, v in rows]
+    event_period = f"{enacted.year}-{enacted.month:02d}-01"
+
+    comp = compute_outcome(observations, event_period=event_period, lag_window_months=lag,
+                           sign_goal=sign_goal, seed=settings.deterministic_seed)
+    if comp is None:
+        eu.status = "insufficient_evidence"
+        eu.non_scoreable_reason = "Insufficient outcome observations around the evaluation window."
+        session.flush()
+        return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+
+    eo = session.get(ExecutiveOrder, action.id)
+    actx = AttributionContext(
+        eu_id=eu.id, action_type=action.type,
+        sponsor_official_id=None,
+        signer_official_id=eo.signing_official_id if eo else None,
+        vote_margin=None, member_on_winning_side=None,
     )
     attributions = build_attribution(actx)
     return _finalize(

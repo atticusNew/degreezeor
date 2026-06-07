@@ -102,3 +102,24 @@ def test_state_policy_synthetic_control_clears_gate_and_is_reproducible() -> Non
     # is cleared and a composite is produced — and the run is bit-reproducible.
     assert r1.status == "scored"
     assert r1.reproducible_hash == r2.reproducible_hash
+
+
+def test_executive_order_ingests_and_scores() -> None:
+    from degreezeor.core.models import Action, AttributionWeight, ExecutiveOrder
+    from degreezeor.pipeline import score_executive_order
+
+    s = _fresh_session()
+    try:
+        # EO 14026 — "Increasing the Minimum Wage for Federal Contractors" (Biden, 2021).
+        r = score_executive_order(s, "2021-09263")
+        s.commit()
+        action = s.get(Action, r.action_id)
+        eo = s.get(ExecutiveOrder, r.action_id)
+        assert action.type == "eo"
+        assert eo.eo_number == "14026"
+        # If it scored, the signing president carries high executive authority.
+        if r.status == "scored":
+            signer = s.query(AttributionWeight).filter_by(eu_id=r.eu_id, role="signer").one()
+            assert float(signer.attribution) >= 0.5
+    finally:
+        s.close()

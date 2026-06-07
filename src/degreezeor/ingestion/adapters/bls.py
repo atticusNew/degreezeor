@@ -7,6 +7,7 @@ raise limits). Returns raw JSON for a series over a year range for landing.
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,10 +33,20 @@ class BlsAdapter(SourceAdapter):
         q: dict[str, str] = {"startyear": str(start_year), "endyear": str(end_year)}
         if settings.bls_api_key:
             q["registrationkey"] = settings.bls_api_key
-        content = client.get_bytes(url, params=q)
-        # Validate the API actually returned data (BLS returns 200 + REQUEST_NOT_PROCESSED on errors).
-        doc = json.loads(content)
-        if doc.get("status") != "REQUEST_SUCCEEDED":
+        # BLS reports throttling as an HTTP-200 body with status REQUEST_NOT_PROCESSED,
+        # which bypasses transport-level retries — so handle the burst limit here with
+        # exponential backoff (the keyless tier has a short-window request cap).
+        content = b""
+        doc: dict = {}
+        for attempt in range(5):
+            content = client.get_bytes(url, params=q)
+            doc = json.loads(content)
+            if doc.get("status") == "REQUEST_SUCCEEDED":
+                break
+            msg = " ".join(doc.get("message", []) or [])
+            if "threshold" in msg.lower() and attempt < 4:
+                time.sleep(2**attempt + 1)  # 2s,3s,5s,9s
+                continue
             raise RuntimeError(f"BLS request failed for {native_identifier}: {doc.get('message')}")
         public_url = f"{url}?startyear={start_year}&endyear={end_year}"
         return RawFetch(

@@ -31,6 +31,69 @@ async function getJSON(path) {
   return r.json();
 }
 
+async function postJSON(path, body) {
+  const r = await fetch(API + path, {
+    method: "POST",
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  return r.json();
+}
+
+async function disputesCard(euId) {
+  const card = el("div", { class: "card" });
+  card.appendChild(el("h3", {}, "Challenge / appeal this score"));
+  card.appendChild(el("p", { class: "muted", style: "font-size:13px" },
+    "Anyone may dispute a score. Resolution is not editorial — it triggers an independent, " +
+    "deterministic re-run and publishes whether the score changed (a public diff). Every step " +
+    "is recorded on the append-only audit chain."));
+
+  const listWrap = el("div", {});
+  async function refresh() {
+    listWrap.innerHTML = "";
+    const disputes = await getJSON(`/api/disputes?eu_id=${euId}`);
+    if (!disputes.length) {
+      listWrap.appendChild(el("div", { class: "muted", style: "font-size:13px" }, "No disputes filed."));
+    }
+    for (const d of disputes) {
+      const row = el("div", { style: "border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0" },
+        el("div", {}, el("span", { class: "pill" }, d.status.replaceAll("_", " ")),
+          el("span", { class: "muted", style: "margin-left:8px" }, `#${d.id} · ${d.filer}`)),
+        el("div", { style: "margin:6px 0;font-size:13px" }, d.claim),
+        d.public_diff ? el("div", { class: "mono", style: "font-size:12px;color:var(--good)" }, d.public_diff.summary) : null);
+      if (d.status === "open") {
+        row.appendChild(el("button", {
+          style: "margin-top:6px", onclick: async (e) => {
+            e.target.disabled = true; e.target.textContent = "Re-running…";
+            await postJSON(`/api/disputes/${d.id}/resolve`);
+            await refresh();
+          },
+        }, "Resolve via reproducible re-run"));
+      }
+      listWrap.appendChild(row);
+    }
+  }
+
+  const filer = el("input", { type: "text", placeholder: "your name / org", style: "width:100%;margin:4px 0;padding:6px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px" });
+  const claim = el("textarea", { placeholder: "what do you dispute and why?", rows: "2", style: "width:100%;margin:4px 0;padding:6px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px" });
+  const submit = el("button", {
+    onclick: async () => {
+      if (!claim.value.trim()) return;
+      await postJSON("/api/disputes", { eu_id: euId, filer: filer.value || "anonymous", claim: claim.value });
+      claim.value = ""; filer.value = "";
+      await refresh();
+    },
+  }, "File challenge");
+  card.appendChild(filer);
+  card.appendChild(claim);
+  card.appendChild(submit);
+  card.appendChild(el("h3", { style: "margin-top:16px" }, "Disputes"));
+  card.appendChild(listWrap);
+  await refresh();
+  return card;
+}
+
 async function renderAuditStatus() {
   try {
     const a = await getJSON("/api/audit/verify");
@@ -220,6 +283,9 @@ async function renderDetail(id) {
       el("h3", {}, "Your value weights (optional · default = neutral)"),
       valueWeightPanel(card)));
   }
+
+  // Challenge / appeal (dispute workflow)
+  app.appendChild(await disputesCard(card.evaluation_unit.id));
 
   // What would change the score
   if (card.what_would_change_the_score && card.what_would_change_the_score.length) {

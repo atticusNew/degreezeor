@@ -94,3 +94,6 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
 .audit-bad { color: var(--bad); }
 .weights label { display: grid; grid-template-columns: 150px 1fr 44px; gap: 10px; align-items: center; padding: 4px 0; font-size: 13px; }
 .weights input[type=range] { width: 100%; }
+button { background: var(--accent); color: #06101f; border: none; border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+button:hover { filter: brightness(1.1); }
+button:disabled { opacity: .6; cursor: default; }

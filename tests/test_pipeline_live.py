@@ -49,3 +49,26 @@ def test_arra_scores_and_is_reproducible() -> None:
     assert r1.reproducible_hash == r2.reproducible_hash
     # ARRA on a naive single-series baseline must NOT be over-claimed.
     assert r1.status == "insufficient_evidence"
+
+
+def test_state_policy_synthetic_control_clears_gate_and_is_reproducible() -> None:
+    from degreezeor.pipeline import STATE_POLICIES, score_state_policy
+
+    s1 = _fresh_session()
+    try:
+        r1 = score_state_policy(s1, STATE_POLICIES["KS-HB2117"])
+        s1.commit()
+    finally:
+        s1.close()
+
+    s2 = _fresh_session()
+    try:
+        r2 = score_state_policy(s2, STATE_POLICIES["KS-HB2117"])
+        s2.commit()
+    finally:
+        s2.close()
+
+    # Synthetic control on real BLS state data is well-identified here, so the gate
+    # is cleared and a composite is produced — and the run is bit-reproducible.
+    assert r1.status == "scored"
+    assert r1.reproducible_hash == r2.reproducible_hash

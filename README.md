@@ -48,12 +48,19 @@ pip install -e ".[dev]"
 export DZ_DATABASE_URL=postgresql+psycopg://degreezeor:degreezeor@localhost:5432/degreezeor
 
 degreezeor initdb
-degreezeor score 111 5        # American Recovery and Reinvestment Act of 2009 (PL 111-5)
+degreezeor score 111 5            # federal law: ARRA 2009 (PL 111-5) -> insufficient evidence
+degreezeor score-state KS-HB2117  # state policy via synthetic control -> scored (real composite)
 degreezeor list
 degreezeor verify-audit
 
 uvicorn degreezeor.api.app:app --port 8077    # UI + API at http://localhost:8077
 ```
+
+**Comparison designs (Phase 2):** `score-state` evaluates a state policy against a pool of donor
+states using **synthetic control / difference-in-differences** on official BLS state series. The
+bundled Kansas 2012 tax-cut demo (`KS-HB2117`) is well-identified, clears the confidence gate, and
+yields a real composite — a neutral, sourced finding that the policy's *own* job-creation objective
+was not met relative to its synthetic control.
 
 API keys: Congress.gov/GovInfo accept the shared `DEMO_KEY` (rate-limited) by default; set
 `DZ_CONGRESS_API_KEY` / `DZ_BLS_API_KEY` for higher limits. No secrets are committed.

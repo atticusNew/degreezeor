@@ -58,16 +58,25 @@ This is the ideology-free core: we only ask whether the metric moved toward the 
 
 ## 5. Baseline ensemble & model dependence
 
-A baseline ensemble estimates the counterfactual. The slice ships two methods; stronger designs
-plug in behind the same interface:
+A baseline ensemble estimates the counterfactual. Methods plug in behind one `BaselineMethod` interface:
 
-- `pretrend_projection` — project the pre-period linear trend to the evaluation point. This is the
-  formal answer to *"don't credit inherited trends"*: the pre-existing trajectory **is** the baseline.
+- `pretrend_projection` — project the pre-period linear trend to the evaluation point. The formal
+  answer to *"don't credit inherited trends"*: the pre-existing trajectory **is** the baseline.
 - `flat_last_value` — naive no-change counterfactual.
-- *(Phase 2)* difference-in-differences, synthetic control, peer-jurisdiction, macro-shock adjustment.
+- `difference_in_differences` — counterfactual = treated pre-level + the control group's pre→post
+  change; eligible only when pre-trends are parallel. Differences out shocks common to treated and
+  control units.
+- `synthetic_control` — counterfactual = a nonnegative, sum-to-one weighted blend of donor units
+  that best matches the treated unit's pre-period path (Abadie-style); eligible only when the
+  pre-fit is tight. Strongest identification in the system.
 
-`model_dependence ∈ [0,1]` rises with sign disagreement / spread across methods and lowers confidence.
-A bootstrap (deterministic seed) yields a 95% CI on the delta.
+**Tiered pooling:** when a comparison design (DiD / synthetic control) is eligible it *drives* the
+estimate; naive single-series baselines are reported for transparency but never dilute a
+well-identified counterfactual. Comparison designs require donor/control units (sub-national
+variation) — e.g. a state policy scored against a pool of donor states' official series.
+
+`model_dependence ∈ [0,1]` rises with sign disagreement / spread across the active methods and lowers
+confidence. A bootstrap (deterministic seed) yields a 95% CI on the delta.
 
 ## 6. Attribution
 
@@ -129,10 +138,12 @@ sign disagreement across baselines, or confidence below the publish threshold.
 
 ## Roadmap
 
-- **Phase 1 (this slice):** US Congress, enacted economic/fiscal laws; Congress.gov + CBO links +
+- **Phase 1 (shipped):** US Congress, enacted economic/fiscal laws; Congress.gov + CBO links +
   BLS; pre-trend/flat baselines; sponsor/signer/decisive-vote attribution; confidence gate; API + UI.
-- **Phase 2:** executive orders + major regulations; difference-in-differences & synthetic control;
-  more domains (labor, energy, health); dispute/appeal workflow; relationship graph.
+- **Phase 2 (in progress):** **difference-in-differences & synthetic control shipped** (with
+  tiered pooling and state-policy scoring on official BLS state series — e.g. the Kansas 2012 tax
+  cuts demo, which clears the gate and yields a real composite). Remaining: executive orders + major
+  regulations; more domains (energy, health); dispute/appeal workflow; relationship graph.
 - **Phase 3:** state/local government; distributional & cost lenses; user value-weight profiles;
   reproducible notebooks; third-party audits.
 - **Ultimate:** all levels of government, real-time ingestion, full causal ensemble, audit program.

@@ -358,7 +358,32 @@ async function renderOfficials() {
     "Official-level roll-up: the attribution-weighted mean composite over each official's " +
     "SCORED actions — always shown with coverage. \u201CInsufficient evidence\u201D means none of " +
     "their actions cleared the confidence gate (never a low score)."));
-  const officials = await getJSON("/api/officials");
+
+  // Controls: search-by-official + scored-only filter.
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const controls = el("div", { style: "display:flex;gap:12px;align-items:center;margin:8px 0" });
+  const search = el("input", { type: "text", placeholder: "search official by name…", value: params.get("q") || "",
+    style: "flex:1;padding:7px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px" });
+  const scoredOnly = el("input", { type: "checkbox" });
+  if (params.get("scored_only") === "1") scoredOnly.checked = true;
+  const apply = () => {
+    const p = new URLSearchParams();
+    if (search.value.trim()) p.set("q", search.value.trim());
+    if (scoredOnly.checked) p.set("scored_only", "1");
+    location.hash = "#/officials" + (p.toString() ? "?" + p.toString() : "");
+  };
+  search.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
+  scoredOnly.addEventListener("change", apply);
+  controls.appendChild(search);
+  controls.appendChild(el("label", { class: "muted", style: "font-size:13px;display:flex;gap:6px;align-items:center" }, scoredOnly, "scored only"));
+  controls.appendChild(el("button", { onclick: apply }, "Search"));
+  app.appendChild(controls);
+
+  const qs = new URLSearchParams();
+  if (params.get("q")) qs.set("q", params.get("q"));
+  if (params.get("scored_only")) qs.set("scored_only", "true");
+  const officials = await getJSON("/api/officials" + (qs.toString() ? "?" + qs.toString() : ""));
+  app.appendChild(el("div", { class: "muted mono", style: "margin-bottom:8px" }, `${officials.length} officials`));
   for (const o of officials) {
     const scoredText = o.composite !== null
       ? `composite ${fmt(o.composite, 1)} · confidence ${(o.confidence * 100).toFixed(0)}%`
@@ -422,7 +447,15 @@ async function renderGraph() {
   }
   app.appendChild(legend);
 
-  const g = await getJSON("/api/graph");
+  // Default: hide tiny non-decisive-vote edges so the graph stays readable; toggle to show all.
+  const showAll = (location.hash.split("?")[1] || "").includes("all=1");
+  const minWeight = showAll ? 0 : 0.05;
+  const toggle = el("div", { class: "muted", style: "font-size:13px;margin:4px 0 10px" },
+    showAll ? "Showing all edges (incl. non-decisive votes). " : "Hiding tiny non-decisive-vote edges for readability. ",
+    el("a", { href: showAll ? "#/graph" : "#/graph?all=1" }, showAll ? "Hide them" : "Show all"));
+  app.appendChild(toggle);
+
+  const g = await getJSON(`/api/graph?min_weight=${minWeight}`);
   // Deterministic layered layout: one column per node type. Generous horizontal
   // spacing + per-type label truncation + right-anchored labels so columns never collide.
   const cols = COLUMN_ORDER.map((t) => g.nodes.filter((n) => n.type === t));

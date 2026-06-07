@@ -61,9 +61,9 @@ def get_evaluation_unit(eu_id: int) -> dict:
 
 
 @app.get("/api/officials")
-def list_officials() -> list[dict]:
+def list_officials(q: str | None = None, scored_only: bool = False) -> list[dict]:
     with session_scope() as s:
-        return presentation.list_officials(s)
+        return presentation.list_officials(s, q=q, scored_only=scored_only)
 
 
 @app.get("/api/officials/{official_id}")
@@ -148,11 +148,11 @@ def coverage() -> dict:
 
 
 @app.get("/api/graph")
-def relationship_graph(official_id: int | None = None) -> dict:
+def relationship_graph(official_id: int | None = None, min_weight: float = 0.0) -> dict:
     from degreezeor.api import graph as graph_mod
 
     with session_scope() as s:
-        return graph_mod.build_graph(s, official_id=official_id)
+        return graph_mod.build_graph(s, official_id=official_id, min_weight=min_weight)
 
 
 @app.get("/api/audit/verify")

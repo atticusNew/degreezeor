@@ -80,6 +80,15 @@ def cmd_score_target(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_enrich_names(args: argparse.Namespace) -> int:
+    from degreezeor.ingestion.loader import enrich_official_names
+
+    with session_scope() as s:
+        n = enrich_official_names(s, limit=args.limit)
+    print(f"enriched {n} official names")
+    return 0
+
+
 def cmd_batch_laws(args: argparse.Namespace) -> int:
     from collections import Counter
 
@@ -190,6 +199,10 @@ def main(argv: list[str] | None = None) -> int:
     be = sub.add_parser("batch-eos", help="batch-ingest+score recent executive orders")
     be.add_argument("--limit", type=int, default=25)
     be.set_defaults(func=cmd_batch_eos)
+
+    en = sub.add_parser("enrich-names", help="fill in full official names from Congress.gov")
+    en.add_argument("--limit", type=int, default=None)
+    en.set_defaults(func=cmd_enrich_names)
 
     dp = sub.add_parser("dispute")
     dp.add_argument("eu_id", type=int)

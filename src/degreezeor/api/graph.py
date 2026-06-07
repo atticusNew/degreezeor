@@ -33,10 +33,13 @@ def _truncate(text: str, n: int = 48) -> str:
     return text if len(text) <= n else text[: n - 1] + "\u2026"
 
 
-def build_graph(session: Session, *, official_id: int | None = None) -> dict[str, Any]:
+def build_graph(
+    session: Session, *, official_id: int | None = None, min_weight: float = 0.0
+) -> dict[str, Any]:
     """Build the relationship graph. If ``official_id`` is given, restrict to that
-    official's neighborhood (their actions + those actions' jurisdictions/metrics +
-    co-actors who share attribution on the same actions)."""
+    official's neighborhood. ``min_weight`` drops official→action edges below that
+    attribution weight (e.g. the tiny non-decisive vote edges), so the full graph stays
+    readable; officials left with no edges are pruned."""
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
 
@@ -59,6 +62,7 @@ def build_graph(session: Session, *, official_id: int | None = None) -> dict[str
                     focus_action_ids.add(eu.action_id)
 
     seen_action_metric: set[tuple[int, int]] = set()
+    seen_action_jur: set[tuple[int, int]] = set()
     for aw in attributions:
         eu = session.get(EvaluationUnit, aw.eu_id)
         if eu is None:
@@ -72,6 +76,8 @@ def build_graph(session: Session, *, official_id: int | None = None) -> dict[str
         official = session.get(Official, aw.official_id) if aw.official_id else None
         if official is None:
             continue
+        if float(aw.attribution) < min_weight:
+            continue  # drop sub-threshold (e.g. non-decisive vote) edges for readability
         oid = f"official:{official.id}"
         aid = f"action:{action.id}"
         add_node(oid, "official", official.full_name, ref_id=official.id)
@@ -82,8 +88,9 @@ def build_graph(session: Session, *, official_id: int | None = None) -> dict[str
             "weight": float(aw.attribution),
         })
 
-        # action -> jurisdiction
-        if action.jurisdiction_id:
+        # action -> jurisdiction (once per action)
+        if action.jurisdiction_id and (action.id, action.jurisdiction_id) not in seen_action_jur:
+            seen_action_jur.add((action.id, action.jurisdiction_id))
             jur = session.get(Jurisdiction, action.jurisdiction_id)
             if jur:
                 jid = f"jurisdiction:{jur.id}"

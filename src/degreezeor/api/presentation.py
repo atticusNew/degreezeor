@@ -340,7 +340,9 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
     }
 
 
-def list_officials(session: Session) -> list[dict[str, Any]]:
+def list_officials(
+    session: Session, q: str | None = None, scored_only: bool = False
+) -> list[dict[str, Any]]:
     from degreezeor.scoring.rollup import rollup
 
     ids = session.execute(
@@ -363,6 +365,11 @@ def list_officials(session: Session) -> list[dict[str, Any]]:
             "composite": _num(r.composite),
             "confidence": _num(r.confidence),
         })
+    if q:
+        ql = q.lower()
+        out = [o for o in out if ql in (o["name"] or "").lower()]
+    if scored_only:
+        out = [o for o in out if o["scored_actions"] > 0]
     out.sort(key=lambda x: (-(x["scored_actions"]), x["name"] or ""))
     return out
 

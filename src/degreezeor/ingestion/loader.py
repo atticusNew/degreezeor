@@ -346,6 +346,34 @@ def load_observations(
     return count
 
 
+def enrich_official_names(session: Session, limit: int | None = None) -> int:
+    """Replace last-name-only (vote-derived) official names with full names from
+    Congress.gov /member/{bioguide}. Idempotent; returns the number updated."""
+    # Officials whose name is a single token (e.g. "Adams") need a full name.
+    candidates = [
+        o for o in session.execute(
+            select(Official).where(Official.bioguide_id.is_not(None))
+        ).scalars().all()
+        if o.full_name and len(o.full_name.split()) == 1
+    ]
+    updated = 0
+    for o in candidates:
+        if limit is not None and updated >= limit:
+            break
+        try:
+            fetch = congress_adapter.fetch_member(o.bioguide_id)
+            land(session, fetch)
+            m = json.loads(fetch.content).get("member", {})
+            full = (m.get("directOrderName") or "").strip()
+            if full:
+                o.full_name = full
+                updated += 1
+        except Exception:  # noqa: BLE001 - name enrichment is best-effort
+            continue
+    session.flush()
+    return updated
+
+
 def ensure_bls_source(session: Session) -> DataSource:
     return ensure_source(
         session, name=bls_adapter.name, tier=bls_adapter.tier, base_url=bls_adapter.base_url

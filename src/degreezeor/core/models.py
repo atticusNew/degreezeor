@@ -261,6 +261,10 @@ class EvaluationUnit(Base):
     # (promise-keeping vs a pre-registered, source-linked numeric target).
     evaluation_mode: Mapped[str] = mapped_column(String(12), default="baseline")
     target_value: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
+    # Curated realized value (e.g. a court-survival index) for target-mode EUs whose
+    # realized input is a curated, source-linked FACT rather than a re-fetchable series.
+    # When set, re-runs use it directly (no re-fetch) -> deterministic.
+    realized_value: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
     directly_attributable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="pending")
     # pending|scored|non_scoreable_no_objective|non_scoreable_no_metric|

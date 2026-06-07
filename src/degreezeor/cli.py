@@ -80,6 +80,23 @@ def cmd_score_target(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_court_survival(args: argparse.Namespace) -> int:
+    from collections import Counter
+
+    from degreezeor.pipeline import COURT_SURVIVAL_SPECS, score_court_survival
+    keys = [args.key] if args.key else list(COURT_SURVIVAL_SPECS)
+    rs = []
+    with session_scope() as s:
+        for k in keys:
+            spec = COURT_SURVIVAL_SPECS.get(k)
+            if spec is None:
+                print(f"unknown key {k!r}; known: {', '.join(COURT_SURVIVAL_SPECS)}")
+                return 2
+            rs.append(score_court_survival(s, spec))
+    print("court survival:", dict(Counter(r.status for r in rs)), "total", len(rs))
+    return 0
+
+
 def cmd_budget_execution(args: argparse.Namespace) -> int:
     from collections import Counter
 
@@ -209,6 +226,10 @@ def main(argv: list[str] | None = None) -> int:
     be = sub.add_parser("batch-eos", help="batch-ingest+score recent executive orders")
     be.add_argument("--limit", type=int, default=25)
     be.set_defaults(func=cmd_batch_eos)
+
+    cs = sub.add_parser("court-survival", help="score executive-order survival of judicial review (curated)")
+    cs.add_argument("key", nargs="?", help="court-survival spec key (default: all)")
+    cs.set_defaults(func=cmd_court_survival)
 
     bx = sub.add_parser("budget-execution", help="score agency budget execution (obligation/outlay rate) for a FY")
     bx.add_argument("fiscal_year", type=int)

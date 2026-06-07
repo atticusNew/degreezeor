@@ -80,8 +80,12 @@ def compute_confidence(
     data_completeness: object,
     attribution_widths: list[object],
     sensitivity_sign_stable: bool | None = None,
+    definitive: bool = False,
 ) -> ConfidenceBreakdown:
-    c_design = clamp01(DESIGN_BASE.get(best_method, D("0.4")) * _significance_factor(ci_low, ci_high))
+    # A curated, documented FACT (e.g. a final court disposition) is definitively
+    # observed — the CI-excludes-zero "significance" test doesn't apply to it.
+    significance = D("1.0") if definitive else _significance_factor(ci_low, ci_high)
+    c_design = clamp01(DESIGN_BASE.get(best_method, D("0.4")) * significance)
 
     tier_factor = {0: D("0.95"), 1: D("0.95"), 2: D("0.85"), 3: D("0.60")}.get(data_tier, D("0.5"))
     c_data = clamp01(tier_factor * D(data_completeness))

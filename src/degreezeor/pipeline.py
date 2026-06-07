@@ -272,6 +272,7 @@ def _finalize(
     donor_observations: dict[str, list[tuple[str, object]]] | None = None,
     extra_source_urls: list[str] | None = None,
     s_outcome_override: object | None = None,
+    definitive: bool = False,
 ) -> ScoreOutcome:
     """Shared scoring tail: confidence → components → assemble → pinned reproducible run.
 
@@ -306,6 +307,7 @@ def _finalize(
         data_tier=1, data_completeness=D("1.0"),
         attribution_widths=human_widths,
         sensitivity_sign_stable=sens.sign_stable,
+        definitive=definitive,
     )
 
     delta_toward_goal = D(sign_goal) * D(comp.delta)
@@ -638,6 +640,27 @@ def eu_sensitivity(session: Session, eu_id: int):
 def _rescore_target_eu(session: Session, eu, action, metric) -> ScoreOutcome:
     from degreezeor.ingestion.adapters.usaspending import usaspending_adapter
     from degreezeor.scoring.target_outcome import compute_target_outcome
+
+    # Curated-fact EUs (e.g. court survival) store the realized value directly — re-runs
+    # use it as-is (no re-fetch), so they're deterministic by construction.
+    if eu.realized_value is not None:
+        event_period = f"{action.action_date.year}-{action.action_date.month:02d}-01"
+        from degreezeor.scoring.target_outcome import compute_target_outcome
+        tc = compute_target_outcome(
+            realized=float(eu.realized_value), target=float(eu.target_value), sign_goal=eu.sign_goal,
+            directly_attributable=bool(eu.directly_attributable), eval_period=event_period)
+        eo = session.get(ExecutiveOrder, action.id)
+        law = session.get(Law, action.id)
+        bill = session.get(Bill, action.id)
+        signer = (law.signed_by_official_id if law else None) or (eo.signing_official_id if eo else None)
+        actx = AttributionContext(
+            eu_id=eu.id, action_type=action.type,
+            sponsor_official_id=bill.sponsor_official_id if bill else None,
+            signer_official_id=signer, vote_margin=None, member_on_winning_side=None)
+        attributions = build_attribution(actx)
+        return _finalize(session, eu, action, tc.outcome, attributions, alignment=eu.alignment,
+                         observations=[], metric=metric, sign_goal=eu.sign_goal,
+                         event_period=event_period, s_outcome_override=tc.s_outcome, definitive=True)
 
     # native_series_id: "DEFC:<code>:<kind>" | "DEFCGEN:<code>:obligation" |
     #                    "AGENCYBUDGET:<toptier>:<fy>:<kind>"
@@ -996,6 +1019,106 @@ def batch_score_executive_orders(session: Session, limit: int = 25) -> list[Scor
         except Exception as exc:  # noqa: BLE001
             log.warning("batch EO %s failed: %s", doc_number, exc)
     return results
+
+
+@dataclass
+class CourtSurvivalSpec:
+    """A curated, source-linked judicial-review outcome for an executive order.
+
+    The disposition is a curated public FACT (not NLP-inferred); CourtListener supplies
+    case metadata for provenance. Survival index: upheld=100, partial=50, struck=0.
+    Ambiguous/ongoing cases are marked 'pending' and left non-scoreable.
+    """
+
+    key: str
+    eo_document_number: str  # Federal Register doc number of the EO
+    disposition: str  # upheld | partial | struck | pending
+    case_query: str  # CourtListener search query for provenance
+    note: str
+
+
+_SURVIVAL_INDEX = {"upheld": 100.0, "partial": 50.0, "struck": 0.0}
+
+# Curated set — only unambiguous, well-documented final outcomes are scored.
+COURT_SURVIVAL_SPECS: dict[str, CourtSurvivalSpec] = {
+    "EO13780-TRAVELBAN": CourtSurvivalSpec(
+        key="EO13780-TRAVELBAN", eo_document_number="2017-04837", disposition="upheld",
+        case_query="Trump v. Hawaii travel ban",
+        note="Proclamation 9645 / EO 13780 travel restrictions UPHELD by the Supreme Court "
+             "in Trump v. Hawaii (2018).",
+    ),
+    "EO14042-CONTRACTOR-VAX": CourtSurvivalSpec(
+        key="EO14042-CONTRACTOR-VAX", eo_document_number="2021-19924", disposition="struck",
+        case_query="Georgia v. Biden federal contractor vaccine mandate",
+        note="EO 14042 federal-contractor vaccine mandate was nationally enjoined, never "
+             "enforced, and later revoked.",
+    ),
+}
+
+
+def score_court_survival(session: Session, spec: CourtSurvivalSpec) -> ScoreOutcome:
+    """Court-survival vertical: how much of an executive order survived judicial review?
+    Curated disposition (source-linked) -> survival index; attributed to the issuing
+    president with a large residual (judicial composition is exogenous)."""
+    from degreezeor.ingestion.adapters.courtlistener import courtlistener_adapter
+
+    if spec.disposition == "pending" or spec.disposition not in _SURVIVAL_INDEX:
+        # Not final -> honest non-scoreable (don't score ongoing litigation).
+        action = load_executive_order(session, spec.eo_document_number)
+        eu = EvaluationUnit(action_id=action.id, status="insufficient_evidence",
+                            non_scoreable_reason="Litigation not final (disposition pending).",
+                            evaluation_mode="target")
+        session.add(eu)
+        session.flush()
+        return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+
+    action = load_executive_order(session, spec.eo_document_number)
+    cl_src = ensure_source(session, name=courtlistener_adapter.name, tier=courtlistener_adapter.tier,
+                           base_url=courtlistener_adapter.base_url)
+    # Provenance: fetch + land the case metadata (NOT used to infer the disposition).
+    cfetch = courtlistener_adapter.fetch(spec.case_query)
+    land(session, cfetch)
+    case = courtlistener_adapter.top_case(cfetch.content) or {}
+    case_url = case.get("url") or cfetch.source_url
+
+    survival = _SURVIVAL_INDEX[spec.disposition]
+    metric = session.execute(
+        select(Metric).where(Metric.code == "legal_survival")
+    ).scalar_one_or_none()
+    if metric is None:
+        metric = Metric(code="legal_survival", name="Legal survival index (judicial review)",
+                        unit="index", direction_good="up", source_id=cl_src.id,
+                        native_series_id="CURATED:court_survival", domain="Law")
+        session.add(metric)
+        session.flush()
+    obj = Objective(action_id=action.id, source_id=cl_src.id, source_url=case_url,
+                    objective_level="executive",
+                    text=(f"Survive judicial review: {spec.note} (disposition: {spec.disposition}; "
+                          f"source: {case.get('case_name') or spec.case_query})."))
+    session.add(obj)
+    session.flush()
+    eu = EvaluationUnit(action_id=action.id, objective_id=obj.id, metric_id=metric.id,
+                        lag_window_months=0, sign_goal=1, status="pending",
+                        evaluation_mode="target", target_value=D("100"),
+                        realized_value=D(str(survival)), directly_attributable=True)
+    session.add(eu)
+    session.flush()
+    preregister(session, eu, action_native_id=action.native_identifier, metric_code=metric.code,
+                objective_level="executive", sign_goal=1, lag_window_months=0,
+                masked_objective=f"court_survival disposition={spec.disposition}"[:280])
+
+    from degreezeor.scoring.target_outcome import compute_target_outcome
+    event_period = f"{action.action_date.year}-{action.action_date.month:02d}-01"
+    tc = compute_target_outcome(realized=survival, target=100.0, sign_goal=1,
+                                directly_attributable=True, eval_period=event_period)
+    eo = session.get(ExecutiveOrder, action.id)
+    actx = AttributionContext(eu_id=eu.id, action_type="eo", sponsor_official_id=None,
+                              signer_official_id=eo.signing_official_id if eo else None,
+                              vote_margin=None, member_on_winning_side=None)
+    attributions = build_attribution(actx)
+    return _finalize(session, eu, action, tc.outcome, attributions, alignment=D("0.95"),
+                     observations=[], metric=metric, sign_goal=1, event_period=event_period,
+                     extra_source_urls=[case_url], s_outcome_override=tc.s_outcome, definitive=True)
 
 
 def score_budget_execution(

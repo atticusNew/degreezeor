@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     congress_api_key: str = "DEMO_KEY"
     govinfo_api_key: str = "DEMO_KEY"
     bls_api_key: str = ""  # optional; raises BLS rate limits
+    courtlistener_token: str = ""  # optional; raises CourtListener rate limits
 
     # --- Immutable raw landing (content-addressed snapshots) ---
     data_dir: Path = REPO_ROOT / "data"

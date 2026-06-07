@@ -55,7 +55,10 @@ class SignerChannel(AttributionChannel):
         # budget EXECUTION is the administration's core duty but diffuse across the agency
         # and career staff, so moderate authority with a large unattributable residual.
         if ctx.action_type in ("eo", "regulation"):
-            authority, lo, hi = D("0.60"), D("0.40"), D("0.85")
+            # The President's authority over their OWN unilateral instrument is high and
+            # reasonably certain (they issued it), so a moderate band — magnitude is debated,
+            # not whether they own the act.
+            authority, lo, hi = D("0.57"), D("0.45"), D("0.70")
         elif ctx.action_type == "budget":
             # Moderate, reasonably-certain share (the diffuseness shows up as the large
             # unattributable residual, not as an uncertain band).

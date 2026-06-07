@@ -367,6 +367,49 @@ def list_officials(session: Session) -> list[dict[str, Any]]:
     return out
 
 
+def build_coverage(session: Session) -> dict[str, Any]:
+    """Platform-wide coverage (PLAN.md §16 transparency / anti-cherry-picking).
+
+    Shows the WHOLE denominator: how many actions were considered, and what fraction are
+    scoreable vs. honestly 'insufficient evidence' / non-scoreable — so the scored subset
+    can never be mistaken for a complete or cherry-picked record."""
+    from sqlalchemy import func
+
+    rows = session.execute(
+        select(EvaluationUnit.status, func.count()).group_by(EvaluationUnit.status)
+    ).all()
+    by_status = {s: n for s, n in rows}
+    total = sum(by_status.values())
+    scored = by_status.get("scored", 0)
+    insufficient = by_status.get("insufficient_evidence", 0)
+    non_scoreable = total - scored - insufficient
+
+    # By action type (join EU -> action).
+    type_rows = session.execute(
+        select(Action.type, EvaluationUnit.status, func.count())
+        .join(EvaluationUnit, EvaluationUnit.action_id == Action.id)
+        .group_by(Action.type, EvaluationUnit.status)
+    ).all()
+    by_type: dict[str, dict[str, int]] = {}
+    for atype, status, n in type_rows:
+        by_type.setdefault(atype, {})[status] = n
+
+    return {
+        "total_evaluation_units": total,
+        "scored": scored,
+        "insufficient_evidence": insufficient,
+        "non_scoreable": non_scoreable,
+        "scored_share": round(scored / total, 4) if total else 0.0,
+        "by_status": by_status,
+        "by_action_type": by_type,
+        "note": (
+            "Complete visibility: every action considered is shown, including those we "
+            "could not score. 'Insufficient evidence' is honest abstention, never a low score; "
+            "the scored subset is NOT a complete or representative record of any official."
+        ),
+    }
+
+
 def list_units(session: Session) -> list[dict[str, Any]]:
     rows = session.execute(
         select(EvaluationUnit, Action).join(Action, Action.id == EvaluationUnit.action_id)

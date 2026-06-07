@@ -141,6 +141,12 @@ def eu_sensitivity_endpoint(eu_id: int) -> dict:
     return out
 
 
+@app.get("/api/coverage")
+def coverage() -> dict:
+    with session_scope() as s:
+        return presentation.build_coverage(s)
+
+
 @app.get("/api/graph")
 def relationship_graph(official_id: int | None = None) -> dict:
     from degreezeor.api import graph as graph_mod

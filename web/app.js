@@ -493,6 +493,39 @@ async function renderGraph() {
   app.appendChild(wrap);
 }
 
+async function renderCoverage() {
+  const app = $("#app");
+  app.innerHTML = "";
+  const c = await getJSON("/api/coverage");
+  app.appendChild(el("p", { class: "muted" },
+    "Complete visibility: every action the platform has considered, including those it could " +
+    "not score. \u201CInsufficient evidence\u201D is honest abstention — not a low score — and the " +
+    "scored subset is not a complete or representative record of any official."));
+  app.appendChild(el("div", { class: "kpi" },
+    el("div", { class: "item" }, el("div", { class: "n" }, String(c.total_evaluation_units)), el("div", { class: "l" }, "actions considered")),
+    el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--good)" }, String(c.scored)), el("div", { class: "l" }, "scored")),
+    el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--gate)" }, String(c.insufficient_evidence)), el("div", { class: "l" }, "insufficient evidence")),
+    el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--muted)" }, String(c.non_scoreable)), el("div", { class: "l" }, "non-scoreable")),
+    el("div", { class: "item" }, el("div", { class: "n" }, (c.scored_share * 100).toFixed(1) + "%"), el("div", { class: "l" }, "scored share"))));
+
+  const rows = Object.entries(c.by_action_type).map(([atype, statuses]) => {
+    const tot = Object.values(statuses).reduce((a, b) => a + b, 0);
+    return el("tr", {},
+      el("td", {}, atype),
+      el("td", { class: "right mono" }, String(statuses.scored || 0)),
+      el("td", { class: "right mono" }, String(statuses.insufficient_evidence || 0)),
+      el("td", { class: "right mono" }, String(tot - (statuses.scored || 0) - (statuses.insufficient_evidence || 0))),
+      el("td", { class: "right mono" }, String(tot)));
+  });
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "By action type"),
+    el("table", {},
+      el("thead", {}, el("tr", {}, el("th", {}, "type"), el("th", { class: "right" }, "scored"),
+        el("th", { class: "right" }, "insufficient"), el("th", { class: "right" }, "non-scoreable"), el("th", { class: "right" }, "total"))),
+      el("tbody", {}, ...rows))));
+  app.appendChild(el("p", { class: "muted", style: "font-size:12px" }, c.note));
+}
+
 async function route() {
   await renderAuditStatus();
   const eu = location.hash.match(/#\/eu\/(\d+)/);
@@ -502,6 +535,7 @@ async function route() {
     else if (off) await renderOfficialDetail(off[1]);
     else if (location.hash.startsWith("#/officials")) await renderOfficials();
     else if (location.hash.startsWith("#/graph")) await renderGraph();
+    else if (location.hash.startsWith("#/coverage")) await renderCoverage();
     else await renderList();
   } catch (e) {
     $("#app").innerHTML = `<div class="card">Error: ${e.message}. Is the API running?</div>`;

@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # Deterministic seed pins every score run for bit-reproducibility.
     deterministic_seed: int = 20240607
     # Active methodology version (semver); historical scores remain re-derivable.
-    methodology_version: str = "0.2.0"
+    methodology_version: str = "0.3.0"
 
     # --- Network ---
     http_timeout_seconds: float = 30.0

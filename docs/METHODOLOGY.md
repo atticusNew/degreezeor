@@ -1,4 +1,4 @@
-# degreezeor — Methodology (v0.2.0)
+# degreezeor — Methodology (v0.3.0)
 
 This document is the public, versioned methodology. Scores always display the methodology
 version that produced them; historical scores are immutable and re-derivable.
@@ -87,7 +87,7 @@ human total capped at 0.70). Vote pivotality ≈ `1/(margin+1)` — high only fo
 ## 7. Confidence gate (prevents false precision)
 
 ```
-C = c_design · c_data · c_attrib · c_modeldep        # each ∈ [0,1]
+C = c_design · c_data · c_attrib · c_modeldep · c_sensitivity   # each ∈ [0,1]
 ```
 - `c_design` — identification strength. A single federal time series with a pre-trend baseline is
   capped (it cannot separate a policy from concurrent macro shocks), so federal macro cases often
@@ -95,6 +95,8 @@ C = c_design · c_data · c_attrib · c_modeldep        # each ∈ [0,1]
 - `c_data` — provenance tier + completeness.
 - `c_attrib` — `1 − mean(attribution interval width)`.
 - `c_modeldep` — `1 − model_dependence`.
+- `c_sensitivity` — `0.5` when the effect's direction flips across defensible lag horizons
+  (fragile), else `1.0`. Ties the sensitivity analysis (§9.10) back into the score.
 
 If `C < 0.60` (default), the composite is **suppressed** and the EU renders **"insufficient
 evidence."** This is the correct, humble behavior — not a failure.

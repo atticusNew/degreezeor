@@ -66,6 +66,19 @@ def cmd_score_eo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dispute(args: argparse.Namespace) -> int:
+    from degreezeor.disputes import file_dispute, resolve_dispute
+
+    with session_scope() as s:
+        d = file_dispute(s, eu_id=args.eu_id, filer=args.filer, claim=args.claim)
+        print(f"filed dispute {d.id} on EU {d.eu_id} (status={d.status})")
+        if args.resolve:
+            r = resolve_dispute(s, dispute_id=d.id)
+            print(f"resolved: status={r.status} reproduced={r.reproduced}")
+            print(f"public_diff: {r.public_diff['summary']}")
+    return 0
+
+
 def cmd_verify_audit(_: argparse.Namespace) -> int:
     with session_scope() as s:
         ok, broken = audit.verify_chain(s)
@@ -116,6 +129,13 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("document_number", nargs="?", help="Federal Register document number, e.g. 2021-09263")
     se.add_argument("--eo-number", type=int, help="resolve by executive order number, e.g. 14026")
     se.set_defaults(func=cmd_score_eo)
+
+    dp = sub.add_parser("dispute")
+    dp.add_argument("eu_id", type=int)
+    dp.add_argument("--filer", default="anonymous")
+    dp.add_argument("--claim", default="Challenge: please re-run and verify this score.")
+    dp.add_argument("--resolve", action="store_true", help="immediately resolve via reproducible re-run")
+    dp.set_defaults(func=cmd_dispute)
 
     args = p.parse_args(argv)
     return int(args.func(args))

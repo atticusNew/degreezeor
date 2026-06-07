@@ -7,11 +7,14 @@ audit the path from score back to official source.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from sqlalchemy import select
 
 from degreezeor import __version__
 from degreezeor.api import presentation
@@ -70,6 +73,53 @@ def get_official(official_id: int) -> dict:
     if card is None:
         raise HTTPException(status_code=404, detail="official not found")
     return card
+
+
+class DisputeIn(BaseModel):
+    eu_id: int
+    filer: str
+    claim: str
+
+
+@app.post("/api/disputes")
+def create_dispute(payload: DisputeIn) -> dict:
+    from degreezeor.disputes import file_dispute
+
+    with session_scope() as s:
+        try:
+            d = file_dispute(s, eu_id=payload.eu_id, filer=payload.filer, claim=payload.claim)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"id": d.id, "eu_id": d.eu_id, "status": d.status, "filer": d.filer, "claim": d.claim}
+
+
+@app.post("/api/disputes/{dispute_id}/resolve")
+def resolve_dispute_endpoint(dispute_id: int) -> dict:
+    from degreezeor.disputes import resolve_dispute
+
+    with session_scope() as s:
+        try:
+            r = resolve_dispute(s, dispute_id=dispute_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"dispute_id": r.dispute_id, "status": r.status, "reproduced": r.reproduced,
+                "public_diff": r.public_diff}
+
+
+@app.get("/api/disputes")
+def list_disputes(eu_id: int | None = None) -> list[dict]:
+    from degreezeor.core.models import Dispute
+
+    with session_scope() as s:
+        q = select(Dispute).order_by(Dispute.id.desc())
+        if eu_id is not None:
+            q = q.where(Dispute.eu_id == eu_id)
+        return [
+            {"id": d.id, "eu_id": d.eu_id, "filer": d.filer, "claim": d.claim, "status": d.status,
+             "resolution_run_id": d.resolution_run_id,
+             "public_diff": json.loads(d.public_diff) if d.public_diff else None}
+            for d in s.execute(q).scalars()
+        ]
 
 
 @app.get("/api/audit/verify")

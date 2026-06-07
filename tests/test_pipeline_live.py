@@ -104,6 +104,34 @@ def test_state_policy_synthetic_control_clears_gate_and_is_reproducible() -> Non
     assert r1.reproducible_hash == r2.reproducible_hash
 
 
+def test_dispute_reproducible_rerun_upholds_score() -> None:
+    import os
+
+    from degreezeor.disputes import file_dispute, resolve_dispute
+    from degreezeor.pipeline import STATE_POLICIES, score_state_policy
+
+    s = _fresh_session()
+    try:
+        r = score_state_policy(s, STATE_POLICIES["KS-HB2117"])
+        s.commit()
+        assert r.status == "scored"
+        d = file_dispute(s, eu_id=r.eu_id, filer="watchdog@example.org",
+                         claim="The synthetic control donor pool is biased.")
+        s.commit()
+        # Independent, deterministic re-run (donors replayed from cache).
+        os.environ["DZ_HTTP_CACHE"] = "1"
+        try:
+            res = resolve_dispute(s, dispute_id=d.id)
+            s.commit()
+        finally:
+            os.environ.pop("DZ_HTTP_CACHE", None)
+        # The score reproduces exactly => the challenge is resolved "upheld", not edited.
+        assert res.reproduced is True
+        assert res.status == "resolved_upheld"
+    finally:
+        s.close()
+
+
 def test_executive_order_ingests_and_scores() -> None:
     from degreezeor.core.models import Action, AttributionWeight, ExecutiveOrder
     from degreezeor.pipeline import score_executive_order

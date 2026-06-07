@@ -41,6 +41,30 @@ class UsaSpendingAdapter(SourceAdapter):
             content_hash=sha256_hex(content), retrieved_at=datetime.now(UTC),
         )
 
+    def fetch_general_obligations(self, defc: str, start_year: int, end_year: int) -> RawFetch:
+        """Total award OBLIGATIONS for any DEFC (incl. non-COVID) via spending_by_geography.
+
+        Outlays are not available for non-COVID DEFCs, so delivery for those laws is
+        measured as obligations vs the law's (curated, source-linked) appropriation.
+        """
+        body = {
+            "scope": "place_of_performance", "geo_layer": "country",
+            "filters": {"def_codes": [defc], "time_period": [
+                {"start_date": f"{start_year}-10-01", "end_date": f"{end_year}-09-30"}]},
+        }
+        content = client.post_json(f"{API}/search/spending_by_geography/", body)
+        return RawFetch(
+            source_name=self.name, tier=self.tier,
+            source_url=f"{API}/search/spending_by_geography/?def_codes={defc}",
+            native_identifier=f"DEFCGEN:{defc}", content=content,
+            content_hash=sha256_hex(content), retrieved_at=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def parse_general_obligation(content: bytes) -> float:
+        res = json.loads(content).get("results", [])
+        return float(res[0]["aggregated_amount"]) if res else 0.0
+
     @staticmethod
     def parse_amounts(content: bytes) -> dict[str, float]:
         d = json.loads(content)

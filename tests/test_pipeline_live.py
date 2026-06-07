@@ -132,6 +132,26 @@ def test_dispute_reproducible_rerun_upholds_score() -> None:
         s.close()
 
 
+def test_noncovid_delivery_integrity_guards() -> None:
+    """IIJA (stable, commensurable) scores; Ukraine supplemental (window-unstable) is
+    auto-rejected — the platform refuses fragile spending data rather than publish it."""
+    import os
+
+    from degreezeor.pipeline import TARGET_SPECS, score_target
+
+    os.environ["DZ_HTTP_CACHE"] = "1"
+    s = _fresh_session()
+    try:
+        iija = score_target(s, TARGET_SPECS["IIJA-DELIVERY"])
+        ukr = score_target(s, TARGET_SPECS["UKRAINE-2022-DELIVERY"])
+        s.commit()
+        assert iija.status == "scored"  # stable + commensurable
+        assert ukr.status.startswith("non_scoreable")  # window-unstable => rejected
+    finally:
+        s.close()
+        os.environ.pop("DZ_HTTP_CACHE", None)
+
+
 def test_executive_order_ingests_and_scores() -> None:
     from degreezeor.core.models import Action, AttributionWeight, ExecutiveOrder
     from degreezeor.pipeline import score_executive_order

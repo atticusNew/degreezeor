@@ -135,6 +135,9 @@ class TargetSpec:
     defc: str  # USAspending Disaster Emergency Fund Code for this law
     realized_kind: str  # 'outlay' | 'obligation'
     target_source_url: str
+    # 'disaster' = COVID-relief DEFCs (obligation+outlay via disaster endpoint);
+    # 'general'  = any DEFC (obligations via spending_by_geography; outlays unavailable).
+    realized_source: str = "disaster"
     # Committed/promised amount. None => use the committed OBLIGATION from USAspending as
     # the target (delivery/execution: "did the law outlay the funds it committed?"). A
     # number => a curated, source-linked target (e.g. a CBO/statutory figure).
@@ -158,6 +161,32 @@ TARGET_SPECS: dict[str, TargetSpec] = {
         # Committed CARES award funding (USAspending DEFC 'N' obligations snapshot).
         target_value=285_400_000_000.0,
         target_source_url="https://api.usaspending.gov/api/v2/disaster/award/amount/?def_codes=N",
+    ),
+    # Non-COVID delivery (obligations vs the law's headline appropriation). Only laws whose
+    # DEFC obligations are cleanly commensurable with a confident appropriation figure are
+    # included — DEFCs whose totals don't map to a single appropriation are deliberately
+    # omitted to avoid misrepresentation (integrity guardrail).
+    "UKRAINE-2022-DELIVERY": TargetSpec(
+        key="UKRAINE-2022-DELIVERY",
+        congress=117, law_number=128, law_type="pub",
+        objective_text=(
+            "Obligate the ~$40.1B appropriated by the Additional Ukraine Supplemental "
+            "Appropriations Act, 2022 (share of the law's appropriation obligated to date)."
+        ),
+        defc="6", realized_kind="obligation", realized_source="general",
+        target_value=40_100_000_000.0,
+        target_source_url="https://www.congress.gov/bill/117th-congress/house-bill/7691",
+    ),
+    "IIJA-DELIVERY": TargetSpec(
+        key="IIJA-DELIVERY",
+        congress=117, law_number=58, law_type="pub",
+        objective_text=(
+            "Obligate the ~$550B in new investment authorized by the Infrastructure Investment "
+            "and Jobs Act (share of the headline new-investment commitment obligated to date)."
+        ),
+        defc="Z", realized_kind="obligation", realized_source="general",
+        target_value=550_000_000_000.0,
+        target_source_url="https://www.congress.gov/bill/117th-congress/house-bill/3684",
     ),
 }
 
@@ -610,18 +639,22 @@ def _rescore_target_eu(session: Session, eu, action, metric) -> ScoreOutcome:
     from degreezeor.ingestion.adapters.usaspending import usaspending_adapter
     from degreezeor.scoring.target_outcome import compute_target_outcome
 
-    # native_series_id = "DEFC:<code>:<realized_kind>"
-    _, defc, realized_kind = metric.native_series_id.split(":")
+    # native_series_id = "DEFC:<code>:<kind>" (disaster) | "DEFCGEN:<code>:obligation" (general)
+    prefix, defc, realized_kind = metric.native_series_id.split(":")
     prev = os.environ.get("DZ_HTTP_CACHE")
     os.environ["DZ_HTTP_CACHE"] = "1"
     try:
-        rfetch = usaspending_adapter.fetch(defc)
+        if prefix == "DEFCGEN":
+            rfetch = usaspending_adapter.fetch_general_obligations(defc, action.action_date.year - 1, 2025)
+            realized = usaspending_adapter.parse_general_obligation(rfetch.content)
+        else:
+            rfetch = usaspending_adapter.fetch(defc)
+            realized = usaspending_adapter.parse_amounts(rfetch.content)[realized_kind]
     finally:
         if prev is None:
             os.environ.pop("DZ_HTTP_CACHE", None)
         else:
             os.environ["DZ_HTTP_CACHE"] = prev
-    realized = usaspending_adapter.parse_amounts(rfetch.content)[realized_kind]
     event_period = f"{action.action_date.year}-{action.action_date.month:02d}-01"
     tc = compute_target_outcome(
         realized=realized, target=eu.target_value, sign_goal=eu.sign_goal,
@@ -730,16 +763,21 @@ def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
         base_url=usaspending_adapter.base_url,
     )
 
+    is_general = spec.realized_source == "general"
+    metric_code = (f"obligation_delivery_{spec.defc}" if is_general
+                   else f"relief_delivery_{spec.defc}")
+    native_series = (f"DEFCGEN:{spec.defc}:obligation" if is_general
+                     else f"DEFC:{spec.defc}:{spec.realized_kind}")
     metric = session.execute(
-        select(Metric).where(Metric.code == f"relief_delivery_{spec.defc}")
+        select(Metric).where(Metric.code == metric_code)
     ).scalar_one_or_none()
     if metric is None:
         metric = Metric(
-            code=f"relief_delivery_{spec.defc}",
-            name=f"Realized federal {spec.realized_kind}s, DEFC {spec.defc} (USAspending)",
+            code=metric_code,
+            name=(f"Realized federal {'obligations' if is_general else spec.realized_kind + 's'}, "
+                  f"DEFC {spec.defc} (USAspending)"),
             unit="USD", direction_good="up", source_id=usa_src.id,
-            native_series_id=f"DEFC:{spec.defc}:{spec.realized_kind}",
-            domain="Economics and Public Finance",
+            native_series_id=native_series, domain="Economics and Public Finance",
         )
         session.add(metric)
         session.flush()
@@ -769,11 +807,44 @@ def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
     )
 
     # Observe realized (directly-attributable) spending.
-    rfetch = usaspending_adapter.fetch(spec.defc)
-    land(session, rfetch)
-    amounts = usaspending_adapter.parse_amounts(rfetch.content)
-    realized = amounts[spec.realized_kind]
-    target_amount = spec.target_value if spec.target_value is not None else amounts["obligation"]
+    if is_general:
+        # Start at the fiscal year containing enactment (FY begins Oct 1 of year-1).
+        rfetch = usaspending_adapter.fetch_general_obligations(
+            spec.defc, action.action_date.year - 1, 2025)
+        land(session, rfetch)
+        realized = usaspending_adapter.parse_general_obligation(rfetch.content)
+        target_amount = spec.target_value  # curated appropriation (required for 'general')
+
+        # INTEGRITY GUARDS for non-COVID obligation totals (no stable outlay series):
+        # (1) window-stability — the total must not change materially with the query window;
+        # (2) commensurability — obligations must not exceed the appropriation (else the DEFC
+        # total isn't a clean delivery measure). Fragile cases are rejected, not published.
+        wide = usaspending_adapter.fetch_general_obligations(spec.defc, action.action_date.year - 5, 2025)
+        land(session, wide)
+        realized_wide = usaspending_adapter.parse_general_obligation(wide.content)
+        denom = max(realized, realized_wide, 1.0)
+        if abs(realized - realized_wide) / denom > 0.05:
+            eu.status = "non_scoreable_no_metric"
+            eu.non_scoreable_reason = (
+                "Obligation total is not stable across query windows, so a reliable "
+                "delivery share can't be computed (integrity guard)."
+            )
+            session.flush()
+            return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+        if target_amount and realized > target_amount * 1.1:
+            eu.status = "non_scoreable_no_metric"
+            eu.non_scoreable_reason = (
+                "DEFC obligations exceed the law's appropriation, so the total isn't "
+                "commensurable with a clean delivery measure (integrity guard)."
+            )
+            session.flush()
+            return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+    else:
+        rfetch = usaspending_adapter.fetch(spec.defc)
+        land(session, rfetch)
+        amounts = usaspending_adapter.parse_amounts(rfetch.content)
+        realized = amounts[spec.realized_kind]
+        target_amount = spec.target_value if spec.target_value is not None else amounts["obligation"]
     if not target_amount:
         eu.status = "non_scoreable_no_metric"
         eu.non_scoreable_reason = (

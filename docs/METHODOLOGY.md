@@ -142,8 +142,10 @@ sign disagreement across baselines, or confidence below the publish threshold.
   BLS; pre-trend/flat baselines; sponsor/signer/decisive-vote attribution; confidence gate; API + UI.
 - **Phase 2 (in progress):** **difference-in-differences & synthetic control shipped** (with
   tiered pooling and state-policy scoring on official BLS state series — e.g. the Kansas 2012 tax
-  cuts demo, which clears the gate and yields a real composite). Remaining: executive orders + major
-  regulations; more domains (energy, health); dispute/appeal workflow; relationship graph.
+  cuts demo, which clears the gate and yields a real composite). **Executive orders shipped**
+  (Federal Register Tier-0 ingestion; the signing president carries high unilateral executive
+  authority vs. shared law-signing). Remaining: major regulations (Regulations.gov / eCFR); more
+  domains (energy, health, education); dispute/appeal workflow; relationship graph.
 - **Phase 3:** state/local government; distributional & cost lenses; user value-weight profiles;
   reproducible notebooks; third-party audits.
 - **Ultimate:** all levels of government, real-time ingestion, full causal ensemble, audit program.

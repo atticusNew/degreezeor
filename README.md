@@ -50,6 +50,7 @@ export DZ_DATABASE_URL=postgresql+psycopg://degreezeor:degreezeor@localhost:5432
 degreezeor initdb
 degreezeor score 111 5            # federal law: ARRA 2009 (PL 111-5) -> insufficient evidence
 degreezeor score-state KS-HB2117  # state policy via synthetic control -> scored (real composite)
+degreezeor score-eo --eo-number 14026   # executive order (Federal Register) -> scored vs its own objective
 degreezeor list
 degreezeor verify-audit
 
@@ -62,8 +63,12 @@ bundled Kansas 2012 tax-cut demo (`KS-HB2117`) is well-identified, clears the co
 yields a real composite — a neutral, sourced finding that the policy's *own* job-creation objective
 was not met relative to its synthetic control.
 
-API keys: Congress.gov/GovInfo accept the shared `DEMO_KEY` (rate-limited) by default; set
-`DZ_CONGRESS_API_KEY` / `DZ_BLS_API_KEY` for higher limits. No secrets are committed.
+API keys: Congress.gov/GovInfo accept the shared `DEMO_KEY` (rate-limited) by default; the Federal
+Register API is keyless. **Set `DZ_BLS_API_KEY`** (free registration) to raise BLS limits — the
+keyless BLS tier has a low daily request cap that is easily exhausted when ingesting many series
+(e.g. synthetic-control donor pools). A URL-keyed replay cache (`data/http_cache/`) makes repeat
+runs deterministic and offline-capable; set `DZ_HTTP_CACHE=1` for cache-first (replay) mode. No
+secrets are committed.
 
 ## Tests
 

@@ -41,6 +41,37 @@ async function postJSON(path, body) {
   return r.json();
 }
 
+async function sensitivityCard(euId, unit) {
+  const card = el("div", { class: "card" });
+  card.appendChild(el("h3", {}, "Sensitivity analysis (robustness across evaluation horizons)"));
+  let s;
+  try {
+    s = await getJSON(`/api/evaluation-units/${euId}/sensitivity`);
+  } catch (e) {
+    card.appendChild(el("div", { class: "muted", style: "font-size:13px" }, "Sensitivity not available for this unit."));
+    return card;
+  }
+  const robust = s.sign_stable;
+  card.appendChild(el("div", { class: "gate-banner " + (robust ? "scored" : "gated") },
+    s.summary));
+  card.appendChild(el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "lag (months)"), el("th", {}, "evaluation point"),
+      el("th", { class: "right" }, `delta toward goal (${unit})`),
+      el("th", { class: "right" }, "std. effect z"), el("th", {}, "distinguishable?"))),
+    el("tbody", {}, ...s.points.map((p) =>
+      el("tr", { style: p.is_registered ? "background:rgba(79,156,249,.10)" : "" },
+        el("td", {}, `${p.lag_months}${p.is_registered ? " (registered)" : ""}`),
+        el("td", {}, p.eval_period),
+        el("td", { class: "right mono", style: `color:${p.delta_toward_goal >= 0 ? "var(--good)" : "var(--bad)"}` }, fmt(p.delta_toward_goal, 1)),
+        el("td", { class: "right mono" }, fmt(p.z, 2)),
+        el("td", {}, p.significant ? el("span", { class: "badge scored" }, "yes") : el("span", { class: "pill" }, "within noise"))))));
+  card.appendChild(el("p", { class: "muted", style: "font-size:12px" },
+    "A directionally stable, significant effect across horizons is strong evidence; a sign that " +
+    "flips with the horizon indicates the result depends on an analyst choice and should temper confidence."));
+  return card;
+}
+
 async function disputesCard(euId) {
   const card = el("div", { class: "card" });
   card.appendChild(el("h3", {}, "Challenge / appeal this score"));
@@ -282,6 +313,11 @@ async function renderDetail(id) {
     app.appendChild(el("div", { class: "card" },
       el("h3", {}, "Your value weights (optional · default = neutral)"),
       valueWeightPanel(card)));
+  }
+
+  // Sensitivity analysis (robustness across alternative lag windows)
+  if (card.metric && card.outcome) {
+    app.appendChild(await sensitivityCard(card.evaluation_unit.id, card.metric.unit));
   }
 
   // Challenge / appeal (dispute workflow)

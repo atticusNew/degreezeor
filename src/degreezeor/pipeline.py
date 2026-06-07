@@ -385,6 +385,9 @@ def _finalize(
 def score_law(session: Session, congress: int, law_number: int, law_type: str = "pub") -> ScoreOutcome:
     ensure_bls_source(session)
     action = load_law(session, congress, law_number, law_type)
+    existing = _existing_outcome(session, action.id)
+    if existing is not None:  # idempotent: already scored (safe batch re-runs)
+        return existing
 
     obj = _objective_for_matching(session, action.id)
     if obj is None:
@@ -491,6 +494,9 @@ def score_executive_order(session: Session, document_number: str) -> ScoreOutcom
     """
     ensure_bls_source(session)
     action = load_executive_order(session, document_number)
+    existing = _existing_outcome(session, action.id)
+    if existing is not None:
+        return existing
 
     obj = _objective_for_matching(session, action.id)
     if obj is None:
@@ -826,6 +832,82 @@ def ingest_defc_delivery(session: Session, limit: int | None = None) -> list[Sco
             results.append(score_target(session, spec))
         except Exception as exc:  # noqa: BLE001 - skip a DEFC that can't be resolved/scored
             log.warning("DEFC %s delivery scoring failed: %s", entry["code"], exc)
+    return results
+
+
+def _existing_outcome(session: Session, action_id: int) -> ScoreOutcome | None:
+    """If this action already has an evaluation unit, return its outcome (idempotency)."""
+    eu = session.execute(
+        select(EvaluationUnit).where(EvaluationUnit.action_id == action_id)
+        .order_by(EvaluationUnit.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    if eu is None:
+        return None
+    run = session.execute(
+        select(ScoreRun).where(ScoreRun.eu_id == eu.id).order_by(ScoreRun.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    return ScoreOutcome(action_id, eu.id, eu.status,
+                        run.id if run else None, run.reproducible_hash if run else None)
+
+
+def batch_score_laws(session: Session, congress: int, limit: int = 25) -> list[ScoreOutcome]:
+    """#2 — breadth: ingest + score enacted laws for a congress (bounded by ``limit``).
+    Most land as insufficient-evidence / non-scoreable — the honest denominator that makes
+    the scored subset interpretable. Idempotent (skips laws already scored)."""
+    import json as _json
+
+    from degreezeor.ingestion.adapters.congress import congress_adapter
+
+    results: list[ScoreOutcome] = []
+    offset = 0
+    while len(results) < limit:
+        page = _json.loads(congress_adapter.fetch_law_list(congress, 250, offset).content)
+        bills = page.get("bills", [])
+        if not bills:
+            break
+        for b in bills:
+            if len(results) >= limit:
+                break
+            laws = b.get("laws") or []
+            if not laws:
+                continue
+            m = re.match(r"\d+-(\d+)", laws[0].get("number", ""))
+            if not m:
+                continue
+            law_number = int(m.group(1))
+            law_type = "pub" if "Public" in (laws[0].get("type") or "") else "priv"
+            try:
+                results.append(score_law(session, congress, law_number, law_type))
+            except Exception as exc:  # noqa: BLE001 - one bad law must not abort the batch
+                log.warning("batch law %s-%s failed: %s", congress, law_number, exc)
+        offset += 250
+    return results
+
+
+def batch_score_executive_orders(session: Session, limit: int = 25) -> list[ScoreOutcome]:
+    """#2 — breadth: ingest + score recent executive orders (Federal Register, keyless)."""
+    import json as _json
+
+    from degreezeor.ingestion.adapters.federalregister import federal_register_adapter
+    from degreezeor.ingestion.http import client as _client
+
+    url = f"{federal_register_adapter.base_url}/documents.json"
+    params = {
+        "conditions[type][]": "PRESDOCU",
+        "conditions[presidential_document_type][]": "executive_order",
+        "order": "newest", "per_page": str(min(limit, 100)),
+    }
+    content = _client.get_bytes(url, params=params)
+    docs = _json.loads(content).get("results", [])
+    results: list[ScoreOutcome] = []
+    for d in docs[:limit]:
+        doc_number = d.get("document_number")
+        if not doc_number:
+            continue
+        try:
+            results.append(score_executive_order(session, doc_number))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("batch EO %s failed: %s", doc_number, exc)
     return results
 
 

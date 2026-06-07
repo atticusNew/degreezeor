@@ -80,6 +80,26 @@ def cmd_score_target(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_batch_laws(args: argparse.Namespace) -> int:
+    from collections import Counter
+
+    from degreezeor.pipeline import batch_score_laws
+    with session_scope() as s:
+        rs = batch_score_laws(s, args.congress, limit=args.limit)
+    print("batch laws:", dict(Counter(r.status for r in rs)), "total", len(rs))
+    return 0
+
+
+def cmd_batch_eos(args: argparse.Namespace) -> int:
+    from collections import Counter
+
+    from degreezeor.pipeline import batch_score_executive_orders
+    with session_scope() as s:
+        rs = batch_score_executive_orders(s, limit=args.limit)
+    print("batch EOs:", dict(Counter(r.status for r in rs)), "total", len(rs))
+    return 0
+
+
 def cmd_ingest_defc(args: argparse.Namespace) -> int:
     from degreezeor.pipeline import ingest_defc_delivery
 
@@ -161,6 +181,15 @@ def main(argv: list[str] | None = None) -> int:
     di = sub.add_parser("ingest-defc", help="batch verifiable delivery scores for DEFC-tagged laws")
     di.add_argument("--limit", type=int, default=None)
     di.set_defaults(func=cmd_ingest_defc)
+
+    bl = sub.add_parser("batch-laws", help="batch-ingest+score enacted laws for a congress")
+    bl.add_argument("congress", type=int)
+    bl.add_argument("--limit", type=int, default=25)
+    bl.set_defaults(func=cmd_batch_laws)
+
+    be = sub.add_parser("batch-eos", help="batch-ingest+score recent executive orders")
+    be.add_argument("--limit", type=int, default=25)
+    be.set_defaults(func=cmd_batch_eos)
 
     dp = sub.add_parser("dispute")
     dp.add_argument("eu_id", type=int)

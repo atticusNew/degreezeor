@@ -16,13 +16,43 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _test_database_url() -> str:
+    """A DEDICATED live-test database, derived from the configured DSN, so running
+    live tests NEVER drops the developer's demo/working database."""
+    from degreezeor.config import settings
+
+    url = settings.database_url
+    base, _, db = url.rpartition("/")
+    return f"{base}/{db}_livetest"
+
+
+def _ensure_test_db(url: str) -> None:
+    from sqlalchemy import create_engine, text
+
+    base, _, dbname = url.rpartition("/")
+    admin = create_engine(f"{base}/postgres", isolation_level="AUTOCOMMIT")
+    with admin.connect() as c:
+        exists = c.execute(
+            text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": dbname}
+        ).scalar()
+        if not exists:
+            c.execute(text(f'CREATE DATABASE "{dbname}"'))
+    admin.dispose()
+
+
 def _fresh_session():
-    from degreezeor.core.db import SessionLocal, engine
+    from sqlalchemy.orm import sessionmaker
+
     from degreezeor.core.models import Base
 
+    url = _test_database_url()
+    _ensure_test_db(url)
+    from sqlalchemy import create_engine
+
+    engine = create_engine(url, pool_pre_ping=True)
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
-    return SessionLocal()
+    return sessionmaker(bind=engine, expire_on_commit=False)()
 
 
 def test_arra_scores_and_is_reproducible() -> None:

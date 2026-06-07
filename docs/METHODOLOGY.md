@@ -1,0 +1,133 @@
+# degreezeor — Methodology (v0.1.0)
+
+This document is the public, versioned methodology. Scores always display the methodology
+version that produced them; historical scores are immutable and re-derivable.
+
+## 1. Philosophy: procedural vs. substantive neutrality
+
+Two kinds of neutrality must be separated:
+
+- **Procedural neutrality** — identical rules, code, sources, and process for everyone; fully
+  transparent, reproducible, auditable. **We target ~100% of this.**
+- **Substantive (value) neutrality** — deciding what counts as a *good* outcome. **Impossible**:
+  aggregating liberty vs. equality vs. growth vs. safety into one number is itself an ideology.
+
+Therefore degreezeor does **not** emit a default normative "good/bad" score. It answers a *factual*
+question and pushes values to a user-controlled layer with a neutral default.
+
+> **The factual question:** *Did the measurable outcome tied to this action's own stated objective
+> move, relative to a defensible baseline, and how much is credibly attributable to this official —
+> with what confidence — and here is every official source?*
+
+### Three irreducible non-empirical residues (labeled, never hidden)
+1. **Metric choice** — even "use the stated objective" privileges the sponsor's framing.
+2. **Baseline/counterfactual choice** — different defensible designs give different deltas.
+3. **Attribution** — causal credit in multi-actor, multi-causal systems is underdetermined.
+
+When a residue dominates → output is **"insufficient evidence / non-scoreable"**, *not* a low score.
+
+## 2. Source hierarchy (provenance tiers)
+
+- **Tier 0** — primary record of the action (Congress.gov / GovInfo / Federal Register).
+- **Tier 1** — official statistical outcome data (BLS, BEA, Census, FBI, CDC, EIA, USAspending…).
+- **Tier 2** — official nonpartisan analysis (CBO, GAO, CRS, agency IGs).
+- **Tier 3** — convenience mirrors (FRED, OpenStates) — only with verification back to Tier 0/1.
+
+Every stored datum carries `source_url`, `content_hash`, `retrieved_at`, `tier`, and a native
+identifier (e.g., Public Law number, BLS series id).
+
+## 3. Scoreable unit
+
+- Atomic data unit: a polymorphic **Action** (vote / bill / law / EO / regulation / budget / …).
+- Atomic **scoreable** unit: the tuple **(Action → Objective → Metric → Baseline → Outcome)**, an
+  *Evaluation Unit (EU)*.
+- Outcomes attach to **implemented policies**, not votes. Votes/sponsorship/signature are
+  **attribution channels** that propagate a policy's measured outcome to officials.
+
+## 4. Outcome score (sign-neutral)
+
+```
+delta             = observed − baseline_pooled
+delta_toward_goal = sign_goal · delta        # sign_goal fixed at pre-registration from the objective
+z                 = delta_toward_goal / noise_scale
+S_outcome         = 100 · logistic(1.702 · z)    # 50 = no effect
+```
+
+`sign_goal = +1` if a *rise* in the metric moves toward the stated goal, `−1` if a *fall* does.
+This is the ideology-free core: we only ask whether the metric moved toward the goal **you stated**.
+
+## 5. Baseline ensemble & model dependence
+
+A baseline ensemble estimates the counterfactual. The slice ships two methods; stronger designs
+plug in behind the same interface:
+
+- `pretrend_projection` — project the pre-period linear trend to the evaluation point. This is the
+  formal answer to *"don't credit inherited trends"*: the pre-existing trajectory **is** the baseline.
+- `flat_last_value` — naive no-change counterfactual.
+- *(Phase 2)* difference-in-differences, synthetic control, peer-jurisdiction, macro-shock adjustment.
+
+`model_dependence ∈ [0,1]` rises with sign disagreement / spread across methods and lowers confidence.
+A bootstrap (deterministic seed) yields a 95% CI on the delta.
+
+## 6. Attribution
+
+`attribution = f(formal_authority, pivotality, implementation_control)`, reported as an interval,
+**always** leaving a large explicit `unattributable_residual` (`Σ humans + residual = 1`,
+human total capped at 0.70). Vote pivotality ≈ `1/(margin+1)` — high only for razor-thin votes.
+
+## 7. Confidence gate (prevents false precision)
+
+```
+C = c_design · c_data · c_attrib · c_modeldep        # each ∈ [0,1]
+```
+- `c_design` — identification strength. A single federal time series with a pre-trend baseline is
+  capped (it cannot separate a policy from concurrent macro shocks), so federal macro cases often
+  fall below the publish threshold **by design**.
+- `c_data` — provenance tier + completeness.
+- `c_attrib` — `1 − mean(attribution interval width)`.
+- `c_modeldep` — `1 − model_dependence`.
+
+If `C < 0.60` (default), the composite is **suppressed** and the EU renders **"insufficient
+evidence."** This is the correct, humble behavior — not a failure.
+
+## 8. Default output vs. opt-in composite
+
+- **Default (public):** the decomposed factual component vector — `outcome, evidence, attribution,
+  alignment, dataquality, durability` — each with uncertainty, plus confidence and the source trail.
+- **Composite (opt-in, value-laden):** `EU_score = gate(C) · Σ_k w_k · S_k`. The **neutral default**
+  weights cover only factual components, equal-weighted; value-laden lenses (`cost`, `distribution`)
+  are off by default. The UI watermarks any non-neutral weighting.
+- **Official roll-up:** attribution-weighted mean of EU scores, always reported with **coverage**
+  (fraction of actions that are scoreable) and confidence.
+
+## 9. Bias-minimization protocol
+
+1. Identical pipeline for all officials; **scoring code is party-blind** (statically enforced by tests).
+2. **Pre-registration**: metric + baseline + lag + sign_goal hashed to the audit chain **before**
+   outcome data is fetched — kills outcome-driven cherry-picking.
+3. **Party-masked** objective→metric selection.
+4. No editorial labels; numbers, intervals, and sources only.
+5. Open methodology + open-source formula; changes via reviewed PRs.
+6. Uncertainty always shown; composite gated by confidence.
+7. Append-only, hash-chained audit log; pinned, bit-reproducible score runs.
+8. Always a large unattributable residual.
+
+## 10. What cannot be made fully empirical
+
+Metric selection, baseline choice, causal attribution, and *whether an outcome is desirable*. These
+are surfaced explicitly (intervals, model-dependence, residual, value-weight layer), never hidden.
+
+## 11. "Insufficient evidence" is triggered by
+
+Missing/contradictory data, no operational metric, no implementation, dominant external shocks,
+sign disagreement across baselines, or confidence below the publish threshold.
+
+## Roadmap
+
+- **Phase 1 (this slice):** US Congress, enacted economic/fiscal laws; Congress.gov + CBO links +
+  BLS; pre-trend/flat baselines; sponsor/signer/decisive-vote attribution; confidence gate; API + UI.
+- **Phase 2:** executive orders + major regulations; difference-in-differences & synthetic control;
+  more domains (labor, energy, health); dispute/appeal workflow; relationship graph.
+- **Phase 3:** state/local government; distributional & cost lenses; user value-weight profiles;
+  reproducible notebooks; third-party audits.
+- **Ultimate:** all levels of government, real-time ingestion, full causal ensemble, audit program.

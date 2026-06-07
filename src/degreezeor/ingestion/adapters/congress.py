@@ -65,5 +65,12 @@ class CongressGovAdapter(SourceAdapter):
             f"bill/{congress}/{bill_type}/{bill_number}/summaries",
         )
 
+    def fetch_bill_actions(self, congress: int, bill_type: str, bill_number: int) -> RawFetch:
+        return self._get(
+            f"bill/{congress}/{bill_type}/{bill_number}/actions",
+            f"bill/{congress}/{bill_type}/{bill_number}/actions",
+            params={"limit": 250},
+        )
+
 
 congress_adapter = SOURCE_ADAPTERS.register(CongressGovAdapter())

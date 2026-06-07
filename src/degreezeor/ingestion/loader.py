@@ -236,6 +236,72 @@ def load_executive_order(session: Session, document_number: str) -> Action:
     return action
 
 
+_PASSAGE_KEYWORDS = ("passage", "passed", "concur", "agreed to", "adoption")
+
+
+def load_house_final_passage_vote(
+    session: Session, action: Action, congress: int, bill_type: str, bill_number: int
+):
+    """Ingest the final-passage House roll-call vote for a law: Vote + VotePosition rows
+    (full member record) + ensures Officials. Returns the parsed HouseVote (or None)."""
+    from degreezeor.core.models import Vote, VotePosition
+    from degreezeor.ingestion.adapters.house_clerk import house_clerk_adapter, parse_house_vote
+
+    afetch = congress_adapter.fetch_bill_actions(congress, bill_type, bill_number)
+    land(session, afetch)
+    actions = json.loads(afetch.content).get("actions", [])
+
+    # Collect House recorded votes whose action text indicates final passage; latest wins.
+    candidates = []
+    for act in actions:
+        text = (act.get("text") or "").lower()
+        if not any(k in text for k in _PASSAGE_KEYWORDS):
+            continue
+        for rv in act.get("recordedVotes") or []:
+            if rv.get("chamber") == "House" and rv.get("url"):
+                candidates.append((rv.get("date") or "", rv["url"]))
+    if not candidates:
+        return None
+    candidates.sort()
+    vote_url = candidates[-1][1]
+
+    # Idempotency: skip if we already stored this roll-call URL.
+    existing = session.execute(select(Vote).where(Vote.question == vote_url)).scalar_one_or_none()
+    if existing is not None:
+        return None
+
+    vfetch = house_clerk_adapter.fetch(vote_url)
+    land(session, vfetch)
+    hv = parse_house_vote(vfetch.content)
+
+    vote = Vote(
+        action_id=action.id, chamber="house", question=vote_url,  # store URL for idempotency + trail
+        vote_date=action.action_date, yea=hv.yea, nay=hv.nay, present=hv.present,
+        not_voting=hv.not_voting, result=hv.result,
+    )
+    session.add(vote)
+    session.flush()
+    winning_position = "yea" if hv.passed else "nay"
+    winning_official_ids: list[int] = []
+    for mv in hv.positions:
+        if not mv.bioguide_id:
+            continue
+        official = _ensure_official(session, mv.bioguide_id, mv.name)
+        if mv.party:
+            party = _ensure_party(session, mv.party)
+            if not session.execute(
+                select(OfficeTerm).where(
+                    OfficeTerm.official_id == official.id, OfficeTerm.party_id == party.id
+                )
+            ).scalar_one_or_none():
+                session.add(OfficeTerm(official_id=official.id, party_id=party.id))
+        session.add(VotePosition(vote_id=vote.id, official_id=official.id, position=mv.position))
+        if mv.position == winning_position:
+            winning_official_ids.append(official.id)
+    session.flush()
+    return hv, winning_official_ids
+
+
 def load_observations(
     session: Session, metric: Metric, start_year: int, end_year: int
 ) -> int:

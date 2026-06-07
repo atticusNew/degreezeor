@@ -93,7 +93,9 @@ class DecisiveVoteChannel(AttributionChannel):
         piv = pivotality_from_margin(ctx.vote_margin)
         base_authority = D("0.05")
         out = []
-        for oid in ctx.decisive_official_ids:
+        # Sorted for deterministic ordering => bit-reproducible score runs regardless of
+        # whether IDs came from XML parse order or a DB query.
+        for oid in sorted(ctx.decisive_official_ids):
             w = base_authority * piv
             out.append(
                 AttributionContribution(

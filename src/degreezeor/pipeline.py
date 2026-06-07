@@ -9,7 +9,9 @@ Order is significant for neutrality:
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -41,6 +43,8 @@ from degreezeor.core.models import (
     OutcomeResult,
     ScoreComponent,
     ScoreRun,
+    Vote,
+    VotePosition,
 )
 from degreezeor.core.numeric import D, q_score
 from degreezeor.ingestion.adapters.bls import bls_adapter
@@ -49,6 +53,7 @@ from degreezeor.ingestion.landing import land
 from degreezeor.ingestion.loader import (
     ensure_bls_source,
     load_executive_order,
+    load_house_final_passage_vote,
     load_law,
     load_observations,
 )
@@ -66,6 +71,8 @@ from degreezeor.scoring.outcome import compute_outcome, s_outcome_from_z
 from degreezeor.scoring.prereg import preregister
 from degreezeor.scoring.score import assemble_score
 from degreezeor.scoring.sensitivity import analyze_lag_sensitivity
+
+log = logging.getLogger("degreezeor.pipeline")
 
 
 def state_employment_series_id(fips: str) -> str:
@@ -395,13 +402,33 @@ def score_law(session: Session, congress: int, law_number: int, law_type: str = 
     # --- Attribution ---
     bill = session.get(Bill, action.id)
     law = session.get(Law, action.id)
+
+    # Ingest the final-passage House roll-call vote so the members who passed the law
+    # receive pivotality-weighted decisive-vote attribution (and the full member record
+    # is stored for transparency). Best-effort: scoring proceeds even if unavailable.
+    vote_margin = None
+    decisive_ids: list[int] = []
+    if bill and bill.congress and bill.bill_number:
+        m = re.match(r"([a-z]+)(\d+)", bill.bill_number)
+        if m:
+            try:
+                result = load_house_final_passage_vote(
+                    session, action, bill.congress, m.group(1), int(m.group(2))
+                )
+                if result is not None:
+                    hv, decisive_ids = result
+                    vote_margin = hv.margin
+            except Exception as exc:  # noqa: BLE001 - vote data is optional, never block scoring
+                log.warning("vote ingestion failed for %s: %s", action.native_identifier, exc)
+
     actx = AttributionContext(
         eu_id=eu.id,
         action_type=action.type,
         sponsor_official_id=bill.sponsor_official_id if bill else None,
         signer_official_id=law.signed_by_official_id if law else None,
-        vote_margin=None,
-        member_on_winning_side=None,
+        vote_margin=vote_margin,
+        member_on_winning_side=bool(decisive_ids),
+        decisive_official_ids=decisive_ids,
     )
     attributions = build_attribution(actx)
     return _finalize(
@@ -565,10 +592,29 @@ def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
     law = session.get(Law, action.id)
     eo = session.get(ExecutiveOrder, action.id)
     signer = (law.signed_by_official_id if law else None) or (eo.signing_official_id if eo else None)
+
+    # Reconstruct decisive-vote attribution from STORED roll-call rows (no re-fetch),
+    # so the re-run reproduces the original attribution exactly.
+    vote = session.execute(
+        select(Vote).where(Vote.action_id == action.id, Vote.chamber == "house")
+        .order_by(Vote.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    vote_margin = None
+    decisive_ids: list[int] = []
+    if vote is not None:
+        vote_margin = abs(vote.yea - vote.nay)
+        winning = "yea" if vote.yea >= vote.nay else "nay"
+        decisive_ids = list(session.execute(
+            select(VotePosition.official_id).where(
+                VotePosition.vote_id == vote.id, VotePosition.position == winning
+            )
+        ).scalars())
+
     actx = AttributionContext(
         eu_id=eu.id, action_type=action.type,
         sponsor_official_id=bill.sponsor_official_id if bill else None,
-        signer_official_id=signer, vote_margin=None, member_on_winning_side=None,
+        signer_official_id=signer, vote_margin=vote_margin,
+        member_on_winning_side=bool(decisive_ids), decisive_official_ids=decisive_ids,
     )
     attributions = build_attribution(actx)
     return _finalize(

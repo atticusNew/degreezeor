@@ -122,6 +122,14 @@ def list_disputes(eu_id: int | None = None) -> list[dict]:
         ]
 
 
+@app.get("/api/graph")
+def relationship_graph(official_id: int | None = None) -> dict:
+    from degreezeor.api import graph as graph_mod
+
+    with session_scope() as s:
+        return graph_mod.build_graph(s, official_id=official_id)
+
+
 @app.get("/api/audit/verify")
 def verify_audit() -> dict:
     with session_scope() as s:

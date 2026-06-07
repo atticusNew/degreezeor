@@ -370,6 +370,86 @@ async function renderOfficialDetail(id) {
           el("td", { class: "right mono" }, a.composite !== null ? fmt(a.composite, 1) : "—")))))));
 }
 
+const NODE_COLORS = { official: "#4f9cf9", action: "#2ecc71", jurisdiction: "#f1c40f", metric: "#a06fd0" };
+const COLUMN_ORDER = ["official", "action", "jurisdiction", "metric"];
+
+async function renderGraph() {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.appendChild(el("p", { class: "muted" },
+    "Relationship graph: officials \u2192 the actions they're attributed to \u2192 the jurisdiction and " +
+    "official outcome metric each action is evaluated against. Click an official or action node to open it."));
+  const legend = el("div", { style: "display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 4px" });
+  for (const t of COLUMN_ORDER) {
+    legend.appendChild(el("span", { class: "muted", style: "font-size:13px" },
+      el("span", { style: `display:inline-block;width:12px;height:12px;border-radius:3px;background:${NODE_COLORS[t]};margin-right:6px;vertical-align:middle` }), t));
+  }
+  app.appendChild(legend);
+
+  const g = await getJSON("/api/graph");
+  // Deterministic layered layout: one column per node type.
+  const cols = COLUMN_ORDER.map((t) => g.nodes.filter((n) => n.type === t));
+  const colX = { official: 120, action: 440, jurisdiction: 760, metric: 980 };
+  const rowH = 70, padY = 40, width = 1120;
+  const maxRows = Math.max(1, ...cols.map((c) => c.length));
+  const height = padY * 2 + maxRows * rowH;
+  const pos = {};
+  cols.forEach((colNodes, ci) => {
+    const t = COLUMN_ORDER[ci];
+    const colHeight = colNodes.length * rowH;
+    const startY = (height - colHeight) / 2 + rowH / 2;
+    colNodes.forEach((n, i) => { pos[n.id] = { x: colX[t], y: startY + i * rowH }; });
+  });
+
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", "100%");
+  svg.style.background = "var(--panel)";
+  svg.style.border = "1px solid var(--line)";
+  svg.style.borderRadius = "12px";
+
+  for (const e of g.edges) {
+    const s = pos[e.source], t = pos[e.target];
+    if (!s || !t) continue;
+    const line = document.createElementNS(NS, "line");
+    line.setAttribute("x1", s.x); line.setAttribute("y1", s.y);
+    line.setAttribute("x2", t.x); line.setAttribute("y2", t.y);
+    line.setAttribute("stroke", "#2a3650"); line.setAttribute("stroke-width", "1.5");
+    svg.appendChild(line);
+    const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
+    const lbl = document.createElementNS(NS, "text");
+    lbl.setAttribute("x", mx); lbl.setAttribute("y", my - 3);
+    lbl.setAttribute("fill", "#6b7a90"); lbl.setAttribute("font-size", "10");
+    lbl.setAttribute("text-anchor", "middle"); lbl.textContent = e.relation;
+    svg.appendChild(lbl);
+  }
+
+  for (const n of g.nodes) {
+    const p = pos[n.id];
+    const grp = document.createElementNS(NS, "g");
+    grp.style.cursor = (n.type === "official" || n.type === "action") ? "pointer" : "default";
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", "9");
+    c.setAttribute("fill", NODE_COLORS[n.type]);
+    grp.appendChild(c);
+    const txt = document.createElementNS(NS, "text");
+    const leftSide = n.type === "metric" || n.type === "jurisdiction";
+    txt.setAttribute("x", p.x + (leftSide ? -14 : 14));
+    txt.setAttribute("y", p.y + 4);
+    txt.setAttribute("fill", "var(--text)"); txt.setAttribute("font-size", "12");
+    txt.setAttribute("text-anchor", leftSide ? "end" : "start");
+    txt.textContent = n.label;
+    grp.appendChild(txt);
+    if (n.type === "official") grp.addEventListener("click", () => { location.hash = `#/official/${n.ref_id}`; });
+    if (n.type === "action") grp.addEventListener("click", () => { location.hash = `#/eu/${n.eu_id}`; });
+    svg.appendChild(grp);
+  }
+  const wrap = el("div", { style: "overflow-x:auto" });
+  wrap.appendChild(svg);
+  app.appendChild(wrap);
+}
+
 async function route() {
   await renderAuditStatus();
   const eu = location.hash.match(/#\/eu\/(\d+)/);
@@ -378,6 +458,7 @@ async function route() {
     if (eu) await renderDetail(eu[1]);
     else if (off) await renderOfficialDetail(off[1]);
     else if (location.hash.startsWith("#/officials")) await renderOfficials();
+    else if (location.hash.startsWith("#/graph")) await renderGraph();
     else await renderList();
   } catch (e) {
     $("#app").innerHTML = `<div class="card">Error: ${e.message}. Is the API running?</div>`;

@@ -20,17 +20,27 @@ from degreezeor.core.numeric import D, clamp01, dprod
 # pre/post on a single series cannot, so its identification ceiling is higher.
 # Synthetic control with a tight pre-fit is the strongest design in the slice.
 DESIGN_BASE = {
+    # Target-relative on a DIRECTLY ATTRIBUTABLE realized series (e.g. a law's own
+    # DEFC-tagged spending): the realized value is the action's own output, so the
+    # "did it deliver its promise?" question is strongly identified.
+    "declared_target_direct": D("0.90"),
     "synthetic_control": D("0.85"),
     "difference_in_differences": D("0.78"),
     "pretrend_projection": D("0.50"),
+    # Target-relative on a CONFOUNDED (economy-wide) realized series: the realized value
+    # can't be attributed to the action, so identification is weak (stays gated). This is
+    # the integrity guardrail that keeps target-relative scoring honest.
+    "declared_target_confounded": D("0.35"),
     "flat_last_value": D("0.30"),
 }
 
 # Strongest-first preference when choosing the headline identification design.
 DESIGN_PREFERENCE = [
+    "declared_target_direct",
     "synthetic_control",
     "difference_in_differences",
     "pretrend_projection",
+    "declared_target_confounded",
     "flat_last_value",
 ]
 

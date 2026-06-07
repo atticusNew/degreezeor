@@ -20,9 +20,11 @@ from degreezeor.core.models import Action, Base, EUScore, EvaluationUnit, ScoreR
 from degreezeor.ingestion.adapters.federalregister import federal_register_adapter
 from degreezeor.pipeline import (
     STATE_POLICIES,
+    TARGET_SPECS,
     score_executive_order,
     score_law,
     score_state_policy,
+    score_target,
 )
 
 
@@ -61,6 +63,18 @@ def cmd_score_eo(args: argparse.Namespace) -> int:
             return 2
     with session_scope() as s:
         result = score_executive_order(s, doc)
+    print(f"action_id={result.action_id} eu_id={result.eu_id} status={result.status}")
+    print(f"score_run_id={result.score_run_id} reproducible_hash={result.reproducible_hash}")
+    return 0
+
+
+def cmd_score_target(args: argparse.Namespace) -> int:
+    spec = TARGET_SPECS.get(args.key)
+    if spec is None:
+        print(f"unknown target {args.key!r}; known: {', '.join(TARGET_SPECS)}")
+        return 2
+    with session_scope() as s:
+        result = score_target(s, spec)
     print(f"action_id={result.action_id} eu_id={result.eu_id} status={result.status}")
     print(f"score_run_id={result.score_run_id} reproducible_hash={result.reproducible_hash}")
     return 0
@@ -129,6 +143,10 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("document_number", nargs="?", help="Federal Register document number, e.g. 2021-09263")
     se.add_argument("--eo-number", type=int, help="resolve by executive order number, e.g. 14026")
     se.set_defaults(func=cmd_score_eo)
+
+    st = sub.add_parser("score-target")
+    st.add_argument("key", help=f"target spec key (one of: {', '.join(TARGET_SPECS)})")
+    st.set_defaults(func=cmd_score_target)
 
     dp = sub.add_parser("dispute")
     dp.add_argument("eu_id", type=int)

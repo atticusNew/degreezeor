@@ -31,6 +31,12 @@ def _cache_key(url: str, params: dict | None) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _post_cache_key(url: str, body: object) -> str:
+    import json as _json
+
+    return hashlib.sha256((url + "|" + _json.dumps(body, sort_keys=True)).encode()).hexdigest()
+
+
 def _cache_dir():
     d = settings.data_dir / "http_cache"
     d.mkdir(parents=True, exist_ok=True)
@@ -146,6 +152,53 @@ class HttpClient:
         # Network/validation exhausted: fall back to a cached (validated) copy if present.
         if cache_path.exists():
             log.warning("GET %s failed after retries; serving cached response", url)
+            return cache_path.read_bytes()
+        assert last_exc is not None
+        raise last_exc
+
+    def post_json(self, url: str, body: object, *, headers: dict | None = None) -> bytes:
+        """POST a JSON body with the same retry/backoff/circuit-breaker + replay cache.
+
+        Used for APIs that require POST (e.g. USAspending). Cache key includes the body
+        so identical queries replay deterministically / survive transient failures.
+        """
+        cache_path = _cache_dir() / _post_cache_key(url, body)
+        if os.environ.get("DZ_HTTP_CACHE") == "1" and cache_path.exists():
+            return cache_path.read_bytes()
+
+        host = httpx.URL(url).host or url
+        breaker = self._breaker(host)
+        if not breaker.allow():
+            if cache_path.exists():
+                return cache_path.read_bytes()
+            raise CircuitOpenError(f"circuit open for host {host!r}")
+
+        last_exc: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = httpx.post(url, json=body, headers=headers, timeout=self.timeout)
+                if resp.status_code in _RETRYABLE_STATUS:
+                    raise httpx.HTTPStatusError(
+                        f"retryable status {resp.status_code}", request=resp.request, response=resp
+                    )
+                resp.raise_for_status()
+                breaker.record_success()
+                cache_path.write_bytes(resp.content)
+                return resp.content
+            except httpx.HTTPStatusError as exc:
+                if exc.response is not None and exc.response.status_code not in _RETRYABLE_STATUS:
+                    breaker.record_success()
+                    raise
+                last_exc = exc
+                breaker.record_failure()
+                if attempt < self.max_retries:
+                    time.sleep((2**attempt) + random.uniform(0, 0.5))
+            except httpx.TransportError as exc:
+                last_exc = exc
+                breaker.record_failure()
+                if attempt < self.max_retries:
+                    time.sleep((2**attempt) + random.uniform(0, 0.5))
+        if cache_path.exists():
             return cache_path.read_bytes()
         assert last_exc is not None
         raise last_exc

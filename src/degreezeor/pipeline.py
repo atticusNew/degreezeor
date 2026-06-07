@@ -49,7 +49,7 @@ from degreezeor.core.models import (
 from degreezeor.core.numeric import D, q_score
 from degreezeor.ingestion.adapters.bls import bls_adapter
 from degreezeor.ingestion.adapters.generic import generic_url_adapter
-from degreezeor.ingestion.landing import land
+from degreezeor.ingestion.landing import ensure_source, land
 from degreezeor.ingestion.loader import (
     ensure_bls_source,
     load_executive_order,
@@ -117,6 +117,44 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         # appropriately evaluated over a multi-year window, declared at pre-registration.
         lag_window_months=48,
         signer_name="Sam Brownback",
+    ),
+}
+
+
+@dataclass
+class TargetSpec:
+    """A curated, source-linked, pre-registered numeric target for target-relative
+    ('promise-keeping') scoring. The realized series is a law's own DEFC-tagged
+    USAspending total (directly attributable)."""
+
+    key: str
+    congress: int
+    law_number: int
+    law_type: str
+    objective_text: str
+    defc: str  # USAspending Disaster Emergency Fund Code for this law
+    realized_kind: str  # 'outlay' | 'obligation'
+    target_value: float  # the committed/promised amount (curated, source-linked)
+    target_source_url: str
+    sign_goal: int = 1  # +1 = "deliver at least the committed amount"
+    directly_attributable: bool = True
+
+
+# Demo: of the emergency-relief award funding a law COMMITTED, how much has actually
+# been delivered (outlayed)? Directly attributable (the law's own DEFC-tagged money).
+TARGET_SPECS: dict[str, TargetSpec] = {
+    "CARES-DELIVERY": TargetSpec(
+        key="CARES-DELIVERY",
+        congress=116, law_number=136, law_type="pub",
+        objective_text=(
+            "Disburse the committed CARES Act emergency-relief award funding to provide "
+            "rapid economic relief (delivery of obligated funds)."
+        ),
+        defc="N",
+        realized_kind="outlay",
+        # Committed CARES award funding (USAspending DEFC 'N' obligations snapshot).
+        target_value=285_400_000_000.0,
+        target_source_url="https://api.usaspending.gov/api/v2/disaster/award/amount/?def_codes=N",
     ),
 }
 
@@ -201,6 +239,7 @@ def _finalize(
     event_period: str,
     donor_observations: dict[str, list[tuple[str, object]]] | None = None,
     extra_source_urls: list[str] | None = None,
+    s_outcome_override: object | None = None,
 ) -> ScoreOutcome:
     """Shared scoring tail: confidence → components → assemble → pinned reproducible run.
 
@@ -239,7 +278,9 @@ def _finalize(
 
     delta_toward_goal = D(sign_goal) * D(comp.delta)
     durability = _durability(observations, comp.eval_period, D(comp.baseline_pooled), sign_goal, delta_toward_goal)
-    s_outcome = s_outcome_from_z(comp.z)
+    # Target-relative scoring supplies its own achievement-based S_outcome (delivery of
+    # the promised number); baseline-relative maps the standardized effect through the CDF.
+    s_outcome = s_outcome_override if s_outcome_override is not None else s_outcome_from_z(comp.z)
     s_evidence = q_score(D(conf.c_design) * D(100))
     s_attribution = q_score((D(1) - D(residual)) * D(100))
     s_alignment = q_score(D(alignment) * D(100))
@@ -556,6 +597,44 @@ def eu_sensitivity(session: Session, eu_id: int):
     )
 
 
+def _rescore_target_eu(session: Session, eu, action, metric) -> ScoreOutcome:
+    from degreezeor.ingestion.adapters.usaspending import usaspending_adapter
+    from degreezeor.scoring.target_outcome import compute_target_outcome
+
+    # native_series_id = "DEFC:<code>:<realized_kind>"
+    _, defc, realized_kind = metric.native_series_id.split(":")
+    prev = os.environ.get("DZ_HTTP_CACHE")
+    os.environ["DZ_HTTP_CACHE"] = "1"
+    try:
+        rfetch = usaspending_adapter.fetch(defc)
+    finally:
+        if prev is None:
+            os.environ.pop("DZ_HTTP_CACHE", None)
+        else:
+            os.environ["DZ_HTTP_CACHE"] = prev
+    realized = usaspending_adapter.parse_amounts(rfetch.content)[realized_kind]
+    event_period = f"{action.action_date.year}-{action.action_date.month:02d}-01"
+    tc = compute_target_outcome(
+        realized=realized, target=eu.target_value, sign_goal=eu.sign_goal,
+        directly_attributable=bool(eu.directly_attributable), eval_period=event_period,
+    )
+    bill = session.get(Bill, action.id)
+    law = session.get(Law, action.id)
+    actx = AttributionContext(
+        eu_id=eu.id, action_type=action.type,
+        sponsor_official_id=bill.sponsor_official_id if bill else None,
+        signer_official_id=law.signed_by_official_id if law else None,
+        vote_margin=None, member_on_winning_side=None,
+    )
+    attributions = build_attribution(actx)
+    return _finalize(
+        session, eu, action, tc.outcome, attributions,
+        alignment=eu.alignment, observations=[], metric=metric, sign_goal=eu.sign_goal,
+        event_period=event_period, extra_source_urls=[rfetch.source_url],
+        s_outcome_override=tc.s_outcome,
+    )
+
+
 def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
     """Deterministically RE-RUN an existing evaluation unit from stored inputs.
 
@@ -571,6 +650,11 @@ def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
         raise ValueError(f"EU {eu_id} is not in a re-scoreable state")
     action = session.get(Action, eu.action_id)
     metric = session.get(Metric, eu.metric_id)
+
+    # Target-relative EUs re-run by re-observing the directly-attributable realized
+    # series (cache-first) and recomputing against the STORED target — no counterfactual.
+    if eu.evaluation_mode == "target":
+        return _rescore_target_eu(session, eu, action, metric)
 
     enacted = action.action_date
     lag = eu.lag_window_months
@@ -622,6 +706,82 @@ def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
         alignment=eu.alignment, observations=observations, metric=metric, sign_goal=eu.sign_goal,
         event_period=event_period, donor_observations=donor_observations,
         extra_source_urls=donor_source_urls,
+    )
+
+
+def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
+    """Target-relative ('promise-keeping') scoring: did the law DELIVER its committed
+    number, measured by its own directly-attributable USAspending DEFC spending?"""
+    from degreezeor.ingestion.adapters.usaspending import usaspending_adapter
+    from degreezeor.scoring.target_outcome import compute_target_outcome
+
+    action = load_law(session, spec.congress, spec.law_number, spec.law_type)
+    usa_src = ensure_source(
+        session, name=usaspending_adapter.name, tier=usaspending_adapter.tier,
+        base_url=usaspending_adapter.base_url,
+    )
+
+    metric = session.execute(
+        select(Metric).where(Metric.code == f"relief_delivery_{spec.defc}")
+    ).scalar_one_or_none()
+    if metric is None:
+        metric = Metric(
+            code=f"relief_delivery_{spec.defc}",
+            name=f"Realized federal {spec.realized_kind}s, DEFC {spec.defc} (USAspending)",
+            unit="USD", direction_good="up", source_id=usa_src.id,
+            native_series_id=f"DEFC:{spec.defc}:{spec.realized_kind}",
+            domain="Economics and Public Finance",
+        )
+        session.add(metric)
+        session.flush()
+
+    obj = Objective(action_id=action.id, text=spec.objective_text, source_id=usa_src.id,
+                    source_url=spec.target_source_url, objective_level="operational")
+    session.add(obj)
+    session.flush()
+    eu = EvaluationUnit(
+        action_id=action.id, objective_id=obj.id, metric_id=metric.id,
+        lag_window_months=0, sign_goal=spec.sign_goal, status="pending",
+        evaluation_mode="target", target_value=D(str(spec.target_value)),
+        directly_attributable=spec.directly_attributable,
+    )
+    session.add(eu)
+    session.flush()
+
+    # Pre-register the TARGET + source + mode BEFORE observing realized spending.
+    preregister(
+        session, eu, action_native_id=action.native_identifier, metric_code=metric.code,
+        objective_level="operational", sign_goal=spec.sign_goal, lag_window_months=0,
+        masked_objective=(f"target_mode value={spec.target_value} directly_attributable="
+                          f"{spec.directly_attributable} :: {spec.objective_text}")[:280],
+    )
+
+    # Observe realized (directly-attributable) spending.
+    rfetch = usaspending_adapter.fetch(spec.defc)
+    land(session, rfetch)
+    amounts = usaspending_adapter.parse_amounts(rfetch.content)
+    realized = amounts[spec.realized_kind]
+
+    event_period = f"{action.action_date.year}-{action.action_date.month:02d}-01"
+    tc = compute_target_outcome(
+        realized=realized, target=spec.target_value, sign_goal=spec.sign_goal,
+        directly_attributable=spec.directly_attributable, eval_period=event_period,
+    )
+
+    bill = session.get(Bill, action.id)
+    law = session.get(Law, action.id)
+    actx = AttributionContext(
+        eu_id=eu.id, action_type=action.type,
+        sponsor_official_id=bill.sponsor_official_id if bill else None,
+        signer_official_id=law.signed_by_official_id if law else None,
+        vote_margin=None, member_on_winning_side=None,
+    )
+    attributions = build_attribution(actx)
+    return _finalize(
+        session, eu, action, tc.outcome, attributions,
+        alignment=D("0.95"), observations=[], metric=metric, sign_goal=spec.sign_goal,
+        event_period=event_period, extra_source_urls=[rfetch.source_url],
+        s_outcome_override=tc.s_outcome,
     )
 
 

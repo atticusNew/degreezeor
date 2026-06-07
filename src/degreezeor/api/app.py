@@ -122,6 +122,25 @@ def list_disputes(eu_id: int | None = None) -> list[dict]:
         ]
 
 
+@app.get("/api/evaluation-units/{eu_id}/sensitivity")
+def eu_sensitivity_endpoint(eu_id: int) -> dict:
+    from dataclasses import asdict
+
+    from degreezeor.pipeline import eu_sensitivity
+
+    with session_scope() as s:
+        result = eu_sensitivity(s, eu_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="sensitivity not available for this unit")
+    out = asdict(result)
+    # Decimals -> floats for JSON.
+    for p in out["points"]:
+        for k in ("delta", "delta_toward_goal", "z", "s_outcome", "ci_low", "ci_high"):
+            p[k] = float(p[k])
+    out["significant_fraction"] = float(out["significant_fraction"])
+    return out
+
+
 @app.get("/api/graph")
 def relationship_graph(official_id: int | None = None) -> dict:
     from degreezeor.api import graph as graph_mod

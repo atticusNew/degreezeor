@@ -465,6 +465,56 @@ def score_executive_order(session: Session, document_number: str) -> ScoreOutcom
     )
 
 
+def _eu_donor_observations(action: Action) -> tuple[dict[str, list[tuple[str, object]]], list[str]]:
+    """Reconstruct a state policy's donor series (cache-first, no new network)."""
+    donor_observations: dict[str, list[tuple[str, object]]] = {}
+    donor_source_urls: list[str] = []
+    spec = STATE_POLICIES.get(action.native_identifier or "")
+    if spec is None or not spec.donor_fips:
+        return donor_observations, donor_source_urls
+    prev = os.environ.get("DZ_HTTP_CACHE")
+    os.environ["DZ_HTTP_CACHE"] = "1"
+    try:
+        sy = spec.enacted_year - 3
+        ey = spec.enacted_year + (spec.lag_window_months // 12) + 2
+        for dfips in spec.donor_fips:
+            dfetch = bls_adapter.fetch(state_employment_series_id(dfips), start_year=sy, end_year=ey)
+            donor_source_urls.append(dfetch.source_url)
+            dseries = json.loads(dfetch.content)["Results"]["series"][0]
+            donor_observations[dfips] = [
+                (f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
+                for pt in dseries["data"] if pt["period"].startswith("M")
+            ]
+    finally:
+        if prev is None:
+            os.environ.pop("DZ_HTTP_CACHE", None)
+        else:
+            os.environ["DZ_HTTP_CACHE"] = prev
+    return donor_observations, donor_source_urls
+
+
+def eu_sensitivity(session: Session, eu_id: int):
+    """Lag-window sensitivity analysis for an EU (PLAN.md §9.10), from stored data."""
+    from degreezeor.scoring.sensitivity import DEFAULT_LAGS, analyze_lag_sensitivity
+
+    eu = session.get(EvaluationUnit, eu_id)
+    if eu is None or eu.metric_id is None or eu.sign_goal is None:
+        return None
+    action = session.get(Action, eu.action_id)
+    enacted = action.action_date
+    # Window wide enough to cover the longest probed horizon (uses whatever is stored/cached).
+    observations = _windowed_observations(session, eu.metric_id, enacted, max(DEFAULT_LAGS))
+    if len(observations) < 7:
+        return None
+    donors, _ = _eu_donor_observations(action)
+    event_period = f"{enacted.year}-{enacted.month:02d}-01"
+    return analyze_lag_sensitivity(
+        observations, event_period=event_period, registered_lag=eu.lag_window_months,
+        sign_goal=eu.sign_goal, seed=settings.deterministic_seed,
+        donor_observations=donors or None,
+    )
+
+
 def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
     """Deterministically RE-RUN an existing evaluation unit from stored inputs.
 
@@ -487,28 +537,7 @@ def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
     event_period = f"{enacted.year}-{enacted.month:02d}-01"
 
     # Reconstruct donor series (cache-first) for state comparison-design policies.
-    donor_observations: dict[str, list[tuple[str, object]]] = {}
-    donor_source_urls: list[str] = []
-    spec = STATE_POLICIES.get(action.native_identifier or "")
-    if spec is not None and spec.donor_fips:
-        prev = os.environ.get("DZ_HTTP_CACHE")
-        os.environ["DZ_HTTP_CACHE"] = "1"  # replay donors from cache; never new network
-        try:
-            sy = spec.enacted_year - 3
-            ey = spec.enacted_year + (spec.lag_window_months // 12) + 2
-            for dfips in spec.donor_fips:
-                dfetch = bls_adapter.fetch(state_employment_series_id(dfips), start_year=sy, end_year=ey)
-                donor_source_urls.append(dfetch.source_url)
-                dseries = json.loads(dfetch.content)["Results"]["series"][0]
-                donor_observations[dfips] = [
-                    (f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
-                    for pt in dseries["data"] if pt["period"].startswith("M")
-                ]
-        finally:
-            if prev is None:
-                os.environ.pop("DZ_HTTP_CACHE", None)
-            else:
-                os.environ["DZ_HTTP_CACHE"] = prev
+    donor_observations, donor_source_urls = _eu_donor_observations(action)
 
     comp = compute_outcome(
         observations, event_period=event_period, lag_window_months=lag,

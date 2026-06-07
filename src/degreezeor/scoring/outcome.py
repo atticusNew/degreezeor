@@ -162,6 +162,8 @@ def s_outcome_from_z(z: object) -> object:
     """Map standardized effect z -> 0..100 via the logistic CDF. 50 = no effect."""
     import math
 
-    zf = float(D(z))
+    # Clamp the standardized effect to a numerically safe range (the logistic is
+    # already saturated well before this), avoiding exp() overflow for huge effects.
+    zf = max(-40.0, min(40.0, float(D(z))))
     val = 100.0 / (1.0 + math.exp(-1.702 * zf))  # logistic approx to normal CDF
     return q_score(val)

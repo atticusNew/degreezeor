@@ -134,8 +134,11 @@ class TargetSpec:
     objective_text: str
     defc: str  # USAspending Disaster Emergency Fund Code for this law
     realized_kind: str  # 'outlay' | 'obligation'
-    target_value: float  # the committed/promised amount (curated, source-linked)
     target_source_url: str
+    # Committed/promised amount. None => use the committed OBLIGATION from USAspending as
+    # the target (delivery/execution: "did the law outlay the funds it committed?"). A
+    # number => a curated, source-linked target (e.g. a CBO/statutory figure).
+    target_value: float | None = None
     sign_goal: int = 1  # +1 = "deliver at least the committed amount"
     directly_attributable: bool = True
 
@@ -739,20 +742,23 @@ def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
                     source_url=spec.target_source_url, objective_level="operational")
     session.add(obj)
     session.flush()
+    target_kind = "curated" if spec.target_value is not None else "committed_obligation"
     eu = EvaluationUnit(
         action_id=action.id, objective_id=obj.id, metric_id=metric.id,
         lag_window_months=0, sign_goal=spec.sign_goal, status="pending",
-        evaluation_mode="target", target_value=D(str(spec.target_value)),
+        evaluation_mode="target", target_value=None,
         directly_attributable=spec.directly_attributable,
     )
     session.add(eu)
     session.flush()
 
-    # Pre-register the TARGET + source + mode BEFORE observing realized spending.
+    # Pre-register the RULE (metric, mode, target_kind, goal) BEFORE observing spending.
+    # For committed_obligation the target NUMBER is the committed amount observed at fetch,
+    # but the evaluation rule is fixed in advance (analogous to a pre-registered baseline).
     preregister(
         session, eu, action_native_id=action.native_identifier, metric_code=metric.code,
         objective_level="operational", sign_goal=spec.sign_goal, lag_window_months=0,
-        masked_objective=(f"target_mode value={spec.target_value} directly_attributable="
+        masked_objective=(f"target_mode target_kind={target_kind} directly_attributable="
                           f"{spec.directly_attributable} :: {spec.objective_text}")[:280],
     )
 
@@ -761,10 +767,20 @@ def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
     land(session, rfetch)
     amounts = usaspending_adapter.parse_amounts(rfetch.content)
     realized = amounts[spec.realized_kind]
+    target_amount = spec.target_value if spec.target_value is not None else amounts["obligation"]
+    if not target_amount:
+        eu.status = "non_scoreable_no_metric"
+        eu.non_scoreable_reason = (
+            f"No award-level spending is tracked for DEFC {spec.defc} via the USAspending "
+            "disaster endpoint (e.g. non-COVID supplementals), so delivery isn't measurable here."
+        )
+        session.flush()
+        return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+    eu.target_value = D(str(target_amount))
 
     event_period = f"{action.action_date.year}-{action.action_date.month:02d}-01"
     tc = compute_target_outcome(
-        realized=realized, target=spec.target_value, sign_goal=spec.sign_goal,
+        realized=realized, target=target_amount, sign_goal=spec.sign_goal,
         directly_attributable=spec.directly_attributable, eval_period=event_period,
     )
 
@@ -783,6 +799,34 @@ def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
         event_period=event_period, extra_source_urls=[rfetch.source_url],
         s_outcome_override=tc.s_outcome,
     )
+
+
+def ingest_defc_delivery(session: Session, limit: int | None = None) -> list[ScoreOutcome]:
+    """#1 — batch verifiable 'delivery' scores: for every law with DEFC-tagged spending,
+    score realized USAspending outlays vs the funds it committed (directly attributable)."""
+    from degreezeor.ingestion.adapters.usaspending import usaspending_adapter
+
+    results: list[ScoreOutcome] = []
+    for entry in usaspending_adapter.def_codes():
+        if limit is not None and len(results) >= limit:
+            break
+        spec = TargetSpec(
+            key=f"DEFC-{entry['code']}",
+            congress=entry["congress"], law_number=entry["law_number"], law_type="pub",
+            objective_text=(
+                f"Disburse the funds committed under {entry['title']} "
+                f"(DEFC {entry['code']}) — delivery of obligated emergency/supplemental funding."
+            ),
+            defc=entry["code"], realized_kind="outlay", target_value=None,
+            target_source_url=(
+                f"https://api.usaspending.gov/api/v2/disaster/award/amount/?def_codes={entry['code']}"
+            ),
+        )
+        try:
+            results.append(score_target(session, spec))
+        except Exception as exc:  # noqa: BLE001 - skip a DEFC that can't be resolved/scored
+            log.warning("DEFC %s delivery scoring failed: %s", entry["code"], exc)
+    return results
 
 
 def _ensure_named_official(session: Session, name: str) -> Official:

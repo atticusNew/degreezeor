@@ -80,6 +80,16 @@ def cmd_score_target(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_defc(args: argparse.Namespace) -> int:
+    from degreezeor.pipeline import ingest_defc_delivery
+
+    with session_scope() as s:
+        rs = ingest_defc_delivery(s, limit=args.limit)
+    from collections import Counter
+    print("DEFC delivery:", dict(Counter(r.status for r in rs)), "total", len(rs))
+    return 0
+
+
 def cmd_dispute(args: argparse.Namespace) -> int:
     from degreezeor.disputes import file_dispute, resolve_dispute
 
@@ -147,6 +157,10 @@ def main(argv: list[str] | None = None) -> int:
     st = sub.add_parser("score-target")
     st.add_argument("key", help=f"target spec key (one of: {', '.join(TARGET_SPECS)})")
     st.set_defaults(func=cmd_score_target)
+
+    di = sub.add_parser("ingest-defc", help="batch verifiable delivery scores for DEFC-tagged laws")
+    di.add_argument("--limit", type=int, default=None)
+    di.set_defaults(func=cmd_ingest_defc)
 
     dp = sub.add_parser("dispute")
     dp.add_argument("eu_id", type=int)

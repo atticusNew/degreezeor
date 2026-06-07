@@ -50,5 +50,24 @@ class UsaSpendingAdapter(SourceAdapter):
             "award_count": int(d.get("award_count") or 0),
         }
 
+    def def_codes(self) -> list[dict[str, Any]]:
+        """Return DEFCs that map to exactly ONE public law (cleanly attributable).
+
+        Each: {code, congress, law_number, title}. Multi-law DEFCs are skipped — their
+        spending can't be attributed to a single law without overstatement.
+        """
+        import re
+
+        content = client.get_bytes(f"{API}/references/def_codes/")
+        out: list[dict[str, Any]] = []
+        for c in json.loads(content).get("codes", []):
+            laws = sorted(set(re.findall(r"P\.?L\.?\s*(\d+)-(\d+)", c.get("public_law") or "")))
+            if len(laws) != 1:
+                continue
+            congress, num = laws[0]
+            out.append({"code": c["code"], "congress": int(congress),
+                        "law_number": int(num), "title": (c.get("title") or "").strip()})
+        return out
+
 
 usaspending_adapter = SOURCE_ADAPTERS.register(UsaSpendingAdapter())

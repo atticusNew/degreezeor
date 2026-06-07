@@ -169,6 +169,29 @@ def cmd_dispute(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_migrate(_: argparse.Namespace) -> int:
+    """Apply database migrations (production schema management)."""
+    from alembic import command
+    from alembic.config import Config
+
+    from degreezeor.config import REPO_ROOT
+    cfg = Config(str(REPO_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(REPO_ROOT / "alembic"))
+    command.upgrade(cfg, "head")
+    print("migrations applied (head)")
+    return 0
+
+
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Idempotent full ingestion/scoring pass — the production cron entrypoint."""
+    from degreezeor.pipeline import refresh_all
+    with session_scope() as s:
+        counts = refresh_all(s, budget_fiscal_year=args.fiscal_year, congress=args.congress,
+                             law_limit=args.law_limit, eo_limit=args.eo_limit)
+    print("refresh complete:", counts)
+    return 0
+
+
 def cmd_verify_audit(_: argparse.Namespace) -> int:
     with session_scope() as s:
         ok, broken = audit.verify_chain(s)
@@ -202,8 +225,16 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("initdb").set_defaults(func=cmd_initdb)
+    sub.add_parser("migrate", help="apply DB migrations (alembic upgrade head)").set_defaults(func=cmd_migrate)
     sub.add_parser("verify-audit").set_defaults(func=cmd_verify_audit)
     sub.add_parser("list").set_defaults(func=cmd_list)
+
+    rf = sub.add_parser("refresh", help="idempotent full ingestion/scoring pass (cron entrypoint)")
+    rf.add_argument("--fiscal-year", type=int, default=2024)
+    rf.add_argument("--congress", type=int, default=117)
+    rf.add_argument("--law-limit", type=int, default=25)
+    rf.add_argument("--eo-limit", type=int, default=15)
+    rf.set_defaults(func=cmd_refresh)
 
     sp = sub.add_parser("score")
     sp.add_argument("congress", type=int)

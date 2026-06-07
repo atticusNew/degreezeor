@@ -836,6 +836,9 @@ def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
         session.add(metric)
         session.flush()
 
+    existing = _existing_outcome_for_metric(session, action.id, metric.id)
+    if existing is not None:  # idempotent: already scored (cron-safe)
+        return existing
     obj = Objective(action_id=action.id, text=spec.objective_text, source_id=usa_src.id,
                     source_url=spec.target_source_url, objective_level="operational")
     session.add(obj)
@@ -958,6 +961,23 @@ def ingest_defc_delivery(session: Session, limit: int | None = None) -> list[Sco
         except Exception as exc:  # noqa: BLE001 - skip a DEFC that can't be resolved/scored
             log.warning("DEFC %s delivery scoring failed: %s", entry["code"], exc)
     return results
+
+
+def _existing_outcome_for_metric(session: Session, action_id: int, metric_id: int) -> ScoreOutcome | None:
+    """Idempotency for target/court/state scorers: if this (action, metric) is already
+    scored, return its outcome so a nightly cron can re-run safely without duplicates."""
+    eu = session.execute(
+        select(EvaluationUnit).where(
+            EvaluationUnit.action_id == action_id, EvaluationUnit.metric_id == metric_id
+        ).order_by(EvaluationUnit.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    if eu is None:
+        return None
+    run = session.execute(
+        select(ScoreRun).where(ScoreRun.eu_id == eu.id).order_by(ScoreRun.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    return ScoreOutcome(action_id, eu.id, eu.status,
+                        run.id if run else None, run.reproducible_hash if run else None)
 
 
 def _existing_outcome(session: Session, action_id: int) -> ScoreOutcome | None:
@@ -1106,6 +1126,9 @@ def score_court_survival(session: Session, spec: CourtSurvivalSpec) -> ScoreOutc
                         native_series_id="CURATED:court_survival", domain="Law")
         session.add(metric)
         session.flush()
+    existing = _existing_outcome_for_metric(session, action.id, metric.id)
+    if existing is not None:  # idempotent (cron-safe)
+        return existing
     obj = Objective(action_id=action.id, source_id=cl_src.id, source_url=case_url,
                     objective_level="executive",
                     text=(f"Survive judicial review: {spec.note} (disposition: {spec.disposition}; "
@@ -1272,6 +1295,37 @@ def ingest_state_policies(session: Session, keys: list[str] | None = None) -> li
     return results
 
 
+def refresh_all(
+    session: Session, *, budget_fiscal_year: int = 2024, congress: int = 117,
+    law_limit: int = 25, eo_limit: int = 15,
+) -> dict[str, int]:
+    """Idempotent full ingestion/scoring pass — the production CRON entrypoint.
+
+    Every scorer skips already-scored units, so this can run on a schedule without
+    creating duplicates. Returns a per-stage count of evaluation units produced.
+    """
+    counts: dict[str, int] = {}
+    counts["defc_delivery"] = len(ingest_defc_delivery(session))
+    counts["budget_execution"] = len(ingest_budget_execution(session, budget_fiscal_year))
+    counts["state_policies"] = len(ingest_state_policies(session))
+    counts["court_survival"] = sum(
+        1 for spec in COURT_SURVIVAL_SPECS.values() if score_court_survival(session, spec)
+    )
+    counts["curated_targets"] = sum(
+        1 for key in ("CARES-DELIVERY", "IIJA-DELIVERY", "UKRAINE-2022-DELIVERY")
+        if score_target(session, TARGET_SPECS[key])
+    )
+    counts["laws"] = len(batch_score_laws(session, congress, limit=law_limit))
+    counts["executive_orders"] = len(batch_score_executive_orders(session, limit=eo_limit))
+    # Best-effort name enrichment (bounded by Congress.gov throughput).
+    try:
+        from degreezeor.ingestion.loader import enrich_official_names
+        counts["names_enriched"] = enrich_official_names(session)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("name enrichment skipped: %s", exc)
+    return counts
+
+
 def _ensure_named_official(session: Session, name: str) -> Official:
     o = session.execute(select(Official).where(Official.full_name == name)).scalar_one_or_none()
     if o is None:
@@ -1350,6 +1404,9 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
         session.add(metric)
         session.flush()
 
+    existing = _existing_outcome_for_metric(session, action.id, metric.id)
+    if existing is not None:  # idempotent (cron-safe)
+        return existing
     eu = EvaluationUnit(action_id=action.id, objective_id=obj.id, metric_id=metric.id,
                         lag_window_months=spec.lag_window_months, sign_goal=sign_goal, status="pending")
     session.add(eu)

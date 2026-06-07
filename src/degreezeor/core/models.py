@@ -250,7 +250,7 @@ class EvaluationUnit(Base):
 
     __tablename__ = "evaluation_units"
     id: Mapped[int] = mapped_column(primary_key=True)
-    action_id: Mapped[int] = mapped_column(ForeignKey("actions.id"))
+    action_id: Mapped[int] = mapped_column(ForeignKey("actions.id"), index=True)
     objective_id: Mapped[int | None] = mapped_column(ForeignKey("objectives.id"))
     metric_id: Mapped[int | None] = mapped_column(ForeignKey("metrics.id"))
     lag_window_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -266,7 +266,7 @@ class EvaluationUnit(Base):
     # When set, re-runs use it directly (no re-fetch) -> deterministic.
     realized_value: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
     directly_attributable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    status: Mapped[str] = mapped_column(String(40), default="pending")
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
     # pending|scored|non_scoreable_no_objective|non_scoreable_no_metric|
     # non_scoreable_not_implemented|insufficient_evidence|high_model_dependence
     non_scoreable_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -288,7 +288,7 @@ class Baseline(Base):
 class OutcomeResult(Base):
     __tablename__ = "outcome_results"
     id: Mapped[int] = mapped_column(primary_key=True)
-    eu_id: Mapped[int] = mapped_column(ForeignKey("evaluation_units.id"))
+    eu_id: Mapped[int] = mapped_column(ForeignKey("evaluation_units.id"), index=True)
     observed: Mapped[Decimal] = mapped_column(Numeric(24, 6))
     baseline_pooled: Mapped[Decimal] = mapped_column(Numeric(24, 6))
     delta: Mapped[Decimal] = mapped_column(Numeric(24, 6))
@@ -301,8 +301,8 @@ class OutcomeResult(Base):
 class AttributionWeight(Base):
     __tablename__ = "attribution_weights"
     id: Mapped[int] = mapped_column(primary_key=True)
-    eu_id: Mapped[int] = mapped_column(ForeignKey("evaluation_units.id"))
-    official_id: Mapped[int | None] = mapped_column(ForeignKey("officials.id"))
+    eu_id: Mapped[int] = mapped_column(ForeignKey("evaluation_units.id"), index=True)
+    official_id: Mapped[int | None] = mapped_column(ForeignKey("officials.id"), index=True)
     role: Mapped[str] = mapped_column(String(40))  # sponsor|decisive_vote|signer|residual...
     authority: Mapped[Decimal] = mapped_column(Numeric(6, 4))
     pivotality: Mapped[Decimal] = mapped_column(Numeric(6, 4))
@@ -325,7 +325,7 @@ class MethodologyVersion(Base):
 class ScoreRun(Base):
     __tablename__ = "score_runs"
     id: Mapped[int] = mapped_column(primary_key=True)
-    eu_id: Mapped[int] = mapped_column(ForeignKey("evaluation_units.id"))
+    eu_id: Mapped[int] = mapped_column(ForeignKey("evaluation_units.id"), index=True)
     methodology_version_id: Mapped[int] = mapped_column(ForeignKey("methodology_versions.id"))
     data_snapshot_id: Mapped[str] = mapped_column(String(64))  # hash of input content hashes
     code_git_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -341,7 +341,7 @@ class ScoreRun(Base):
 class ScoreComponent(Base):
     __tablename__ = "score_components"
     id: Mapped[int] = mapped_column(primary_key=True)
-    score_run_id: Mapped[int] = mapped_column(ForeignKey("score_runs.id"))
+    score_run_id: Mapped[int] = mapped_column(ForeignKey("score_runs.id"), index=True)
     component: Mapped[str] = mapped_column(String(20))
     value: Mapped[Decimal] = mapped_column(Numeric(8, 4))
     ci_low: Mapped[Decimal | None] = mapped_column(Numeric(8, 4), nullable=True)

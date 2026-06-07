@@ -161,6 +161,7 @@ def _finalize(
     observations: list[tuple[str, object]],
     metric: Metric,
     sign_goal: int,
+    extra_source_urls: list[str] | None = None,
 ) -> ScoreOutcome:
     """Shared scoring tail: confidence → components → assemble → pinned reproducible run.
 
@@ -221,9 +222,11 @@ def _finalize(
         [comp.input_hash, metric.native_series_id, str(sign_goal), str(eu.lag_window_months)]
     )
 
+    input_urls = sorted({action.source_url, *(extra_source_urls or [])})
     run = ScoreRun(
         eu_id=eu.id, methodology_version_id=mv.id, data_snapshot_id=snapshot,
         code_git_sha=current_git_sha(), seed=settings.deterministic_seed,
+        input_source_urls=canonical_json(input_urls),
     )
     session.add(run)
     session.flush()
@@ -462,9 +465,11 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
 
     # Donor (control) states: land for provenance + build in-memory series for the design.
     donor_observations: dict[str, list[tuple[str, object]]] = {}
+    donor_source_urls: list[str] = []
     for dfips in spec.donor_fips:
         dfetch = bls_adapter.fetch(state_employment_series_id(dfips), start_year=start_year, end_year=end_year)
         land(session, dfetch)
+        donor_source_urls.append(dfetch.source_url)
         dseries = json.loads(dfetch.content)["Results"]["series"][0]
         donor_observations[dfips] = [
             (f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
@@ -491,6 +496,7 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     return _finalize(
         session, eu, action, comp, attributions,
         alignment=D("0.90"), observations=observations, metric=metric, sign_goal=sign_goal,
+        extra_source_urls=donor_source_urls,
     )
 
 

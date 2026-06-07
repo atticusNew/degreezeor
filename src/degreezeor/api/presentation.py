@@ -7,6 +7,8 @@ generated mechanically from those quantities — no editorializing, no labels.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import re
 from typing import Any
 
@@ -137,6 +139,11 @@ def build_scorecard(session: Session, eu_id: int) -> dict[str, Any] | None:
     relevant_urls = {action.source_url}
     if objective is not None:
         relevant_urls.add(objective.source_url)
+    # Audit-complete: include every source URL the run recorded as a numeric input
+    # (e.g. donor-state series for synthetic control / DiD).
+    if run is not None and run.input_source_urls:
+        with contextlib.suppress(ValueError, TypeError):
+            relevant_urls.update(json.loads(run.input_source_urls))
     relevant_series = {metric.native_series_id} if metric is not None else set()
     enacted_year = law.enacted_date.year if law and law.enacted_date else None
 

@@ -314,6 +314,9 @@ class ScoreRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reproducible_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    # JSON list of every official source URL whose data fed this run (incl. donor
+    # series for comparison designs), so the source trail is audit-complete.
+    input_source_urls: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ScoreComponent(Base):

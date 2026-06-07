@@ -1,4 +1,4 @@
-# degreezeor — Methodology (v0.1.0)
+# degreezeor — Methodology (v0.2.0)
 
 This document is the public, versioned methodology. Scores always display the methodology
 version that produced them; historical scores are immutable and re-derivable.
@@ -95,8 +95,13 @@ evidence."** This is the correct, humble behavior — not a failure.
 - **Default (public):** the decomposed factual component vector — `outcome, evidence, attribution,
   alignment, dataquality, durability` — each with uncertainty, plus confidence and the source trail.
 - **Composite (opt-in, value-laden):** `EU_score = gate(C) · Σ_k w_k · S_k`. The **neutral default**
-  weights cover only factual components, equal-weighted; value-laden lenses (`cost`, `distribution`)
-  are off by default. The UI watermarks any non-neutral weighting.
+  averages only the **achievement** components — `outcome` and `durability`, both directional toward
+  the stated goal — and then scales by confidence `C`. Crucially, `evidence` (=`c_design`) and
+  `dataquality` (=`c_data`) are *already inside* `C`, so averaging them into the composite too would
+  **double-count confidence**; `alignment` is a metric-fidelity quality measure shown for context.
+  `durability` is goal-directional, so a *persistent move away from the objective* correctly scores
+  **low** (not high). Value-laden lenses (`cost`, `distribution`) are off by default. Users may
+  reweight any component; the UI watermarks non-neutral weightings.
 - **Official roll-up:** attribution-weighted mean of EU scores, always reported with **coverage**
   (fraction of actions that are scoreable) and confidence.
 

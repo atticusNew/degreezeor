@@ -69,7 +69,9 @@ class HttpClient:
         last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                resp = httpx.get(url, params=params, headers=headers, timeout=self.timeout)
+                resp = httpx.get(
+                    url, params=params, headers=headers, timeout=self.timeout, follow_redirects=True
+                )
                 if resp.status_code in _RETRYABLE_STATUS:
                     raise httpx.HTTPStatusError(
                         f"retryable status {resp.status_code}", request=resp.request, response=resp

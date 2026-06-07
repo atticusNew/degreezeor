@@ -12,8 +12,14 @@ from dataclasses import dataclass, field
 from degreezeor.config import settings
 from degreezeor.core.numeric import D, clamp01, clamp_score, q_score
 
-# Factual components eligible for the neutral-default composite (equal weights).
-NEUTRAL_FACTUAL = ("outcome", "evidence", "attribution", "alignment", "dataquality", "durability")
+# All factual components shown in the default vector (transparency).
+FACTUAL_VECTOR = ("outcome", "evidence", "attribution", "alignment", "dataquality", "durability")
+# Achievement axis: components that measure achievement of the stated goal (higher =
+# better, directional). The neutral composite averages ONLY these and then scales by
+# confidence C. The other components (evidence, dataquality, attribution-width) are
+# already inside C, so averaging them too would DOUBLE-COUNT confidence; alignment is
+# a metric-fidelity quality measure shown for context. (Methodology v0.2.0.)
+ACHIEVEMENT_COMPONENTS = ("outcome", "durability")
 # Value-laden components: OFF by default, surfaced separately, user-weighted only.
 VALUE_LADEN = ("cost", "distribution")
 
@@ -69,9 +75,9 @@ def assemble_score(
             reason="insufficient_evidence",
         )
 
-    # Neutral-default composite: equal weight over present factual components, gated by C.
-    present = [c for c in comps if c.name in NEUTRAL_FACTUAL and c.value is not None]
+    # Neutral-default composite = confidence-scaled achievement of the stated goal.
+    present = [c for c in comps if c.name in ACHIEVEMENT_COMPONENTS and c.value is not None]
     equal_w = D(1) / D(len(present))
-    weighted = sum((D(c.value) * equal_w for c in present), D(0))
-    composite = q_score(conf * weighted)
+    achievement = sum((D(c.value) * equal_w for c in present), D(0))
+    composite = q_score(conf * achievement)
     return AssembledScore(components=comps, confidence=conf, composite=composite, gated=False)

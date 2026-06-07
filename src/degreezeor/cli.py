@@ -17,7 +17,7 @@ from sqlalchemy import select
 from degreezeor.core import audit
 from degreezeor.core.db import engine, session_scope
 from degreezeor.core.models import Action, Base, EUScore, EvaluationUnit, ScoreRun
-from degreezeor.pipeline import score_law
+from degreezeor.pipeline import STATE_POLICIES, score_law, score_state_policy
 
 
 def cmd_initdb(_: argparse.Namespace) -> int:
@@ -29,6 +29,18 @@ def cmd_initdb(_: argparse.Namespace) -> int:
 def cmd_score(args: argparse.Namespace) -> int:
     with session_scope() as s:
         result = score_law(s, args.congress, args.law_number, args.law_type)
+    print(f"action_id={result.action_id} eu_id={result.eu_id} status={result.status}")
+    print(f"score_run_id={result.score_run_id} reproducible_hash={result.reproducible_hash}")
+    return 0
+
+
+def cmd_score_state(args: argparse.Namespace) -> int:
+    spec = STATE_POLICIES.get(args.key)
+    if spec is None:
+        print(f"unknown state policy {args.key!r}; known: {', '.join(STATE_POLICIES)}")
+        return 2
+    with session_scope() as s:
+        result = score_state_policy(s, spec)
     print(f"action_id={result.action_id} eu_id={result.eu_id} status={result.status}")
     print(f"score_run_id={result.score_run_id} reproducible_hash={result.reproducible_hash}")
     return 0
@@ -75,6 +87,10 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("law_number", type=int)
     sp.add_argument("--law-type", default="pub", choices=["pub", "priv"])
     sp.set_defaults(func=cmd_score)
+
+    ss = sub.add_parser("score-state")
+    ss.add_argument("key", help=f"state policy key (one of: {', '.join(STATE_POLICIES)})")
+    ss.set_defaults(func=cmd_score_state)
 
     args = p.parse_args(argv)
     return int(args.func(args))

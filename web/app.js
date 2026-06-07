@@ -21,6 +21,9 @@ const el = (tag, attrs = {}, ...kids) => {
 };
 const fmt = (x, d = 2) => (x === null || x === undefined ? "—" : Number(x).toFixed(d));
 const FACTUAL = ["outcome", "evidence", "attribution", "alignment", "dataquality", "durability"];
+// Neutral default: composite = confidence-scaled achievement (outcome + durability).
+// Other components are shown for context but excluded by default (they live in confidence).
+const DEFAULT_WEIGHTS = { outcome: 1, durability: 1, evidence: 0, attribution: 0, alignment: 0, dataquality: 0 };
 
 async function getJSON(path) {
   const r = await fetch(API + path);
@@ -93,19 +96,19 @@ function valueWeightPanel(card) {
   // client-side from displayed factual components. Respects the gate. Watermarked.
   const comps = Object.fromEntries(card.components.map((c) => [c.name, Number(c.value)]));
   const present = FACTUAL.filter((n) => n in comps);
-  const weights = Object.fromEntries(present.map((n) => [n, 1]));
+  const weights = Object.fromEntries(present.map((n) => [n, DEFAULT_WEIGHTS[n] ?? 0]));
   const out = el("div", {});
   const mark = el("div", {});
   const result = el("div", { class: "mono", style: "margin-top:10px;font-size:14px" });
 
-  const isNeutral = () => present.every((n) => Math.abs(weights[n] - 1) < 1e-9);
+  const isNeutral = () => present.every((n) => Math.abs(weights[n] - (DEFAULT_WEIGHTS[n] ?? 0)) < 1e-9);
 
   function recompute() {
     // Watermark only when the user departs from the neutral (equal-weight) default.
     if (isNeutral()) {
       mark.className = "muted";
       mark.style.fontSize = "12px";
-      mark.textContent = "Neutral default: equal weight across factual components only (value-laden lenses off).";
+      mark.textContent = "Neutral default: confidence-scaled achievement (outcome + durability). Other components shown for context live inside confidence.";
     } else {
       mark.className = "watermark";
       mark.style.fontSize = "12px";
@@ -127,8 +130,9 @@ function valueWeightPanel(card) {
 
   const wrap = el("div", { class: "weights" });
   for (const n of present) {
-    const val = el("span", { class: "right mono" }, "1.0");
-    const slider = el("input", { type: "range", min: "0", max: "3", step: "0.1", value: "1" });
+    const w0 = DEFAULT_WEIGHTS[n] ?? 0;
+    const val = el("span", { class: "right mono" }, w0.toFixed(1));
+    const slider = el("input", { type: "range", min: "0", max: "3", step: "0.1", value: String(w0) });
     slider.addEventListener("input", () => { weights[n] = Number(slider.value); val.textContent = Number(slider.value).toFixed(1); recompute(); });
     wrap.appendChild(el("label", {}, el("span", {}, n), slider, val));
   }

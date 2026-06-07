@@ -13,6 +13,7 @@ from datetime import date
 
 import numpy as np
 
+from degreezeor.core.hashing import hash_payload
 from degreezeor.core.interfaces import (
     BASELINE_METHODS,
     BaselineContext,
@@ -38,6 +39,10 @@ class OutcomeComputation:
     ci_high: object
     per_method: list[BaselineEstimate]
     eval_period: str
+    # Deterministic fingerprint of the exact numeric inputs (treated + donor series)
+    # that produced this result. Drives the reproducible data-snapshot id, independent
+    # of any volatile provenance bytes (e.g. dynamic HTML on a source page).
+    input_hash: str
 
 
 def _value_at(post: list, eval_index: int, origin: date) -> tuple[str, float] | None:
@@ -64,6 +69,18 @@ def compute_outcome(
     pre, post = split_series(observations, event_period)
     if len(pre) < 6 or not post:
         return None
+
+    # Fingerprint the exact numeric inputs for reproducible, audit-complete snapshots.
+    input_hash = hash_payload({
+        "event_period": event_period,
+        "lag_window_months": lag_window_months,
+        "sign_goal": sign_goal,
+        "observations": [(p, str(v)) for p, v in sorted(observations)],
+        "donors": {
+            unit: [(p, str(v)) for p, v in sorted(series)]
+            for unit, series in sorted((donor_observations or {}).items())
+        },
+    })
 
     origin = date.fromisoformat(pre[0].period)
     donors: dict[str, list[TimePoint]] = {}
@@ -137,6 +154,7 @@ def compute_outcome(
         ci_high=D(max(ci_low, ci_high)),
         per_method=estimates,
         eval_period=eval_period,
+        input_hash=input_hash,
     )
 
 

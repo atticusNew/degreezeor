@@ -40,6 +40,17 @@ def test_s_outcome_monotonic_and_centered() -> None:
     assert float(s_outcome_from_z(-3)) < 10.0
 
 
+def test_input_hash_is_deterministic_and_input_sensitive() -> None:
+    obs = _flat_then_drop()
+    r1 = compute_outcome(obs, event_period="2017-01-01", lag_window_months=12, sign_goal=-1, seed=7)
+    r2 = compute_outcome(obs, event_period="2017-01-01", lag_window_months=12, sign_goal=-1, seed=7)
+    assert r1.input_hash == r2.input_hash  # same inputs => same fingerprint (reproducibility)
+    # Changing the data changes the fingerprint.
+    obs2 = obs[:-1] + [(obs[-1][0], "3.9")]
+    r3 = compute_outcome(obs2, event_period="2017-01-01", lag_window_months=12, sign_goal=-1, seed=7)
+    assert r3.input_hash != r1.input_hash
+
+
 def test_insufficient_data_returns_none() -> None:
     obs = [(f"2017-{m:02d}-01", "5.0") for m in range(1, 4)]  # too few pre-points
     assert compute_outcome(obs, event_period="2017-02-01", lag_window_months=12, sign_goal=1, seed=1) is None

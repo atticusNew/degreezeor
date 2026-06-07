@@ -65,6 +65,7 @@ from degreezeor.scoring.objective import (
 from degreezeor.scoring.outcome import compute_outcome, s_outcome_from_z
 from degreezeor.scoring.prereg import preregister
 from degreezeor.scoring.score import assemble_score
+from degreezeor.scoring.sensitivity import analyze_lag_sensitivity
 
 
 def state_employment_series_id(fips: str) -> str:
@@ -190,6 +191,8 @@ def _finalize(
     observations: list[tuple[str, object]],
     metric: Metric,
     sign_goal: int,
+    event_period: str,
+    donor_observations: dict[str, list[tuple[str, object]]] | None = None,
     extra_source_urls: list[str] | None = None,
 ) -> ScoreOutcome:
     """Shared scoring tail: confidence → components → assemble → pinned reproducible run.
@@ -209,6 +212,14 @@ def _finalize(
     residual = next((a.attribution for a in attributions if a.is_residual), D(0))
     human_widths = [D(a.attr_ci_high) - D(a.attr_ci_low) for a in attributions if not a.is_residual]
 
+    # Sensitivity of the result to the evaluation-horizon choice feeds confidence (§9.10):
+    # a direction that flips across defensible lags is fragile.
+    sens = analyze_lag_sensitivity(
+        observations, event_period=event_period, registered_lag=eu.lag_window_months,
+        sign_goal=sign_goal, seed=settings.deterministic_seed,
+        donor_observations=donor_observations or None,
+    )
+
     best_method = best_design([e.method for e in comp.per_method])
     conf = compute_confidence(
         best_method=best_method,
@@ -216,6 +227,7 @@ def _finalize(
         model_dependence=comp.model_dependence,
         data_tier=1, data_completeness=D("1.0"),
         attribution_widths=human_widths,
+        sensitivity_sign_stable=sens.sign_stable,
     )
 
     delta_toward_goal = D(sign_goal) * D(comp.delta)
@@ -395,6 +407,7 @@ def score_law(session: Session, congress: int, law_number: int, law_type: str = 
     return _finalize(
         session, eu, action, comp, attributions,
         alignment=D(primary.alignment), observations=observations, metric=metric, sign_goal=sign_goal,
+        event_period=event_period,
     )
 
 
@@ -462,6 +475,7 @@ def score_executive_order(session: Session, document_number: str) -> ScoreOutcom
     return _finalize(
         session, eu, action, comp, attributions,
         alignment=D(primary.alignment), observations=observations, metric=metric, sign_goal=sign_goal,
+        event_period=event_period,
     )
 
 
@@ -560,6 +574,7 @@ def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
     return _finalize(
         session, eu, action, comp, attributions,
         alignment=eu.alignment, observations=observations, metric=metric, sign_goal=eu.sign_goal,
+        event_period=event_period, donor_observations=donor_observations,
         extra_source_urls=donor_source_urls,
     )
 
@@ -694,6 +709,7 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     return _finalize(
         session, eu, action, comp, attributions,
         alignment=D("0.90"), observations=observations, metric=metric, sign_goal=sign_goal,
+        event_period=event_period, donor_observations=donor_observations,
         extra_source_urls=donor_source_urls,
     )
 

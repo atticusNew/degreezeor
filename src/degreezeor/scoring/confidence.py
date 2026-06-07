@@ -48,6 +48,7 @@ class ConfidenceBreakdown:
     c_data: object
     c_attrib: object
     c_modeldep: object
+    c_sensitivity: object
     confidence: object
 
 
@@ -68,6 +69,7 @@ def compute_confidence(
     data_tier: int,
     data_completeness: object,
     attribution_widths: list[object],
+    sensitivity_sign_stable: bool | None = None,
 ) -> ConfidenceBreakdown:
     c_design = clamp01(DESIGN_BASE.get(best_method, D("0.4")) * _significance_factor(ci_low, ci_high))
 
@@ -82,11 +84,17 @@ def compute_confidence(
 
     c_modeldep = clamp01(D(1) - D(model_dependence))
 
-    confidence = clamp01(dprod([c_design, c_data, c_attrib, c_modeldep]))
+    # Sensitivity to the (analyst-chosen) evaluation horizon: a result whose direction
+    # FLIPS across defensible lag windows is fragile and must lower confidence. Unknown
+    # (not computed) or stable => no penalty. (PLAN.md §9.10.)
+    c_sensitivity = D("0.5") if sensitivity_sign_stable is False else D("1.0")
+
+    confidence = clamp01(dprod([c_design, c_data, c_attrib, c_modeldep, c_sensitivity]))
     return ConfidenceBreakdown(
         c_design=c_design,
         c_data=c_data,
         c_attrib=c_attrib,
         c_modeldep=c_modeldep,
+        c_sensitivity=c_sensitivity,
         confidence=confidence,
     )

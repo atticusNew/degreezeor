@@ -123,8 +123,9 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
 .row .v { text-align: right; }
 .badge {
   display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line); white-space: nowrap;
 }
+.list-item .li-side { white-space: nowrap; }
 .badge.scored { background: var(--score-soft); color: var(--score); border-color: var(--score-border); }
 .badge.insufficient_evidence { background: rgba(176,125,43,.15); color: var(--gate); border-color: rgba(176,125,43,.5); }
 .badge.non_scoreable_no_metric, .badge.non_scoreable_no_objective, .badge.pending {
@@ -327,8 +328,8 @@ button:disabled { opacity: .55; cursor: default; }
      single clean row of evenly-sized pills (no wrap, no broken overflow scroll). */
   .hsearch { display: none; }
   header.top .audit-badge { margin-left: auto; }
-  header.top nav { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: nowrap; gap: 4px; }
-  header.top nav a { flex: 1 1 0; min-width: 0; text-align: center; padding: 6px 4px; font-size: 12px; white-space: nowrap; }
+  header.top nav { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: nowrap; gap: 3px; }
+  header.top nav a { flex: 1 1 0; min-width: 0; text-align: center; padding: 6px 2px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .container { padding: 16px 14px 64px; }
   .card { padding: 14px 14px; }
   /* Stack key/value rows so long values don't get squeezed. */

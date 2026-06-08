@@ -270,8 +270,10 @@ async function renderLanding() {
     el("div", { class: "sub" }, "What your officials did, and whether it worked. Measured against each action's own goal, with sources."),
     el("div", { class: "ctas" },
       el("a", { class: "cta", href: "#/officials" }, "Find an official"),
-      el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"),
-      el("a", { class: "cta ghost", href: "#/about" }, "How it works"))));
+      el("a", { class: "cta ghost", href: "#/compare" }, "Compare two"),
+      el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions")),
+    el("div", { style: "margin-top:12px" },
+      el("a", { class: "muted", style: "font-size:13px", href: "#/about" }, "How it works"))));
 }
 
 async function renderSources() {
@@ -325,8 +327,8 @@ async function renderGlossary() {
   }
 }
 
-const NAV = [["#/officials", "Officials"], ["#/actions", "Actions"], ["#/coverage", "Coverage"],
-             ["#/integrity", "Integrity"], ["#/about", "About"]];
+const NAV = [["#/officials", "Officials"], ["#/compare", "Compare"], ["#/actions", "Actions"],
+             ["#/coverage", "Coverage"], ["#/integrity", "Integrity"], ["#/about", "About"]];
 function renderNav() {
   const nav = $("#nav");
   if (!nav) return;
@@ -767,6 +769,8 @@ async function renderOfficials() {
     catch (e) { listEl.innerHTML = ""; listEl.appendChild(el("div", { class: "card", style: "color:var(--muted)" }, "Could not load officials. Retry in a moment.")); return; }
     if (state.q) rows = rows.filter((o) => matchOfficial(blobOf(o), state.q));
     if (state.letter && state.letter !== "All") rows = rows.filter((o) => initialOf(o) === state.letter);
+    // Always list alphabetically by last name (so same-surname people sit together).
+    rows = rows.slice().sort((a, b) => formatName(a.name).localeCompare(formatName(b.name)));
     listEl.innerHTML = "";
     countEl.textContent = `${rows.length} result(s)`;
     if (!rows.length) {
@@ -1005,6 +1009,40 @@ async function renderOfficialDetail(id) {
   if (chal) app.appendChild(chal);
 }
 
+// Reusable keyboard typeahead for picking an official (used by Compare).
+function officialPicker(index, { placeholder, initialId, onPick }) {
+  const input = el("input", { type: "text", autocomplete: "off", placeholder: placeholder || "Search an official…", "aria-label": placeholder });
+  const drop = el("div", { class: "typeahead" });
+  const wrap = el("div", { class: "search-wrap" }, input, drop);
+  if (initialId) { const o = index.find((x) => String(x.id) === String(initialId)); if (o) input.value = formatName(o.name); }
+  let matches = [], active = -1;
+  const hl = () => { for (let i = 0; i < drop.children.length; i++) drop.children[i].classList.toggle("active", i === active); };
+  const choose = (o) => { input.value = formatName(o.name); drop.style.display = "none"; onPick(o.id); };
+  function render() {
+    drop.innerHTML = ""; active = -1;
+    const q = input.value.trim().toLowerCase();
+    if (!q) { drop.style.display = "none"; return; }
+    matches = index
+      .filter((o) => matchOfficial(`${formatName(o.name)} ${formatNameNatural(o.name)} ${o.name || ""}`.toLowerCase(), q))
+      .sort((a, b) => formatName(a.name).localeCompare(formatName(b.name))).slice(0, 8);
+    if (!matches.length) { drop.style.display = "none"; return; }
+    drop.style.display = "block";
+    matches.forEach((o) => drop.appendChild(el("div", { class: "ta-item", onmousedown: (e) => { e.preventDefault(); choose(o); } },
+      el("span", {}, formatName(o.name)), o.position ? el("span", { class: "pill" }, o.position) : null)));
+  }
+  input.addEventListener("input", render);
+  input.addEventListener("focus", render);
+  input.addEventListener("blur", () => setTimeout(() => { drop.style.display = "none"; }, 150));
+  input.addEventListener("keydown", (e) => {
+    const open = drop.style.display === "block" && matches.length;
+    if (e.key === "ArrowDown" && open) { e.preventDefault(); active = Math.min(active + 1, matches.length - 1); hl(); }
+    else if (e.key === "ArrowUp" && open) { e.preventDefault(); active = Math.max(active - 1, 0); hl(); }
+    else if (e.key === "Enter" && open) { e.preventDefault(); choose(matches[active >= 0 ? active : 0]); }
+    else if (e.key === "Escape") { drop.style.display = "none"; }
+  });
+  return wrap;
+}
+
 async function renderCompare() {
   const app = $("#app");
   app.innerHTML = ""; app.appendChild(spinner());
@@ -1017,16 +1055,11 @@ async function renderCompare() {
     "A side-by-side of two records. Descriptive only, never a ranking or a judgment."));
 
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
-  const sorted = index.slice().sort((x, y) => formatName(x.name).localeCompare(formatName(y.name)));
-  const opts = [["", "Choose an official…"], ...sorted.map((o) => [String(o.id), formatName(o.name) + (o.position ? ` (${o.position})` : "")])];
-  const selA = selectEl(opts, params.get("a") || ""); selA.className = "full-select";
-  const selB = selectEl(opts, params.get("b") || ""); selB.className = "full-select";
-  const go = () => { location.hash = "#/compare?a=" + (selA.value || "") + "&b=" + (selB.value || ""); };
-  selA.addEventListener("change", go);
-  selB.addEventListener("change", go);
+  let aId = params.get("a") || "", bId = params.get("b") || "";
+  const nav = () => { if (aId && bId) location.hash = `#/compare?a=${aId}&b=${bId}`; };
   app.appendChild(el("div", { class: "cmp-pick" },
-    el("label", {}, "Official A", selA),
-    el("label", {}, "Official B", selB)));
+    el("label", {}, "Official A", officialPicker(index, { placeholder: "Type a name…", initialId: aId, onPick: (id) => { aId = id; nav(); } })),
+    el("label", {}, "Official B", officialPicker(index, { placeholder: "Type a name…", initialId: bId, onPick: (id) => { bId = id; nav(); } }))));
 
   const panel = el("div", {});
   app.appendChild(panel);

@@ -142,8 +142,9 @@ clearly separated layers, never blended:
 - **Scored layer ("did it work?"):** composite scores and the factual component vector above. Only
   EUs that pass the confidence gate (§7) receive a composite.
 - **Record layer ("what they acted on"):** the **unscored** legislative record — bills a member
-  **sponsored** and **cosponsored** (Congress.gov), plus how they **voted** on recorded roll-call
-  votes (clerk.house.gov, keyless Tier 0) — grouped by the objective category taxonomy. These are
+  **sponsored** and   **cosponsored** (Congress.gov), plus how they **voted** on recorded roll-call
+  votes (House: clerk.house.gov; Senate: senate.gov — keyless Tier 0, senators resolved via
+  the lis↔bioguide crosswalk) — grouped by the objective category taxonomy. These are
   source-anchored facts describing breadth and positions by topic. They are **never** fed into any
   score, attribution, or the party-symmetry monitor; they exist purely so the public record of
   activity is visible alongside (and visually distinct from) the rigorous scored layer. The

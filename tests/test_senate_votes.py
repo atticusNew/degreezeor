@@ -7,6 +7,7 @@ reproducibility check lives in ``test_pipeline_live.py`` (gated by DZ_RUN_LIVE).
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from degreezeor.core.interfaces import AttributionContext
@@ -28,6 +29,9 @@ def test_parse_senate_vote_fixture() -> None:
     assert akaka.lis_member_id == "S213"
     assert akaka.party == "D" and akaka.state == "HI" and akaka.position == "yea"
     assert sum(1 for p in sv.positions if p.position == "yea") == 60
+    # New: date + result are parsed for the activity/record layer.
+    assert sv.vote_date == date(2009, 2, 13)
+    assert sv.result == "Conference Report Agreed to"
 
 
 def test_build_lis_bioguide_map() -> None:

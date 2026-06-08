@@ -29,6 +29,7 @@ from degreezeor.core.models import (
     AttributionWeight,
     Baseline,
     Bill,
+    BillCosponsor,
     ConfidenceInterval,
     DataSource,
     EUScore,
@@ -1963,7 +1964,8 @@ def ingest_state_policies(session: Session, keys: list[str] | None = None) -> li
 
 
 def ingest_member_bills(
-    session: Session, congress: int, *, new_limit: int = 1000, max_pages: int = 30, page_size: int = 250,
+    session: Session, congress: int, *, new_limit: int = 1000, max_pages: int = 30,
+    page_size: int = 250, with_cosponsors: bool = True,
 ) -> int:
     """Record the bills members SPONSORED in a Congress as categorized, unscored 'recorded'
     actions, so an official's full record of WHAT THEY ACTED ON (by topic) is visible even
@@ -1983,6 +1985,30 @@ def ingest_member_bills(
         select(DataSource.id).where(DataSource.name == congress_adapter.name)
     ).scalar_one()
     jur = ensure_us_federal(session)
+
+    def _resolve_member(member: dict) -> Official | None:
+        """Get-or-create an official from a Congress.gov member dict (sponsor or cosponsor),
+        upgrading a vote-derived name stub to a real name and recording party (audit only)."""
+        bio = member.get("bioguideId")
+        if not bio:
+            return None
+        name = " ".join(x for x in [member.get("firstName"), member.get("lastName")] if x).strip() \
+            or member.get("fullName") or bio
+        official = session.execute(
+            select(Official).where(Official.bioguide_id == bio)
+        ).scalar_one_or_none()
+        if official is None:
+            official = Official(full_name=name, bioguide_id=bio)
+            session.add(official)
+            session.flush()
+        elif official.full_name and (
+            len(official.full_name.split()) <= 1 or "(" in official.full_name or "[" in official.full_name
+        ):
+            official.full_name = name
+        if member.get("party"):
+            ensure_party_term(session, official, member["party"])
+        return official
+
     inserted = 0
     for page in range(max_pages):
         if inserted >= new_limit:
@@ -2012,23 +2038,9 @@ def ingest_member_bills(
             if not sponsors or not sponsors[0].get("bioguideId"):
                 continue
             land(session, df)
-            sp = sponsors[0]
-            bio = sp["bioguideId"]
-            name = " ".join(x for x in [sp.get("firstName"), sp.get("lastName")] if x).strip() \
-                or sp.get("fullName") or bio
-            official = session.execute(
-                select(Official).where(Official.bioguide_id == bio)
-            ).scalar_one_or_none()
+            official = _resolve_member(sponsors[0])
             if official is None:
-                official = Official(full_name=name, bioguide_id=bio)
-                session.add(official)
-                session.flush()
-            elif official.full_name and (
-                len(official.full_name.split()) <= 1 or "(" in official.full_name or "[" in official.full_name
-            ):
-                official.full_name = name  # upgrade a vote-derived stub to a real name
-            if sp.get("party"):
-                ensure_party_term(session, official, sp["party"])
+                continue
             intro = bill.get("introducedDate")
             action = Action(
                 type="bill", title=bill.get("title") or native,
@@ -2042,6 +2054,19 @@ def ingest_member_bills(
             session.add(Bill(action_id=action.id, congress=congress,
                              bill_number=f"{btype.upper()}{num}", sponsor_official_id=official.id,
                              status="introduced"))
+            # Cosponsors: who else backed it (best-effort; the bill is recorded either way).
+            if with_cosponsors:
+                try:
+                    cf = congress_adapter.fetch_bill_cosponsors(congress, btype, int(num))
+                    seen_co: set[int] = set()
+                    for co in json.loads(cf.content).get("cosponsors", []):
+                        cofficial = _resolve_member(co)
+                        if cofficial is None or cofficial.id == official.id or cofficial.id in seen_co:
+                            continue
+                        seen_co.add(cofficial.id)
+                        session.add(BillCosponsor(action_id=action.id, official_id=cofficial.id))
+                except Exception:  # noqa: BLE001 - cosponsors are best-effort
+                    pass
             inserted += 1
         session.flush()
     return inserted
@@ -2082,6 +2107,22 @@ def refresh_all(
             counts.setdefault(name, 0)
             _safe_rollback()
 
+    # Activity/record layer FIRST so the recent, broad record of what members sponsored +
+    # cosponsored appears early each run. Recency-first, capped per run (sponsor + cosponsor
+    # calls per bill respect the per-key budget); repeated runs fill in the rest.
+    def _member_bills() -> int:
+        total = 0
+        for c in (119, 118, 117, 116):
+            cap = 700 if c >= 118 else 400
+            try:
+                total += ingest_member_bills(session, c, new_limit=cap)
+                _safe_commit(f"member bills {c}")
+            except Exception as exc:  # noqa: BLE001 - never fatal
+                log.warning("member-bill ingestion for congress %s skipped: %s", c, exc)
+                _safe_rollback()
+        return total
+    _stage("member_bills", _member_bills)
+
     _stage("defc_delivery", lambda: len(ingest_defc_delivery(session)))
 
     # All toptier agencies, across the last few fiscal years: execution rate is reliable and
@@ -2110,21 +2151,6 @@ def refresh_all(
     _stage("laws", lambda: len(batch_score_laws(session, congress, limit=law_limit)))
     _stage("executive_orders", lambda: len(batch_score_executive_orders(session, limit=eo_limit)))
     _stage("regulations", lambda: len(batch_score_regulations(session, limit=eo_limit)))
-
-    # Activity/record layer: the bills members SPONSORED, by topic (unscored). Recency-first,
-    # capped per run so the per-key request budget is respected; repeated runs fill in the rest.
-    def _member_bills() -> int:
-        total = 0
-        for c in (119, 118, 117, 116):
-            cap = 1000 if c >= 118 else 500
-            try:
-                total += ingest_member_bills(session, c, new_limit=cap)
-                _safe_commit(f"member bills {c}")
-            except Exception as exc:  # noqa: BLE001 - never fatal
-                log.warning("member-bill ingestion for congress %s skipped: %s", c, exc)
-                _safe_rollback()
-        return total
-    _stage("member_bills", _member_bills)
 
     # Best-effort name enrichment (bounded by Congress.gov throughput).
     def _enrich() -> int:

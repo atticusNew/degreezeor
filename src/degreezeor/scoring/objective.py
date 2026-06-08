@@ -52,18 +52,26 @@ def score_alignment(objective_text: str, spec: MetricSpec) -> tuple[object, tupl
 def select_metrics(
     objective_text: str, domain: str | None = None
 ) -> tuple[MetricMatch | None, list[MetricMatch]]:
-    """Return (primary, side_effects). Primary = highest alignment; ties broken by
-    catalog order for determinism. Side-effects = other same-domain matches."""
+    """Return (primary, side_effects). The catalog is cross-domain: a metric is selected
+    by KEYWORD evidence against the (party-masked) objective, regardless of the action's
+    crude domain tag — so e.g. a health objective reaches a CDC health metric even on an
+    action defaulted to the economic domain. ``domain`` is used only as a deterministic
+    tie-breaker (prefer the action's own domain when alignment ties), never as an exclusion.
+    Health/economic keyword sets are specific enough that cross-domain false matches do not
+    occur in practice. Primary = highest alignment; ties -> same-domain -> catalog order."""
     matches: list[MetricMatch] = []
     for spec in CATALOG:
-        if domain and spec.domain != domain:
-            continue
         align, hits = score_alignment(objective_text, spec)
         if hits:
             matches.append(MetricMatch(spec=spec, alignment=align, matched_keywords=hits))
     if not matches:
         return None, []
-    matches.sort(key=lambda m: (D(m.alignment), -CATALOG.index(m.spec)), reverse=True)
+    matches.sort(
+        key=lambda m: (D(m.alignment),
+                       1 if (domain and m.spec.domain == domain) else 0,
+                       -CATALOG.index(m.spec)),
+        reverse=True,
+    )
     primary = matches[0]
     side = matches[1:]
     return primary, side
@@ -77,8 +85,11 @@ def ensure_metric(session: Session, spec: MetricSpec) -> Metric:
         select(DataSource).where(DataSource.name == spec.source_name)
     ).scalar_one_or_none()
     if src is None:
-        # BLS is created during ingestion; create a placeholder if catalog is seeded first.
-        src = DataSource(name=spec.source_name, tier=1, base_url="https://api.bls.gov")
+        # Source is normally created during ingestion; create a correct placeholder if the
+        # catalog is seeded first (base_url per known source so the trail stays accurate).
+        base_urls = {"BLS": "https://api.bls.gov", "CDC": "https://data.cdc.gov/resource"}
+        src = DataSource(name=spec.source_name, tier=1,
+                         base_url=base_urls.get(spec.source_name, "https://example.gov"))
         session.add(src)
         session.flush()
     m = Metric(

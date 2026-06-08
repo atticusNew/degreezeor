@@ -218,6 +218,32 @@ def test_budget_execution_scores_and_reproduces() -> None:
         s.close()
 
 
+def test_cdc_health_observations_ingest() -> None:
+    """The pluggable observation loader dispatches to CDC and ingests a real NCHS series
+    (life expectancy at birth), proving outcome ingestion is no longer BLS-only."""
+    from sqlalchemy import func, select
+
+    from degreezeor.core.models import DataSource, Observation
+    from degreezeor.ingestion.loader import load_observations
+    from degreezeor.scoring.catalog import BY_CODE
+    from degreezeor.scoring.objective import ensure_metric
+
+    s = _fresh_session()
+    try:
+        metric = ensure_metric(s, BY_CODE["life_expectancy"])
+        n = load_observations(s, metric, 2000, 2018)
+        s.commit()
+        assert n >= 10  # ~annual points 2000..2018
+        cnt = s.execute(
+            select(func.count()).select_from(Observation).where(Observation.metric_id == metric.id)
+        ).scalar_one()
+        assert cnt == n
+        src = s.get(DataSource, metric.source_id)
+        assert src.name == "CDC" and src.tier == 1
+    finally:
+        s.close()
+
+
 def test_regulation_ingests_scores_and_reproduces() -> None:
     """A final agency rule (Federal Register) ingests as Action(type='regulation'),
     is attributed to the administration on its effective date (executive authority), and

@@ -414,48 +414,73 @@ def load_senate_final_passage_vote(
     return sv, winning_official_ids
 
 
+def _insert_observation(session: Session, metric: Metric, jur_id: int, source_id: int,
+                        period_iso: str, value: str, source_url: str, retrieved_at) -> bool:
+    """Insert one observation if absent. Returns True if inserted."""
+    exists = session.execute(
+        select(Observation).where(
+            Observation.metric_id == metric.id,
+            Observation.jurisdiction_id == jur_id,
+            Observation.period == period_iso,
+        )
+    ).scalar_one_or_none()
+    if exists:
+        return False
+    session.add(Observation(
+        metric_id=metric.id, jurisdiction_id=jur_id, period=period_iso,
+        value=Decimal(str(value)), source_id=source_id, source_url=source_url,
+        retrieved_at=retrieved_at,
+        content_hash=sha256_hex(f"{metric.native_series_id}:{period_iso}:{value}"),
+    ))
+    return True
+
+
+def _load_bls_observations(session: Session, metric: Metric, start_year: int, end_year: int) -> int:
+    fetch = bls_adapter.fetch(metric.native_series_id, start_year=start_year, end_year=end_year)
+    land(session, fetch)
+    series = json.loads(fetch.content)["Results"]["series"][0]
+    jur = ensure_us_federal(session)
+    src_id = session.execute(select(DataSource.id).where(DataSource.name == bls_adapter.name)).scalar_one()
+    retrieved = datetime.fromisoformat(fetch.retrieved_at.isoformat())
+    count = 0
+    for pt in series["data"]:
+        period = pt["period"]  # M01..M12 (monthly); skip quarterly/annual aggregates
+        if not period.startswith("M"):
+            continue
+        period_iso = f"{pt['year']}-{int(period[1:]):02d}-01"
+        if _insert_observation(session, metric, jur.id, src_id, period_iso, pt["value"],
+                               fetch.source_url, retrieved):
+            count += 1
+    session.flush()
+    return count
+
+
+def _load_cdc_observations(session: Session, metric: Metric, start_year: int, end_year: int) -> int:
+    from degreezeor.ingestion.adapters.cdc import cdc_adapter
+
+    fetch = cdc_adapter.fetch(metric.native_series_id, start_year=start_year, end_year=end_year)
+    land(session, fetch)
+    jur = ensure_us_federal(session)
+    src_id = ensure_cdc_source(session).id
+    retrieved = datetime.fromisoformat(fetch.retrieved_at.isoformat())
+    count = 0
+    for year, value in cdc_adapter.parse_series(fetch.content, metric.native_series_id):
+        # CDC series are annual; anchor to Jan 1 of the year.
+        if _insert_observation(session, metric, jur.id, src_id, f"{year}-01-01", value,
+                               fetch.source_url, retrieved):
+            count += 1
+    session.flush()
+    return count
+
+
 def load_observations(
     session: Session, metric: Metric, start_year: int, end_year: int
 ) -> int:
-    """Ingest a metric's official series (BLS) into observations. Returns count loaded."""
-    fetch = bls_adapter.fetch(metric.native_series_id, start_year=start_year, end_year=end_year)
-    land(session, fetch)
-    doc = json.loads(fetch.content)
-    series = doc["Results"]["series"][0]
-    jur = ensure_us_federal(session)
-    count = 0
-    for pt in series["data"]:
-        period = pt["period"]  # M01..M12 (monthly) or Q01.. / A01 (annual)
-        if not period.startswith("M"):
-            continue
-        month = int(period[1:])
-        period_iso = f"{pt['year']}-{month:02d}-01"
-        exists = session.execute(
-            select(Observation).where(
-                Observation.metric_id == metric.id,
-                Observation.jurisdiction_id == jur.id,
-                Observation.period == period_iso,
-            )
-        ).scalar_one_or_none()
-        if exists:
-            continue
-        session.add(
-            Observation(
-                metric_id=metric.id,
-                jurisdiction_id=jur.id,
-                period=period_iso,
-                value=Decimal(str(pt["value"])),
-                source_id=session.execute(
-                    select(DataSource.id).where(DataSource.name == bls_adapter.name)
-                ).scalar_one(),
-                source_url=fetch.source_url,
-                retrieved_at=datetime.fromisoformat(fetch.retrieved_at.isoformat()),
-                content_hash=sha256_hex(f"{metric.native_series_id}:{period_iso}:{pt['value']}"),
-            )
-        )
-        count += 1
-    session.flush()
-    return count
+    """Ingest a metric's official outcome series into observations (pluggable by source).
+    Dispatches on the metric's native series id: CDC Socrata vs BLS. Returns count loaded."""
+    if metric.native_series_id.startswith("CDC|"):
+        return _load_cdc_observations(session, metric, start_year, end_year)
+    return _load_bls_observations(session, metric, start_year, end_year)
 
 
 def enrich_official_names(session: Session, limit: int | None = None) -> int:
@@ -489,4 +514,11 @@ def enrich_official_names(session: Session, limit: int | None = None) -> int:
 def ensure_bls_source(session: Session) -> DataSource:
     return ensure_source(
         session, name=bls_adapter.name, tier=bls_adapter.tier, base_url=bls_adapter.base_url
+    )
+
+
+def ensure_cdc_source(session: Session) -> DataSource:
+    from degreezeor.ingestion.adapters.cdc import cdc_adapter
+    return ensure_source(
+        session, name=cdc_adapter.name, tier=cdc_adapter.tier, base_url=cdc_adapter.base_url
     )

@@ -115,6 +115,29 @@ CATALOG: list[MetricSpec] = [
         keywords=("labor force", "participation", "workforce"),
         default_lag_months=24,
     ),
+    # --- Health domain (CDC/NCHS, Tier-1, keyless Socrata) ---
+    MetricSpec(
+        code="life_expectancy",
+        name="Life Expectancy at Birth, U.S. (NCHS)",
+        unit="years",
+        direction_good="up",
+        source_name="CDC",
+        native_series_id="CDC|w9j2-ggv5|year|average_life_expectancy|race=All Races;sex=Both Sexes",
+        domain="Health",
+        keywords=("life expectancy", "longevity", "premature death", "mortality reduction"),
+        default_lag_months=60,
+    ),
+    MetricSpec(
+        code="age_adjusted_death_rate",
+        name="Age-adjusted Death Rate, U.S. (NCHS, per 100k)",
+        unit="deaths per 100,000",
+        direction_good="down",
+        source_name="CDC",
+        native_series_id="CDC|w9j2-ggv5|year|mortality|race=All Races;sex=Both Sexes",
+        domain="Health",
+        keywords=("death rate", "mortality rate", "reduce deaths", "public health", "save lives"),
+        default_lag_months=60,
+    ),
 ]
 
 BY_CODE = {m.code: m for m in CATALOG}

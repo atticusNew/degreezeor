@@ -152,6 +152,38 @@ async function disputesCard(euId) {
   return card;
 }
 
+function spinner(msg = "Loading…") {
+  return el("div", { class: "spin-wrap" },
+    el("div", { class: "spinner" }),
+    el("div", {}, msg),
+    el("div", { class: "muted", style: "font-size:12px" },
+      "First load can take a moment while the server wakes up."));
+}
+
+async function renderLanding() {
+  const app = $("#app");
+  app.innerHTML = "";
+  const hero = el("div", { class: "hero" },
+    el("img", { class: "mark", src: "/logo.png", alt: "DegreeZero" }),
+    el("h1", {}, "DegreeZero"),
+    el("div", { class: "sub" },
+      "Did a public action meet its OWN stated objective? We measure outcomes against the goal " +
+      "the policy set for itself — source-anchored, party-blind, and fully auditable. No ideology " +
+      "score. No good/bad ranking. When the evidence can't tell, we say so."),
+    el("div", { class: "ctas" },
+      el("a", { class: "cta", href: "#/officials" }, "Explore officials"),
+      el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"),
+      el("a", { class: "cta ghost", href: "#/about" }, "How it works")),
+    el("div", { class: "pillars" },
+      el("div", { class: "pillar" }, el("b", {}, "Its own yardstick"),
+        el("p", {}, "Each action is judged against the objective it stated for itself — the same neutral question for every party.")),
+      el("div", { class: "pillar" }, el("b", {}, "Credit where due"),
+        el("p", {}, "Outcomes are attributed by each official's causal share, always leaving a large unattributable residual.")),
+      el("div", { class: "pillar" }, el("b", {}, "Honest about doubt"),
+        el("p", {}, "When a result can't be separated from the noise, it reads \u201Cinsufficient evidence\u201D \u2014 never a low score."))));
+  app.appendChild(hero);
+}
+
 async function renderAuditStatus() {
   try {
     const a = await getJSON("/api/audit/verify");
@@ -268,7 +300,7 @@ function valueWeightPanel(card) {
 
 async function renderDetail(id) {
   const app = $("#app");
-  app.innerHTML = "Loading…";
+  app.innerHTML = ""; app.appendChild(spinner());
   const card = await getJSON(`/api/evaluation-units/${id}`);
   app.innerHTML = "";
 
@@ -446,7 +478,7 @@ async function renderOfficials() {
 
 async function renderOfficialDetail(id) {
   const app = $("#app");
-  app.innerHTML = "Loading…";
+  app.innerHTML = ""; app.appendChild(spinner());
   const card = await getJSON(`/api/officials/${id}`);
   app.innerHTML = "";
   app.appendChild(el("a", { class: "back", href: "#/officials" }, "← all officials"));
@@ -771,9 +803,12 @@ async function renderIntegrity() {
 }
 
 async function route() {
-  await renderAuditStatus();
   const eu = location.hash.match(/#\/eu\/(\d+)/);
   const off = location.hash.match(/#\/official\/(\d+)/);
+  // Show a spinner immediately so navigation (and cold starts) never look frozen.
+  const isLanding = !location.hash || location.hash === "#/" || location.hash === "#";
+  if (!isLanding) { $("#app").innerHTML = ""; $("#app").appendChild(spinner()); }
+  renderAuditStatus();  // header badge; fire-and-forget so it never blocks the view
   try {
     if (eu) await renderDetail(eu[1]);
     else if (off) await renderOfficialDetail(off[1]);
@@ -783,9 +818,9 @@ async function route() {
     else if (location.hash.startsWith("#/integrity")) await renderIntegrity();
     else if (location.hash.startsWith("#/about")) await renderAbout();
     else if (location.hash.startsWith("#/actions")) await renderList();
-    else await renderOfficials();  // official-centric: officials are the primary view
+    else await renderLanding();  // default = welcoming landing/hero
   } catch (e) {
-    $("#app").innerHTML = `<div class="card">Error: ${e.message}. Is the API running?</div>`;
+    $("#app").innerHTML = `<div class="card">Error: ${e.message}. The API may be waking up — retry in a moment.</div>`;
   }
 }
 

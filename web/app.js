@@ -286,6 +286,15 @@ const GLOSSARY = [
   ["Coverage", TIPS.coverage, "coverage = scored actions / total attributable actions"],
   ["Confidence", TIPS.confidence, "confidence = design x data x attribution x model x sensitivity"],
   ["Insufficient evidence", TIPS.insufficient, null],
+  ["Category", "A topic grouping (jobs and economy, cost and spending, health, public safety, energy and " +
+    "environment, poverty and income, education). It is derived only from each action's official subject " +
+    "area and the metric it was measured against, and plays no part in scoring.", null],
+  ["Office", "The position shown for an official (President, Governor, Senator, Representative), derived " +
+    "from the public record. Party is never shown in the product; it is used only in the audit-only " +
+    "Integrity monitor.", null],
+  ["Descriptive context", "A neutral note placing a scored result next to the typical scored result for " +
+    "its action type or category. It is descriptive, never a ranking or a value judgment, and is shown " +
+    "only when the sample is large enough to be meaningful.", null],
   ["Baseline", "What the metric would likely have done without the action, used to net out other forces.", null],
   ["Pre-registration", "The metric and method are fixed and hashed before outcomes are fetched, so results cannot be cherry-picked.", null],
 ];
@@ -888,9 +897,8 @@ async function renderCoverage() {
   const c = await getJSON("/api/coverage");
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Coverage"));
   app.appendChild(el("p", { class: "muted" },
-    "Every action the platform has considered, including those it could not score. " +
-    "\u201CInsufficient evidence\u201D is honest abstention, not a low score. The scored subset is not " +
-    "a complete or representative record of any official."));
+    "Every action considered, including those we could not score. \u201CInsufficient evidence\u201D is " +
+    "honest abstention, not a low score."));
   app.appendChild(el("div", { class: "kpi" },
     el("div", { class: "item" }, el("div", { class: "n" }, String(c.total_evaluation_units)), el("div", { class: "l" }, "actions considered")),
     el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--score)" }, String(c.scored)), el("div", { class: "l" }, "scored")),

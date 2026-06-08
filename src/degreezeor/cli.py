@@ -112,7 +112,8 @@ def cmd_budget_execution(args: argparse.Namespace) -> int:
 
     from degreezeor.pipeline import ingest_budget_execution
     with session_scope() as s:
-        rs = ingest_budget_execution(s, args.fiscal_year, realized_kind=args.kind, limit=args.limit)
+        rs = ingest_budget_execution(s, args.fiscal_year, realized_kind=args.kind,
+                                     limit=args.limit, all_agencies=args.all_agencies)
     print("budget execution:", dict(Counter(r.status for r in rs)), "total", len(rs))
     return 0
 
@@ -320,6 +321,8 @@ def main(argv: list[str] | None = None) -> int:
     bx.add_argument("fiscal_year", type=int)
     bx.add_argument("--kind", default="obligated", choices=["obligated", "outlayed"])
     bx.add_argument("--limit", type=int, default=None)
+    bx.add_argument("--all-agencies", action="store_true",
+                    help="score every toptier agency, not just cabinet departments")
     bx.set_defaults(func=cmd_budget_execution)
 
     en = sub.add_parser("enrich-names", help="fill in full official names from Congress.gov")

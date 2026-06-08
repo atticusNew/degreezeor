@@ -1307,19 +1307,25 @@ def score_budget_execution(
 
 def ingest_budget_execution(
     session: Session, fiscal_year: int, agencies: list[tuple[str, str]] | None = None,
-    realized_kind: str = "obligated", limit: int | None = None,
+    realized_kind: str = "obligated", limit: int | None = None, all_agencies: bool = False,
 ) -> list[ScoreOutcome]:
     """Batch budget-execution scores. ``agencies`` = list of (toptier_code, name); if None,
-    use the major cabinet departments."""
+    use the major cabinet departments — or, with ``all_agencies=True``, EVERY toptier agency
+    (independent agencies like EPA/NASA/SSA included). Execution rate is commensurable by
+    construction (obligated/outlayed <= resources), so this is reliable verifiable coverage,
+    not fragile volume."""
     import json as _json
 
     from degreezeor.ingestion.adapters.usaspending import usaspending_adapter
 
     if agencies is None:
         allag = _json.loads(usaspending_adapter.fetch_toptier_agencies()).get("results", [])
-        wanted = {"Department of"}  # cabinet departments
-        agencies = [(a["toptier_code"], a["agency_name"]) for a in allag
-                    if any(a["agency_name"].startswith(w) for w in wanted)]
+        if all_agencies:
+            agencies = [(a["toptier_code"], a["agency_name"]) for a in allag]
+        else:
+            wanted = {"Department of"}  # cabinet departments
+            agencies = [(a["toptier_code"], a["agency_name"]) for a in allag
+                        if any(a["agency_name"].startswith(w) for w in wanted)]
     results: list[ScoreOutcome] = []
     for code, name in agencies:
         if limit is not None and len(results) >= limit:
@@ -1357,7 +1363,11 @@ def refresh_all(
     """
     counts: dict[str, int] = {}
     counts["defc_delivery"] = len(ingest_defc_delivery(session))
-    counts["budget_execution"] = len(ingest_budget_execution(session, budget_fiscal_year))
+    # All toptier agencies: execution rate is reliable + commensurable by construction,
+    # so this is the platform's broadest source of high-integrity verifiable scores.
+    counts["budget_execution"] = len(
+        ingest_budget_execution(session, budget_fiscal_year, all_agencies=True)
+    )
     counts["state_policies"] = len(ingest_state_policies(session))
     counts["court_survival"] = sum(
         1 for spec in COURT_SURVIVAL_SPECS.values() if score_court_survival(session, spec)

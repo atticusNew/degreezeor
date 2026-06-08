@@ -561,12 +561,16 @@ async function renderOfficials() {
     tip("composite"),
     ". Shown with coverage ", tip("coverage"), ". Search or filter to begin."));
 
-  // Search/filter panel — labels left, inputs right.
+  // Search/filter panel — labels left, inputs right. Party is intentionally absent
+  // from the user-facing experience; filter by topic category instead.
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
   const search = el("input", { type: "text", placeholder: "type a name…", value: params.get("q") || "" });
-  const partySel = selectEl(
-    [["", "All parties"], ["D", "Democratic"], ["R", "Republican"], ["I", "Independent"], ["ID", "Independent Dem."]],
-    params.get("party") || "");
+  let catOptions = [["", "All categories"]];
+  try {
+    const cats = await getJSON("/api/categories");
+    catOptions = catOptions.concat(cats.categories.map((c) => [c.key, c.label]));
+  } catch (e) { /* categories are best-effort; the filter still renders */ }
+  const catSel = selectEl(catOptions, params.get("category") || "");
   const typeSel = selectEl(
     [["", "All action types"], ["law", "Laws"], ["eo", "Executive orders"], ["regulation", "Regulations"], ["budget", "Budget execution"]],
     params.get("action_type") || "");
@@ -578,20 +582,20 @@ async function renderOfficials() {
   const apply = () => {
     const p = new URLSearchParams();
     if (search.value.trim()) p.set("q", search.value.trim());
-    if (partySel.value) p.set("party", partySel.value);
+    if (catSel.value) p.set("category", catSel.value);
     if (typeSel.value) p.set("action_type", typeSel.value);
     if (scoredOnly.checked) p.set("scored_only", "1");
     if (showAll.checked) p.set("all", "1");
     location.hash = "#/officials" + (p.toString() ? "?" + p.toString() : "");
   };
   search.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
-  for (const ctl of [partySel, typeSel, scoredOnly, showAll]) ctl.addEventListener("change", apply);
+  for (const ctl of [catSel, typeSel, scoredOnly, showAll]) ctl.addEventListener("change", apply);
 
   const frow = (label, control, extra) => el("div", { class: "frow" },
     el("div", { class: "flabel" }, label, extra || null), control);
   app.appendChild(el("div", { class: "filters" },
     frow("Official", search),
-    frow("Party", partySel),
+    frow("Category", catSel),
     frow("Action type", typeSel),
     frow("Options", el("div", { class: "opts" },
       el("label", {}, scoredOnly, "scored only"),
@@ -603,10 +607,10 @@ async function renderOfficials() {
       el("a", { class: "cta ghost", href: "#/officials", style: "padding:8px 14px;border-radius:6px" }, "Clear"))));
 
   // Do not list everyone by default. Show results only once a search or filter is applied.
-  const hasQuery = ["q", "party", "action_type", "scored_only"].some((k) => params.get(k));
+  const hasQuery = ["q", "category", "action_type", "scored_only"].some((k) => params.get(k));
   if (!hasQuery) {
     app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
-      el("p", {}, "Search by name, or pick a party or action type, to see officials."),
+      el("p", {}, "Search by name, or pick a category or action type, to see officials."),
       el("p", { style: "font-size:13px" },
         "Tip: try ", el("a", { href: "#/officials?scored_only=1" }, "officials with a scored action"),
         " to see who has a result.")));
@@ -615,7 +619,7 @@ async function renderOfficials() {
 
   const qs = new URLSearchParams();
   if (params.get("q")) qs.set("q", params.get("q"));
-  if (params.get("party")) qs.set("party", params.get("party"));
+  if (params.get("category")) qs.set("category", params.get("category"));
   if (params.get("action_type")) qs.set("action_type", params.get("action_type"));
   if (params.get("scored_only")) qs.set("scored_only", "true");
   // Hide negligible (<0.5%) involvement by default; "show all" turns the floor off.
@@ -629,8 +633,10 @@ async function renderOfficials() {
       : "insufficient evidence";
     const meta = `${o.scored_actions}/${o.total_actions} scored · ` +
       `coverage ${(o.coverage * 100).toFixed(0)}% · role share ${(o.involvement * 100).toFixed(1)}%`;
+    const titleRow = el("div", { class: "title" }, formatName(o.name));
+    if (o.position) titleRow.appendChild(el("span", { class: "pill", style: "margin-left:8px" }, o.position));
     app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
-      el("div", {}, el("div", { class: "title" }, formatName(o.name, o.party)),
+      el("div", {}, titleRow,
         el("div", { class: "muted mono" }, meta)),
       el("div", { style: "text-align:right" },
         o.composite !== null ? el("span", { class: "badge scored" }, scoredText)
@@ -649,18 +655,21 @@ async function renderOfficialDetail(id) {
   const o = card.official;
   const scored = r.composite !== null;
   const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(0) + "%");
+  const who = formatName(o.name);
   const plain = scored
-    ? `Across the ${r.scored_actions} of ${o.name}'s ${r.total_actions} attributable action(s) we could ` +
+    ? `Across the ${r.scored_actions} of ${who}'s ${r.total_actions} attributable action(s) we could ` +
       `score, the goals those actions set were met to ${fmt(r.composite, 1)} out of 100, weighted by confidence. ` +
       `This reflects only the actions we could score.`
-    : `None of ${o.name}'s ${r.total_actions} attributable action(s) could be isolated yet, so we ` +
+    : `None of ${who}'s ${r.total_actions} attributable action(s) could be isolated yet, so we ` +
       `report no score. We mark this "insufficient evidence" rather than guess.`;
 
   // Headline: name + big composite + plain-language summary + secondary chips.
+  // Party is intentionally not shown; office (where known) and the record are.
   app.appendChild(el("div", { class: "headline" },
-    el("p", { class: "name" }, formatName(o.name, o.party)),
+    el("p", { class: "name" }, formatName(o.name)),
     el("div", { class: "submeta" },
-      o.bioguide_id ? `Bioguide ${o.bioguide_id}` : "Official record"),
+      [o.position, o.bioguide_id ? `Bioguide ${o.bioguide_id}` : "Official record"]
+        .filter(Boolean).join(" · ")),
     el("div", { class: "big" },
       scored
         ? el("span", { class: "bignum scored" }, fmt(r.composite, 1))

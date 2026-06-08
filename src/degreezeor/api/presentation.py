@@ -26,6 +26,8 @@ from degreezeor.core.models import (
     DataSource,
     EUScore,
     EvaluationUnit,
+    ExecutiveOrder,
+    Jurisdiction,
     Law,
     MethodologyVersion,
     Metric,
@@ -37,6 +39,8 @@ from degreezeor.core.models import (
     RawLanding,
     ScoreComponent,
     ScoreRun,
+    Vote,
+    VotePosition,
 )
 
 
@@ -319,6 +323,57 @@ def build_scorecard(session: Session, eu_id: int) -> dict[str, Any] | None:
     }
 
 
+def _positions_for(session: Session, official_ids: set[int]) -> dict[int, str | None]:
+    """Derive each official's office from source-linked facts only (never from party).
+
+    President: in the presidential reference, or signer of a federal law / executive order.
+    Governor: signer of a state-jurisdiction law.
+    Senator / Representative: chamber of the roll-calls they were recorded in.
+    Returns None when the office cannot be determined objectively (shown as just the name)."""
+    if not official_ids:
+        return {}
+    from degreezeor.core.reference import PRESIDENTS
+
+    pres_bio = {b for _, b, _, _, _ in PRESIDENTS}
+    bio = dict(session.execute(
+        select(Official.id, Official.bioguide_id).where(Official.id.in_(official_ids))
+    ).all())
+    eo_signers = set(session.execute(
+        select(ExecutiveOrder.signing_official_id)
+        .where(ExecutiveOrder.signing_official_id.in_(official_ids))
+    ).scalars())
+    fed_law_signers: set[int] = set()
+    state_law_signers: set[int] = set()
+    for oid, jtype in session.execute(
+        select(Law.signed_by_official_id, Jurisdiction.type)
+        .join(Action, Action.id == Law.action_id)
+        .join(Jurisdiction, Jurisdiction.id == Action.jurisdiction_id, isouter=True)
+        .where(Law.signed_by_official_id.in_(official_ids))
+    ).all():
+        (state_law_signers if jtype == "state" else fed_law_signers).add(oid)
+    chambers: dict[int, set[str]] = defaultdict(set)
+    for oid, ch in session.execute(
+        select(VotePosition.official_id, Vote.chamber)
+        .join(Vote, Vote.id == VotePosition.vote_id)
+        .where(VotePosition.official_id.in_(official_ids))
+    ).all():
+        chambers[oid].add((ch or "").lower())
+
+    out: dict[int, str | None] = {}
+    for oid in official_ids:
+        if bio.get(oid) in pres_bio or oid in eo_signers or oid in fed_law_signers:
+            out[oid] = "President"
+        elif oid in state_law_signers:
+            out[oid] = "Governor"
+        elif "senate" in chambers.get(oid, set()):
+            out[oid] = "Senator"
+        elif "house" in chambers.get(oid, set()):
+            out[oid] = "Representative"
+        else:
+            out[oid] = None
+    return out
+
+
 def _official_contributions(session: Session, official_id: int):
     """Gather this official's (non-residual) attributable EUs + their latest score."""
     from degreezeor.scoring.rollup import ActionContribution
@@ -410,9 +465,11 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
         select(Party.abbrev).join(OfficeTerm, OfficeTerm.party_id == Party.id)
         .where(OfficeTerm.official_id == official_id).order_by(OfficeTerm.id.desc()).limit(1)
     ).scalar_one_or_none()
+    position = _positions_for(session, {official_id}).get(official_id)
     return {
         "official": {"id": official.id, "name": official.full_name,
-                     "bioguide_id": official.bioguide_id, "party": party},
+                     "bioguide_id": official.bioguide_id, "party": party,
+                     "position": position},
         "rollup": {
             "total_actions": r.total_actions,
             "scored_actions": r.scored_actions,
@@ -484,6 +541,8 @@ def list_officials(
         .order_by(OfficeTerm.id)
     ).all():
         party_map[off_id] = abbrev  # last (most recent) wins
+    # Office per official, derived from source-linked facts (never from party).
+    position_map = _positions_for(session, set(by_off.keys()))
 
     out = []
     for oid, aws in by_off.items():
@@ -514,6 +573,7 @@ def list_officials(
             "id": oid,
             "name": name_map.get(oid),
             "party": party_map.get(oid),
+            "position": position_map.get(oid),
             "involvement": round(involvement, 4),
             "total_actions": r.total_actions,
             "scored_actions": r.scored_actions,

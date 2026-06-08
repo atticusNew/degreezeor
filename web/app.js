@@ -572,8 +572,14 @@ async function renderOfficialDetail(id) {
         e.preventDefault();
         openModal("How this is calculated", el("div", {},
           el("p", { class: "narrative" }, TIPS.composite),
-          el("p", { style: "font-size:13px" }, el("b", {}, "Attribution. "), TIPS.attribution),
+          el("div", { class: "eq" }, "official composite = sum(share_i x action_composite_i) / sum(share_i)\n   over the official's scored actions"),
+          el("div", { class: "eq" }, "action composite = confidence x achievement\n   achievement = how fully the action's stated goal was met (0 to 100)"),
+          el("p", { style: "font-size:13px" }, el("b", {}, "Attribution (share of credit). "), TIPS.attribution),
+          el("div", { class: "eq" }, "share = authority x pivotality,  normalized so\n   sum(people) + unattributable residual = 1"),
           el("p", { style: "font-size:13px" }, el("b", {}, "Coverage. "), TIPS.coverage),
+          el("div", { class: "eq" }, "coverage = scored actions / total attributable actions"),
+          el("p", { style: "font-size:13px" }, el("b", {}, "Confidence. "), TIPS.confidence),
+          el("div", { class: "eq" }, "confidence = design x data x attribution x model x sensitivity"),
           el("p", { style: "font-size:13px" }, el("b", {}, "Insufficient evidence. "), TIPS.insufficient),
           el("p", { class: "muted", style: "font-size:12px" }, r.note)));
       } }, "How is this calculated? →"))));

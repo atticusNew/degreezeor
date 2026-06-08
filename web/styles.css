@@ -138,6 +138,8 @@ button:disabled { opacity: .6; cursor: default; }
   padding: 22px 24px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
 .modal .x { float: right; cursor: pointer; color: var(--muted); font-size: 20px; line-height: 1; border: none; background: none; }
 .modal h3 { margin-top: 0; }
+.eq { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: var(--panel2);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 6px 0; color: var(--text); white-space: pre-wrap; }
 
 /* Search/filter panel: labels on the left, inputs/choices on the right. */
 .filters { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 10px 0 14px; }

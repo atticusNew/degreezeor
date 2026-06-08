@@ -44,6 +44,10 @@ services:
         sync: false
       - key: DZ_COURTLISTENER_TOKEN
         sync: false
+      - key: DZ_CENSUS_API_KEY
+        sync: false
+      - key: DZ_EIA_API_KEY
+        sync: false
 
   # ---- Static frontend (SPA) ----
   - type: web
@@ -82,4 +86,8 @@ services:
       - key: DZ_BLS_API_KEY
         sync: false
       - key: DZ_COURTLISTENER_TOKEN
+        sync: false
+      - key: DZ_CENSUS_API_KEY
+        sync: false
+      - key: DZ_EIA_API_KEY
         sync: false

@@ -97,3 +97,26 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
 button { background: var(--accent); color: #06101f; border: none; border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
 button:hover { filter: brightness(1.1); }
 button:disabled { opacity: .6; cursor: default; }
+
+/* --- Mobile / narrow viewport (<=640px). Scoped so desktop layout is unchanged. --- */
+@media (max-width: 640px) {
+  body { font-size: 14px; }
+  header.top { padding: 14px 16px; gap: 8px; }
+  header.top .tag { font-size: 12px; flex-basis: 100%; }
+  header.top nav { margin-left: 0 !important; flex-basis: 100%; }
+  #audit-status { margin-left: 0 !important; }
+  .container { padding: 16px 14px 64px; }
+  .card { padding: 14px 14px; }
+  /* Stack key/value rows so long values don't get squeezed. */
+  .row { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .row .v { text-align: left; }
+  /* Wide tables scroll horizontally within their card instead of overflowing the page. */
+  .card table { display: block; overflow-x: auto; white-space: nowrap; }
+  /* Tighten the fixed grid columns so the bar/slider keep usable width. */
+  .bar-wrap { grid-template-columns: 104px 1fr 46px; gap: 8px; }
+  .weights label { grid-template-columns: 104px 1fr 40px; gap: 8px; }
+  .kpi { gap: 12px; }
+  .kpi .item { min-width: 100px; padding: 10px 12px; }
+  .kpi .item .n { font-size: 19px; }
+  .list-item { flex-wrap: wrap; gap: 8px; }
+}

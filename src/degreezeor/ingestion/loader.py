@@ -496,15 +496,22 @@ def load_observations(
     return _load_bls_observations(session, metric, start_year, end_year)
 
 
+def _name_needs_enrichment(full_name: str | None) -> bool:
+    """A vote-derived name that should be replaced with a full Congress.gov name:
+    a single token ("Adams"), or a last-name + tag like "Bishop (GA)" / "DeFazio [D-OR-4]"."""
+    if not full_name:
+        return False
+    return len(full_name.split()) == 1 or "(" in full_name or "[" in full_name
+
+
 def enrich_official_names(session: Session, limit: int | None = None) -> int:
     """Replace last-name-only (vote-derived) official names with full names from
     Congress.gov /member/{bioguide}. Idempotent; returns the number updated."""
-    # Officials whose name is a single token (e.g. "Adams") need a full name.
     candidates = [
         o for o in session.execute(
             select(Official).where(Official.bioguide_id.is_not(None))
         ).scalars().all()
-        if o.full_name and len(o.full_name.split()) == 1
+        if _name_needs_enrichment(o.full_name)
     ]
     updated = 0
     for o in candidates:

@@ -34,6 +34,13 @@ function cleanName(name) {
     .replace(new RegExp("\\s+", "g"), " ").trim();
 }
 
+// A trailing 2-letter state code in parens, kept to tell apart vote-derived last-name-only
+// entries (e.g. "Bishop (GA)" vs "Bishop (UT)") until name enrichment fills in first names.
+function stateSuffix(name) {
+  const m = String(name || "").match(new RegExp("\\(([A-Z]{2})\\)"));
+  return m ? m[1] : "";
+}
+
 // Natural order "First Last" for headlines and prose (we talk about people naturally).
 // Lists and tables use formatName() -> "Last, First" for scanning.
 function formatNameNatural(name) {
@@ -45,7 +52,9 @@ function formatNameNatural(name) {
     const rest = s.slice(idx + 1).trim();
     return rest ? `${rest} ${last}` : last;
   }
-  return s;
+  // Last-name-only: keep the state code so people are still distinguishable.
+  const st = stateSuffix(name);
+  return st && s.split(" ").length === 1 ? `${s} (${st})` : s;
 }
 
 // Consistent official name formatting: "Last, First (Party)". Handles single-token names
@@ -53,13 +62,15 @@ function formatNameNatural(name) {
 function formatName(name, party) {
   if (!name) return "Unknown";
   const s = cleanName(name);
+  const st = stateSuffix(name);
   let formatted;
   if (s.includes(",")) {
     formatted = s.replace(new RegExp("\\s*,\\s*"), ", ");
   } else {
     const parts = s.split(" ");
     if (parts.length <= 1) {
-      formatted = s;
+      // Last-name-only: keep the state code so people are still distinguishable.
+      formatted = st ? `${s} (${st})` : s;
     } else {
       const suffixes = ["Jr.", "Sr.", "Jr", "Sr", "II", "III", "IV"];
       let last = parts[parts.length - 1];

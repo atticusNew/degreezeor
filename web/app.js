@@ -129,10 +129,10 @@ async function sensitivityCard(euId, unit) {
       el("th", { class: "right" }, `delta toward goal (${unit})`),
       el("th", { class: "right" }, "std. effect z"), el("th", {}, "distinguishable?"))),
     el("tbody", {}, ...s.points.map((p) =>
-      el("tr", { style: p.is_registered ? "background:rgba(79,156,249,.10)" : "" },
+      el("tr", { style: p.is_registered ? "background:var(--accent-soft)" : "" },
         el("td", {}, `${p.lag_months}${p.is_registered ? " (registered)" : ""}`),
         el("td", {}, p.eval_period),
-        el("td", { class: "right mono", style: `color:${p.delta_toward_goal >= 0 ? "var(--good)" : "var(--bad)"}` }, fmt(p.delta_toward_goal, 1)),
+        el("td", { class: "right mono" }, fmt(p.delta_toward_goal, 1)),
         el("td", { class: "right mono" }, fmt(p.z, 2)),
         el("td", {}, p.significant ? el("span", { class: "badge scored" }, "yes") : el("span", { class: "pill" }, "within noise")))))));
   card.appendChild(el("p", { class: "muted", style: "font-size:12px" },
@@ -715,7 +715,8 @@ async function renderOfficialDetail(id) {
           el("td", { class: "right mono" }, a.composite !== null ? fmt(a.composite, 1) : "n/a")))))));
 }
 
-const NODE_COLORS = { official: "#4f9cf9", action: "#2ecc71", jurisdiction: "#f1c40f", metric: "#a06fd0" };
+// Neutral categorical hues for node types (no party blue, no judgment red/green).
+const NODE_COLORS = { official: "#c4a7e7", action: "#8a93a6", jurisdiction: "#c79a6a", metric: "#6f6391" };
 const COLUMN_ORDER = ["official", "action", "jurisdiction", "metric"];
 
 async function renderGraph() {
@@ -821,7 +822,7 @@ async function renderCoverage() {
     "a complete or representative record of any official."));
   app.appendChild(el("div", { class: "kpi" },
     el("div", { class: "item" }, el("div", { class: "n" }, String(c.total_evaluation_units)), el("div", { class: "l" }, "actions considered")),
-    el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--good)" }, String(c.scored)), el("div", { class: "l" }, "scored")),
+    el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--score)" }, String(c.scored)), el("div", { class: "l" }, "scored")),
     el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--gate)" }, String(c.insufficient_evidence)), el("div", { class: "l" }, "insufficient evidence")),
     el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--muted)" }, String(c.non_scoreable)), el("div", { class: "l" }, "non-scoreable")),
     el("div", { class: "item" }, el("div", { class: "n" }, (c.scored_share * 100).toFixed(1) + "%"), el("div", { class: "l" }, "scored share"))));

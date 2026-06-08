@@ -5,7 +5,15 @@
   --line: #243044;
   --text: #e6edf6;
   --muted: #93a4ba;
-  --accent: #4f9cf9;
+  /* Neutral interaction accent (deliberately not party-blue). */
+  --accent: #9a8fb3;
+  --accent-soft: rgba(154, 143, 179, 0.14);
+  --accent-border: rgba(154, 143, 179, 0.42);
+  /* Score / composite tone: a neutral mauve, never green-as-good or red-as-bad. */
+  --score: #c4a7e7;
+  --score-soft: rgba(196, 167, 231, 0.14);
+  --score-border: rgba(196, 167, 231, 0.45);
+  /* Reserved for technical, non-score status only (audit chain, reproducibility). */
   --good: #2ecc71;
   --bad: #e74c3c;
   --warn: #f1c40f;
@@ -34,7 +42,7 @@ header.top .tag { color: var(--muted); font-size: 13px; }
 header.top nav { display: flex; gap: 6px; flex-wrap: wrap; margin-left: 8px; }
 header.top nav a { color: var(--muted); font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; border: 1px solid transparent; }
 header.top nav a:hover { color: var(--text); background: var(--panel2); text-decoration: none; }
-header.top nav a.active { color: var(--accent); background: rgba(79,156,249,.12); border-color: rgba(79,156,249,.4); }
+header.top nav a.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-border); }
 .audit-badge { margin-left: auto; flex: 0 0 auto; white-space: nowrap; font-size: 12px; font-family: ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .audit-badge.ok { color: var(--good); border-color: rgba(46,204,113,.4); background: rgba(46,204,113,.08); }
 .audit-badge.bad { color: var(--bad); border-color: rgba(231,76,60,.5); background: rgba(231,76,60,.1); }
@@ -71,7 +79,7 @@ header.top nav a.active { color: var(--accent); background: rgba(79,156,249,.12)
   display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
   border: 1px solid var(--line);
 }
-.badge.scored { background: rgba(46,204,113,.12); color: var(--good); border-color: rgba(46,204,113,.4); }
+.badge.scored { background: var(--score-soft); color: var(--score); border-color: var(--score-border); }
 .badge.insufficient_evidence { background: rgba(176,125,43,.15); color: var(--gate); border-color: rgba(176,125,43,.5); }
 .badge.non_scoreable_no_metric, .badge.non_scoreable_no_objective, .badge.pending {
   background: rgba(147,164,186,.12); color: var(--muted);
@@ -88,12 +96,12 @@ header.top nav a.active { color: var(--accent); background: rgba(79,156,249,.12)
   border: 1px solid; font-weight: 500;
 }
 .gate-banner.gated { background: rgba(176,125,43,.12); border-color: rgba(176,125,43,.5); color: #e8c98a; }
-.gate-banner.scored { background: rgba(46,204,113,.1); border-color: rgba(46,204,113,.4); color: #b8f3d0; }
+.gate-banner.scored { background: var(--score-soft); border-color: var(--score-border); color: #e2cdf6; }
 .gate-banner.none { background: rgba(147,164,186,.08); border-color: var(--line); color: var(--muted); }
 .bar-wrap { display: grid; grid-template-columns: 150px 1fr 64px; align-items: center; gap: 12px; padding: 6px 0; }
 .bar { height: 12px; background: var(--panel2); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
-.bar > span { display: block; height: 100%; background: linear-gradient(90deg, #2f6fb0, var(--accent)); }
-.bar.value-laden > span { background: linear-gradient(90deg, #6b4fa0, #a06fd0); }
+.bar > span { display: block; height: 100%; background: linear-gradient(90deg, #6f6391, var(--score)); }
+.bar.value-laden > span { background: linear-gradient(90deg, #8a6a4a, #c79a6a); }
 .comp-name { font-size: 13px; }
 .comp-name small { color: var(--muted); display: block; font-size: 11px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -129,7 +137,7 @@ button:disabled { opacity: .6; cursor: default; }
 .headline .submeta { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .headline .big { display: flex; align-items: baseline; gap: 12px; margin: 14px 0 6px; flex-wrap: wrap; }
 .headline .bignum { font-size: 48px; font-weight: 800; line-height: 1; }
-.headline .bignum.scored { color: var(--good); }
+.headline .bignum.scored { color: var(--score); }
 .headline .bignum.none { color: var(--gate); font-size: 26px; font-weight: 700; }
 .headline .ofmax { color: var(--muted); font-size: 16px; }
 .headline .plain { color: var(--text); font-size: 14px; margin: 6px 0 0; max-width: 720px; line-height: 1.5; }
@@ -144,7 +152,7 @@ button:disabled { opacity: .6; cursor: default; }
 .statbar .s .l { color: var(--muted); font-size: 12px; }
 .steps { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin: 28px auto 0; max-width: 860px; }
 .step { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; width: 240px; text-align: left; }
-.step .num { display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center; border-radius: 50%; background: rgba(79,156,249,.15); color: var(--accent); font-weight: 700; margin-bottom: 8px; }
+.step .num { display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; margin-bottom: 8px; }
 .step b { display: block; }
 .step p { color: var(--muted); font-size: 13px; margin: 4px 0 0; line-height: 1.45; }
 .freshness { color: var(--muted); font-size: 12px; text-align: center; margin-top: 10px; }
@@ -208,8 +216,10 @@ button:disabled { opacity: .6; cursor: default; }
   body { font-size: 14px; }
   header.top { padding: 12px 14px; gap: 8px; }
   header.top .tag { font-size: 12px; flex-basis: 100%; }
-  /* Brand left, audit pill top-right on the first row; nav wraps to its own row below. */
-  header.top nav { order: 3; flex-basis: 100%; margin-left: 0; }
+  /* Brand left, audit pill top-right on the first row; nav fills its own row below as a
+     single clean row of evenly-sized pills (no wrap, no broken overflow scroll). */
+  header.top nav { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: nowrap; gap: 4px; }
+  header.top nav a { flex: 1 1 0; min-width: 0; text-align: center; padding: 6px 4px; font-size: 12px; white-space: nowrap; }
   .container { padding: 16px 14px 64px; }
   .card { padding: 14px 14px; }
   /* Stack key/value rows so long values don't get squeezed. */

@@ -56,6 +56,7 @@ from degreezeor.ingestion.loader import (
     load_house_final_passage_vote,
     load_law,
     load_observations,
+    load_regulation,
     load_senate_final_passage_vote,
 )
 from degreezeor.provenance import current_git_sha, data_snapshot_id
@@ -652,6 +653,82 @@ def score_executive_order(session: Session, document_number: str) -> ScoreOutcom
     )
 
 
+def score_regulation(session: Session, document_number: str) -> ScoreOutcome:
+    """Ingest + score one final agency rule (Federal Register) end-to-end.
+
+    Same neutral machinery as laws/EOs. A regulation is an agency act under delegated
+    executive authority, so it is attributed to the administration in office on its
+    effective date (high executive authority via the signer channel's 'regulation' case,
+    with a large unattributable residual). Most rules will be non-scoreable or
+    insufficient-evidence (narrow / diffuse objectives) — reported honestly.
+    """
+    from degreezeor.core.reference import president_on
+
+    ensure_bls_source(session)
+    action = load_regulation(session, document_number)
+    existing = _existing_outcome(session, action.id)
+    if existing is not None:
+        return existing
+
+    obj = _objective_for_matching(session, action.id)
+    if obj is None:
+        eu = EvaluationUnit(action_id=action.id, status="non_scoreable_no_objective",
+                            non_scoreable_reason="No stated objective found.")
+        session.add(eu)
+        session.flush()
+        return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+
+    primary, _side = select_metrics(obj.text, action.domain)
+    if primary is None:
+        eu = EvaluationUnit(action_id=action.id, objective_id=obj.id, status="non_scoreable_no_metric",
+                            non_scoreable_reason="No official metric operationalizes the stated objective.")
+        session.add(eu)
+        session.flush()
+        return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+
+    metric = ensure_metric(session, primary.spec)
+    sign_goal = sign_goal_for(primary.spec)
+    lag = primary.spec.default_lag_months
+    eu = EvaluationUnit(action_id=action.id, objective_id=obj.id, metric_id=metric.id,
+                        lag_window_months=lag, sign_goal=sign_goal, status="pending")
+    session.add(eu)
+    session.flush()
+
+    preregister(
+        session, eu, action_native_id=action.native_identifier, metric_code=primary.spec.code,
+        objective_level=obj.objective_level, sign_goal=sign_goal, lag_window_months=lag,
+        masked_objective=mask_party_and_name(obj.text)[:280],
+    )
+
+    enacted = action.action_date
+    load_observations(session, metric, enacted.year - 3, enacted.year + (lag // 12) + 2)
+    observations = _windowed_observations(session, metric.id, enacted, lag)
+    event_period = f"{enacted.year}-{enacted.month:02d}-01"
+
+    comp = compute_outcome(observations, event_period=event_period, lag_window_months=lag,
+                           sign_goal=sign_goal, seed=settings.deterministic_seed)
+    if comp is None:
+        eu.status = "insufficient_evidence"
+        eu.non_scoreable_reason = "Insufficient outcome observations around the evaluation window."
+        session.flush()
+        return ScoreOutcome(action.id, eu.id, eu.status, None, None)
+
+    # Attribute to the administration in office on the rule's effective date (derived from
+    # the action date, so it reconstructs identically on re-run — no subtype row needed).
+    signer = president_on(session, action.action_date) if action.action_date else None
+    actx = AttributionContext(
+        eu_id=eu.id, action_type=action.type, sponsor_official_id=None,
+        signer_official_id=signer.id if signer else None,
+        vote_margin=None, member_on_winning_side=None,
+    )
+    attributions = build_attribution(actx)
+    return _finalize(
+        session, eu, action, comp, attributions,
+        alignment=D(primary.alignment), observations=observations, metric=metric, sign_goal=sign_goal,
+        event_period=event_period,
+    )
+
+
 def _eu_donor_observations(action: Action) -> tuple[dict[str, list[tuple[str, object]]], list[str]]:
     """Reconstruct a state policy's donor series (cache-first, no new network)."""
     donor_observations: dict[str, list[tuple[str, object]]] = {}
@@ -829,6 +906,12 @@ def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
     law = session.get(Law, action.id)
     eo = session.get(ExecutiveOrder, action.id)
     signer = (law.signed_by_official_id if law else None) or (eo.signing_official_id if eo else None)
+    if signer is None and action.type == "regulation" and action.action_date:
+        # Regulations carry no subtype row; re-derive the administration from the action
+        # date (same as scoring) so attribution reproduces exactly.
+        from degreezeor.core.reference import president_on
+        pres = president_on(session, action.action_date)
+        signer = pres.id if pres else None
 
     # Reconstruct decisive-vote attribution from STORED roll-call rows (no re-fetch),
     # so the re-run reproduces the original attribution exactly — for BOTH chambers.
@@ -1107,6 +1190,34 @@ def batch_score_executive_orders(session: Session, limit: int = 25) -> list[Scor
     return results
 
 
+def batch_score_regulations(session: Session, limit: int = 25) -> list[ScoreOutcome]:
+    """Breadth: ingest + score recent final agency rules (Federal Register, keyless).
+    Most land insufficient-evidence (a single federal series can't isolate one rule) —
+    the honest denominator. Idempotent (skips rules already scored)."""
+    import json as _json
+
+    from degreezeor.ingestion.adapters.federalregister import federal_register_adapter
+    from degreezeor.ingestion.http import client as _client
+
+    url = f"{federal_register_adapter.base_url}/documents.json"
+    params = {
+        "conditions[type][]": "RULE",
+        "order": "newest", "per_page": str(min(limit, 100)),
+    }
+    content = _client.get_bytes(url, params=params)
+    docs = _json.loads(content).get("results", [])
+    results: list[ScoreOutcome] = []
+    for d in docs[:limit]:
+        doc_number = d.get("document_number")
+        if not doc_number:
+            continue
+        try:
+            results.append(score_regulation(session, doc_number))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("batch regulation %s failed: %s", doc_number, exc)
+    return results
+
+
 @dataclass
 class CourtSurvivalSpec:
     """A curated, source-linked judicial-review outcome for an executive order.
@@ -1378,6 +1489,7 @@ def refresh_all(
     )
     counts["laws"] = len(batch_score_laws(session, congress, limit=law_limit))
     counts["executive_orders"] = len(batch_score_executive_orders(session, limit=eo_limit))
+    counts["regulations"] = len(batch_score_regulations(session, limit=eo_limit))
     # Best-effort name enrichment (bounded by Congress.gov throughput).
     try:
         from degreezeor.ingestion.loader import enrich_official_names

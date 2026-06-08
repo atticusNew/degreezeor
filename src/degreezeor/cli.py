@@ -90,6 +90,16 @@ def cmd_score_target(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_score_regulation(args: argparse.Namespace) -> int:
+    from degreezeor.pipeline import score_regulation
+
+    with session_scope() as s:
+        result = score_regulation(s, args.document_number)
+    print(f"action_id={result.action_id} eu_id={result.eu_id} status={result.status}")
+    print(f"score_run_id={result.score_run_id} reproducible_hash={result.reproducible_hash}")
+    return 0
+
+
 def cmd_court_survival(args: argparse.Namespace) -> int:
     from collections import Counter
 
@@ -144,6 +154,16 @@ def cmd_batch_eos(args: argparse.Namespace) -> int:
     with session_scope() as s:
         rs = batch_score_executive_orders(s, limit=args.limit)
     print("batch EOs:", dict(Counter(r.status for r in rs)), "total", len(rs))
+    return 0
+
+
+def cmd_batch_regulations(args: argparse.Namespace) -> int:
+    from collections import Counter
+
+    from degreezeor.pipeline import batch_score_regulations
+    with session_scope() as s:
+        rs = batch_score_regulations(s, limit=args.limit)
+    print("batch regulations:", dict(Counter(r.status for r in rs)), "total", len(rs))
     return 0
 
 
@@ -296,6 +316,10 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--eo-number", type=int, help="resolve by executive order number, e.g. 14026")
     se.set_defaults(func=cmd_score_eo)
 
+    sr = sub.add_parser("score-regulation", help="ingest + score one final agency rule (Federal Register)")
+    sr.add_argument("document_number", help="Federal Register document number, e.g. 2024-12345")
+    sr.set_defaults(func=cmd_score_regulation)
+
     st = sub.add_parser("score-target")
     st.add_argument("key", help=f"target spec key (one of: {', '.join(TARGET_SPECS)})")
     st.set_defaults(func=cmd_score_target)
@@ -312,6 +336,10 @@ def main(argv: list[str] | None = None) -> int:
     be = sub.add_parser("batch-eos", help="batch-ingest+score recent executive orders")
     be.add_argument("--limit", type=int, default=25)
     be.set_defaults(func=cmd_batch_eos)
+
+    br = sub.add_parser("batch-regulations", help="batch-ingest+score recent final agency rules")
+    br.add_argument("--limit", type=int, default=25)
+    br.set_defaults(func=cmd_batch_regulations)
 
     cs = sub.add_parser("court-survival", help="score executive-order survival of judicial review (curated)")
     cs.add_argument("key", nargs="?", help="court-survival spec key (default: all)")

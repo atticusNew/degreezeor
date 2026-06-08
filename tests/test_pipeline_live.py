@@ -218,6 +218,40 @@ def test_budget_execution_scores_and_reproduces() -> None:
         s.close()
 
 
+def test_regulation_ingests_scores_and_reproduces() -> None:
+    """A final agency rule (Federal Register) ingests as Action(type='regulation'),
+    is attributed to the administration on its effective date (executive authority), and
+    reproduces — including the president re-derived from the action date on re-run."""
+    from sqlalchemy import select
+
+    from degreezeor.core.models import Action, AttributionWeight, ScoreRun
+    from degreezeor.pipeline import rescore_eu, score_regulation
+
+    s = _fresh_session()
+    try:
+        # DOL overtime exemptions final rule (2024), effective 2024-07-01.
+        r = score_regulation(s, "2024-08038")
+        s.commit()
+        action = s.get(Action, r.action_id)
+        assert action.type == "regulation"
+        assert action.native_identifier == "REG2024-08038"
+        # Attributed to the administration via the regulation signer channel.
+        signer = s.execute(
+            select(AttributionWeight).where(
+                AttributionWeight.eu_id == r.eu_id, AttributionWeight.role == "signer"
+            )
+        ).scalar_one_or_none()
+        if r.score_run_id is not None:  # scored or gated (has a run)
+            assert signer is not None
+            run = s.execute(
+                select(ScoreRun).where(ScoreRun.eu_id == r.eu_id).order_by(ScoreRun.id.desc()).limit(1)
+            ).scalar_one()
+            # Reproduces: the president is re-derived from the action date, no subtype row.
+            assert run.reproducible_hash == rescore_eu(s, r.eu_id).reproducible_hash
+    finally:
+        s.close()
+
+
 def test_executive_order_ingests_and_scores() -> None:
     from degreezeor.core.models import Action, AttributionWeight, ExecutiveOrder
     from degreezeor.pipeline import score_executive_order

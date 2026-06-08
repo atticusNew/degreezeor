@@ -242,6 +242,47 @@ def load_executive_order(session: Session, document_number: str) -> Action:
 _PASSAGE_KEYWORDS = ("passage", "passed", "concur", "agreed to", "adoption")
 
 
+def load_regulation(session: Session, document_number: str) -> Action:
+    """Ingest one final agency rule (Federal Register) into Action(type='regulation').
+
+    Unlike an EO (a unilateral presidential instrument), a regulation is issued by an
+    agency under delegated executive authority; we attribute it to the administration in
+    office on its effective date (derived at score/rescore time from the action date, like
+    budget execution), so no dedicated subtype row is required."""
+    fetch = federal_register_adapter.fetch(document_number)
+    land(session, fetch)
+    doc = json.loads(fetch.content)
+
+    src = session.execute(
+        select(DataSource).where(DataSource.name == federal_register_adapter.name)
+    ).scalar_one()
+    jur = ensure_us_federal(session)
+
+    native_id = f"REG{document_number}"
+    existing = session.execute(
+        select(Action).where(Action.native_identifier == native_id, Action.type == "regulation")
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    eff = doc.get("effective_on") or doc.get("publication_date")
+    eff_date: date | None = dtparse.parse(eff).date() if eff else None
+    title = doc.get("title", "")
+    abstract = _strip_html(doc.get("abstract") or "")
+
+    action = Action(
+        type="regulation", title=title, action_date=eff_date, jurisdiction_id=jur.id,
+        source_id=src.id, source_url=fetch.source_url, native_identifier=native_id,
+        content_hash=fetch.content_hash, domain="Economics and Public Finance", implemented=True,
+    )
+    session.add(action)
+    session.flush()
+    objective_text = f"{title}. {abstract}".strip(". ").strip() or title
+    session.add(Objective(action_id=action.id, text=objective_text, source_id=src.id,
+                          source_url=fetch.source_url, objective_level="agency"))
+    return action
+
+
 def load_house_final_passage_vote(
     session: Session, action: Action, congress: int, bill_type: str, bill_number: int
 ):

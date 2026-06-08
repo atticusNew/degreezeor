@@ -1689,6 +1689,57 @@ def batch_score_executive_orders(session: Session, limit: int = 25) -> list[Scor
     return results
 
 
+def ingest_executive_actions(
+    session: Session, *, new_limit: int = 400, max_pages: int = 40, per_page: int = 100,
+) -> int:
+    """Activity/record layer for the executive: ingest recent executive orders (Federal
+    Register, keyless) as Action + ExecutiveOrder rows attributed to the signing president,
+    WITHOUT scoring. This makes a president's full term visible (what they acted on) — the
+    analogue of sponsored bills for members. Recency-first, idempotent, capped per run."""
+    import json as _json
+
+    from degreezeor.ingestion.adapters.federalregister import federal_register_adapter
+    from degreezeor.ingestion.http import client as _client
+
+    url = f"{federal_register_adapter.base_url}/documents.json"
+    inserted = 0
+    for page in range(1, max_pages + 1):
+        if inserted >= new_limit:
+            break
+        params = {
+            "conditions[type][]": "PRESDOCU",
+            "conditions[presidential_document_type][]": "executive_order",
+            "order": "newest", "per_page": str(per_page), "page": str(page),
+            "fields[]": ["document_number", "executive_order_number"],
+        }
+        try:
+            content = _client.get_bytes(url, params=params)
+        except Exception:  # noqa: BLE001 - never fatal
+            break
+        results = _json.loads(content).get("results", [])
+        if not results:
+            break
+        for r in results:
+            if inserted >= new_limit:
+                break
+            doc_num = r.get("document_number")
+            eo_num = r.get("executive_order_number")
+            if not doc_num:
+                continue
+            native = f"EO{eo_num}" if eo_num else f"FR{doc_num}"
+            if session.execute(
+                select(Action.id).where(Action.native_identifier == native, Action.type == "eo")
+            ).scalar_one_or_none():
+                continue  # already stored (idempotent; cheap — no per-doc fetch)
+            try:
+                load_executive_order(session, doc_num)
+                inserted += 1
+            except Exception:  # noqa: BLE001 - one bad doc must not abort the batch
+                continue
+        session.flush()
+    return inserted
+
+
 def backfill_eo_signers(session: Session, *, limit: int = 5000) -> int:
     """Repair executive orders scored before their president's term was on record (e.g. EOs
     signed after the last known term started): set the signer from the action date and
@@ -2403,6 +2454,7 @@ def refresh_all(
         if _isolated(session, lambda key=key: score_target(session, TARGET_SPECS[key]),
                      label=f"curated target {key}")))
     _stage("laws", lambda: len(batch_score_laws(session, congress, limit=law_limit)))
+    _stage("executive_actions", lambda: ingest_executive_actions(session))
     _stage("executive_orders", lambda: len(batch_score_executive_orders(session, limit=eo_limit)))
     _stage("eo_signers_backfilled", lambda: backfill_eo_signers(session))
     _stage("regulations", lambda: len(batch_score_regulations(session, limit=eo_limit)))

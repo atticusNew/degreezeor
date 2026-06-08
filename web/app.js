@@ -23,6 +23,18 @@ const el = (tag, attrs = {}, ...kids) => {
 };
 const fmt = (x, d = 2) => (x === null || x === undefined ? "—" : Number(x).toFixed(d));
 
+// Build a <select> from [[value, label], ...] with the given value pre-selected.
+const selectEl = (options, selected = "") => {
+  const s = document.createElement("select");
+  for (const [value, label] of options) {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = label;
+    if (value === selected) o.selected = true;
+    s.appendChild(o);
+  }
+  return s;
+};
+
 // Plain-language explainers, surfaced as inline "i" tooltips next to key terms.
 const TIPS = {
   composite:
@@ -427,34 +439,51 @@ async function renderOfficials() {
     "Each official shows ", el("b", {}, "composite"), tip("composite"),
     " and ", el("b", {}, "coverage"), tip("coverage"), "."));
 
-  // Controls: search + scored-only + show-all (involvement filter).
+  // Search/filter panel — labels left, inputs right.
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
-  const controls = el("div", { style: "display:flex;gap:12px;align-items:center;margin:8px 0;flex-wrap:wrap" });
-  const search = el("input", { type: "text", placeholder: "search official by name…", value: params.get("q") || "",
-    style: "flex:1;min-width:180px;padding:7px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px" });
+  const search = el("input", { type: "text", placeholder: "type a name…", value: params.get("q") || "" });
+  const partySel = selectEl(
+    [["", "All parties"], ["D", "Democratic"], ["R", "Republican"], ["I", "Independent"], ["ID", "Independent Dem."]],
+    params.get("party") || "");
+  const typeSel = selectEl(
+    [["", "All action types"], ["law", "Laws"], ["eo", "Executive orders"], ["regulation", "Regulations"], ["budget", "Budget execution"]],
+    params.get("action_type") || "");
   const scoredOnly = el("input", { type: "checkbox" });
   if (params.get("scored_only") === "1") scoredOnly.checked = true;
   const showAll = el("input", { type: "checkbox" });
   if (params.get("all") === "1") showAll.checked = true;
+
   const apply = () => {
     const p = new URLSearchParams();
     if (search.value.trim()) p.set("q", search.value.trim());
+    if (partySel.value) p.set("party", partySel.value);
+    if (typeSel.value) p.set("action_type", typeSel.value);
     if (scoredOnly.checked) p.set("scored_only", "1");
     if (showAll.checked) p.set("all", "1");
     location.hash = "#/officials" + (p.toString() ? "?" + p.toString() : "");
   };
   search.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
-  scoredOnly.addEventListener("change", apply);
-  showAll.addEventListener("change", apply);
-  controls.appendChild(search);
-  controls.appendChild(el("label", { class: "muted", style: "font-size:13px;display:flex;gap:6px;align-items:center" }, scoredOnly, "scored only"));
-  controls.appendChild(el("label", { class: "muted", style: "font-size:13px;display:flex;gap:6px;align-items:center" }, showAll,
-    "show all", tip("By default we hide officials whose only tie to a scored action is a negligible role (e.g. one vote in a lopsided roll-call, <0.5%). 'Show all' includes them.")));
-  controls.appendChild(el("button", { onclick: apply }, "Search"));
-  app.appendChild(controls);
+  for (const ctl of [partySel, typeSel, scoredOnly, showAll]) ctl.addEventListener("change", apply);
+
+  const frow = (label, control, extra) => el("div", { class: "frow" },
+    el("div", { class: "flabel" }, label, extra || null), control);
+  app.appendChild(el("div", { class: "filters" },
+    frow("Official", search),
+    frow("Party", partySel),
+    frow("Action type", typeSel),
+    frow("Options", el("div", { class: "opts" },
+      el("label", {}, scoredOnly, "scored only"),
+      el("label", {}, showAll, "show all",
+        tip("By default we hide officials whose only tie to a scored action is a negligible role " +
+            "(e.g. one vote in a lopsided roll-call, <0.5%). 'Show all' includes them.")))),
+    el("div", { class: "fbtns" },
+      el("button", { onclick: apply }, "Search"),
+      el("a", { class: "cta ghost", href: "#/officials", style: "padding:8px 14px;border-radius:6px" }, "Clear"))));
 
   const qs = new URLSearchParams();
   if (params.get("q")) qs.set("q", params.get("q"));
+  if (params.get("party")) qs.set("party", params.get("party"));
+  if (params.get("action_type")) qs.set("action_type", params.get("action_type"));
   if (params.get("scored_only")) qs.set("scored_only", "true");
   // Hide negligible (<0.5%) involvement by default; "show all" turns the floor off.
   if (params.get("all") !== "1") qs.set("min_involvement", "0.005");

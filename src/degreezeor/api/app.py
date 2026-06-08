@@ -63,11 +63,12 @@ def get_evaluation_unit(eu_id: int) -> dict:
 @app.get("/api/officials")
 def list_officials(
     q: str | None = None, scored_only: bool = False,
-    min_involvement: float = 0.0, party: str | None = None,
+    min_involvement: float = 0.0, party: str | None = None, action_type: str | None = None,
 ) -> list[dict]:
     with session_scope() as s:
         return presentation.list_officials(
-            s, q=q, scored_only=scored_only, min_involvement=min_involvement, party=party)
+            s, q=q, scored_only=scored_only, min_involvement=min_involvement,
+            party=party, action_type=action_type)
 
 
 @app.get("/api/officials/{official_id}")

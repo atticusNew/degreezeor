@@ -375,7 +375,7 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
 
 def list_officials(
     session: Session, q: str | None = None, scored_only: bool = False,
-    min_involvement: float = 0.0, party: str | None = None,
+    min_involvement: float = 0.0, party: str | None = None, action_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Attribution-weighted roll-up for every official. Bulk-loaded (a handful of queries
     total) so it scales to the full House+Senate roster without per-official N+1 latency.
@@ -396,6 +396,12 @@ def list_officials(
     eu_ids = {aw.eu_id for aw in aw_rows}
     run_map = _latest_run_map(session, eu_ids)                       # ~1 query
     score_map = _scores_by_run(session, [r.id for r in run_map.values()])  # 1 query
+    # 1 query: action type per EU (for the "by action type" filter).
+    eu_type = dict(session.execute(
+        select(EvaluationUnit.id, Action.type)
+        .join(Action, Action.id == EvaluationUnit.action_id)
+        .where(EvaluationUnit.id.in_(eu_ids))
+    ).all()) if eu_ids else {}
 
     by_off: dict[int, list[AttributionWeight]] = defaultdict(list)
     for aw in aw_rows:
@@ -420,8 +426,11 @@ def list_officials(
         contributions = []
         seen: set[int] = set()
         involvement = 0.0
+        atypes: set[str] = set()
         for aw in aws:
             involvement = max(involvement, float(aw.attribution))
+            if eu_type.get(aw.eu_id):
+                atypes.add(eu_type[aw.eu_id])
             if aw.eu_id in seen:
                 continue
             seen.add(aw.eu_id)
@@ -444,12 +453,17 @@ def list_officials(
             "coverage": _num(r.coverage),
             "composite": _num(r.composite),
             "confidence": _num(r.confidence),
+            "_action_types": sorted(atypes),
         })
     if q:
         ql = q.lower()
         out = [o for o in out if ql in (o["name"] or "").lower()]
     if party:
         out = [o for o in out if (o["party"] or "").lower() == party.lower()]
+    if action_type:
+        out = [o for o in out if action_type in o["_action_types"]]
+    for o in out:
+        o.pop("_action_types", None)  # internal filter field; not part of the public shape
     if scored_only:
         out = [o for o in out if o["scored_actions"] > 0]
     if min_involvement > 0:

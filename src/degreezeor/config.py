@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     # Deterministic seed pins every score run for bit-reproducibility.
     deterministic_seed: int = 20240607
     # Active methodology version (semver); historical scores remain re-derivable.
-    methodology_version: str = "0.3.0"
+    # 0.4.0: Senate final-passage roll-call added as a decisive-vote attribution channel
+    # (per-chamber pivotality), so a law's Senate voters are credited alongside the House.
+    methodology_version: str = "0.4.0"
 
     # --- Network ---
     http_timeout_seconds: float = 30.0

@@ -56,6 +56,7 @@ from degreezeor.ingestion.loader import (
     load_house_final_passage_vote,
     load_law,
     load_observations,
+    load_senate_final_passage_vote,
 )
 from degreezeor.provenance import current_git_sha, data_snapshot_id
 from degreezeor.scoring.attribution import build_attribution
@@ -501,18 +502,26 @@ def score_law(session: Session, congress: int, law_number: int, law_type: str = 
     # is stored for transparency). Best-effort: scoring proceeds even if unavailable.
     vote_margin = None
     decisive_ids: list[int] = []
+    senate_margin = None
+    senate_decisive_ids: list[int] = []
     if bill and bill.congress and bill.bill_number:
         m = re.match(r"([a-z]+)(\d+)", bill.bill_number)
         if m:
+            btype, bnum = m.group(1), int(m.group(2))
             try:
-                result = load_house_final_passage_vote(
-                    session, action, bill.congress, m.group(1), int(m.group(2))
-                )
+                result = load_house_final_passage_vote(session, action, bill.congress, btype, bnum)
                 if result is not None:
                     hv, decisive_ids = result
                     vote_margin = hv.margin
             except Exception as exc:  # noqa: BLE001 - vote data is optional, never block scoring
-                log.warning("vote ingestion failed for %s: %s", action.native_identifier, exc)
+                log.warning("house vote ingestion failed for %s: %s", action.native_identifier, exc)
+            try:
+                sresult = load_senate_final_passage_vote(session, action, bill.congress, btype, bnum)
+                if sresult is not None:
+                    sv, senate_decisive_ids = sresult
+                    senate_margin = sv.margin
+            except Exception as exc:  # noqa: BLE001 - vote data is optional, never block scoring
+                log.warning("senate vote ingestion failed for %s: %s", action.native_identifier, exc)
 
     actx = AttributionContext(
         eu_id=eu.id,
@@ -522,6 +531,8 @@ def score_law(session: Session, congress: int, law_number: int, law_type: str = 
         vote_margin=vote_margin,
         member_on_winning_side=bool(decisive_ids),
         decisive_official_ids=decisive_ids,
+        senate_vote_margin=senate_margin,
+        senate_decisive_official_ids=senate_decisive_ids,
     )
     attributions = build_attribution(actx)
     return _finalize(
@@ -774,27 +785,31 @@ def rescore_eu(session: Session, eu_id: int) -> ScoreOutcome:
     signer = (law.signed_by_official_id if law else None) or (eo.signing_official_id if eo else None)
 
     # Reconstruct decisive-vote attribution from STORED roll-call rows (no re-fetch),
-    # so the re-run reproduces the original attribution exactly.
-    vote = session.execute(
-        select(Vote).where(Vote.action_id == action.id, Vote.chamber == "house")
-        .order_by(Vote.id.desc()).limit(1)
-    ).scalar_one_or_none()
-    vote_margin = None
-    decisive_ids: list[int] = []
-    if vote is not None:
-        vote_margin = abs(vote.yea - vote.nay)
-        winning = "yea" if vote.yea >= vote.nay else "nay"
-        decisive_ids = list(session.execute(
+    # so the re-run reproduces the original attribution exactly — for BOTH chambers.
+    def _stored_decisive(chamber: str) -> tuple[int | None, list[int]]:
+        v = session.execute(
+            select(Vote).where(Vote.action_id == action.id, Vote.chamber == chamber)
+            .order_by(Vote.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        if v is None:
+            return None, []
+        winning = "yea" if v.yea >= v.nay else "nay"
+        ids = list(session.execute(
             select(VotePosition.official_id).where(
-                VotePosition.vote_id == vote.id, VotePosition.position == winning
+                VotePosition.vote_id == v.id, VotePosition.position == winning
             )
         ).scalars())
+        return abs(v.yea - v.nay), ids
+
+    vote_margin, decisive_ids = _stored_decisive("house")
+    senate_margin, senate_decisive_ids = _stored_decisive("senate")
 
     actx = AttributionContext(
         eu_id=eu.id, action_type=action.type,
         sponsor_official_id=bill.sponsor_official_id if bill else None,
         signer_official_id=signer, vote_margin=vote_margin,
         member_on_winning_side=bool(decisive_ids), decisive_official_ids=decisive_ids,
+        senate_vote_margin=senate_margin, senate_decisive_official_ids=senate_decisive_ids,
     )
     attributions = build_attribution(actx)
     return _finalize(

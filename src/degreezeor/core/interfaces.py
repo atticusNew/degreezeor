@@ -102,9 +102,13 @@ class AttributionContext:
     action_type: str
     sponsor_official_id: int | None
     signer_official_id: int | None
-    vote_margin: int | None  # winning_margin in votes (post-decisive)
+    vote_margin: int | None  # House winning margin in votes (post-decisive)
     member_on_winning_side: bool | None
-    decisive_official_ids: list[int] = field(default_factory=list)
+    decisive_official_ids: list[int] = field(default_factory=list)  # House winning-side members
+    # Senate final-passage roll-call (a law must clear BOTH chambers); each chamber's
+    # pivotality is scaled by its OWN margin.
+    senate_vote_margin: int | None = None
+    senate_decisive_official_ids: list[int] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 

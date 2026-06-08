@@ -93,30 +93,36 @@ class DecisiveVoteChannel(AttributionChannel):
     name = "decisive_vote"
 
     def contributions(self, ctx: AttributionContext) -> list[AttributionContribution]:
-        if (
-            ctx.vote_margin is None
-            or not ctx.member_on_winning_side
-            or not ctx.decisive_official_ids
-        ):
+        # A law clears BOTH chambers; each chamber's decisive voters get pivotality scaled
+        # by that chamber's OWN margin. (House and Senate membership are disjoint for a
+        # given person, so there is no double-counting.)
+        chambers: list[tuple[int, list[int]]] = []
+        if ctx.vote_margin is not None and ctx.member_on_winning_side and ctx.decisive_official_ids:
+            chambers.append((ctx.vote_margin, ctx.decisive_official_ids))
+        if ctx.senate_vote_margin is not None and ctx.senate_decisive_official_ids:
+            chambers.append((ctx.senate_vote_margin, ctx.senate_decisive_official_ids))
+        if not chambers:
             return []
-        piv = pivotality_from_margin(ctx.vote_margin)
+
         base_authority = D("0.05")
         out = []
-        # Sorted for deterministic ordering => bit-reproducible score runs regardless of
-        # whether IDs came from XML parse order or a DB query.
-        for oid in sorted(ctx.decisive_official_ids):
-            w = base_authority * piv
-            out.append(
-                AttributionContribution(
-                    official_id=oid,
-                    role="decisive_vote",
-                    authority=base_authority,
-                    pivotality=piv,
-                    raw_weight=q_score(w),
-                    raw_low=q_score(w * D("0.5")),
-                    raw_high=q_score(w * D("1.5")),
+        for margin, ids in chambers:
+            piv = pivotality_from_margin(margin)
+            # Sorted for deterministic ordering => bit-reproducible score runs regardless of
+            # whether IDs came from XML parse order or a DB query.
+            for oid in sorted(ids):
+                w = base_authority * piv
+                out.append(
+                    AttributionContribution(
+                        official_id=oid,
+                        role="decisive_vote",
+                        authority=base_authority,
+                        pivotality=piv,
+                        raw_weight=q_score(w),
+                        raw_low=q_score(w * D("0.5")),
+                        raw_high=q_score(w * D("1.5")),
+                    )
                 )
-            )
         return out
 
 

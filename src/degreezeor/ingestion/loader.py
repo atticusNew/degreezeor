@@ -8,6 +8,7 @@ consulted by scoring code (party-blindness is enforced by tests).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import date, datetime
 from decimal import Decimal
@@ -35,6 +36,8 @@ from degreezeor.ingestion.adapters.bls import bls_adapter
 from degreezeor.ingestion.adapters.congress import congress_adapter
 from degreezeor.ingestion.adapters.federalregister import federal_register_adapter
 from degreezeor.ingestion.landing import ensure_source, land
+
+log = logging.getLogger(__name__)
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -300,6 +303,74 @@ def load_house_final_passage_vote(
             winning_official_ids.append(official.id)
     session.flush()
     return hv, winning_official_ids
+
+
+def load_senate_final_passage_vote(
+    session: Session, action: Action, congress: int, bill_type: str, bill_number: int
+):
+    """Ingest the final-passage Senate roll-call vote for a law: Vote(chamber='senate') +
+    VotePosition rows + ensures Officials, resolving each senator's ``lis_member_id`` to a
+    Bioguide ID via the crosswalk. Returns (SenateVote, winning_official_ids) or None.
+
+    Senators who cannot be resolved to a Bioguide ID are skipped (logged), never guessed."""
+    from degreezeor.core.models import Vote, VotePosition
+    from degreezeor.ingestion.adapters.congress_legislators import congress_legislators_adapter
+    from degreezeor.ingestion.adapters.senate import parse_senate_vote, senate_rollcall_adapter
+
+    afetch = congress_adapter.fetch_bill_actions(congress, bill_type, bill_number)
+    land(session, afetch)
+    actions = json.loads(afetch.content).get("actions", [])
+
+    candidates = []
+    for act in actions:
+        text = (act.get("text") or "").lower()
+        if not any(k in text for k in _PASSAGE_KEYWORDS):
+            continue
+        for rv in act.get("recordedVotes") or []:
+            if rv.get("chamber") == "Senate" and rv.get("url"):
+                candidates.append((rv.get("date") or "", rv["url"]))
+    if not candidates:
+        return None
+    candidates.sort()
+    vote_url = candidates[-1][1]
+
+    if session.execute(select(Vote).where(Vote.question == vote_url)).scalar_one_or_none() is not None:
+        return None  # idempotent: already stored this roll-call
+
+    vfetch = senate_rollcall_adapter.fetch(vote_url)
+    land(session, vfetch)
+    sv = parse_senate_vote(vfetch.content)
+
+    lis_map = congress_legislators_adapter.lis_to_bioguide()
+    vote = Vote(
+        action_id=action.id, chamber="senate", question=vote_url,
+        vote_date=action.action_date, yea=sv.yea, nay=sv.nay, present=sv.present,
+        not_voting=sv.not_voting, result=sv.result,
+    )
+    session.add(vote)
+    session.flush()
+    winning_position = "yea" if sv.passed else "nay"
+    winning_official_ids: list[int] = []
+    for mv in sv.positions:
+        bioguide = lis_map.get(mv.lis_member_id)
+        if not bioguide:
+            log.warning("unresolved senator lis_member_id=%s (%s)", mv.lis_member_id, mv.last_name)
+            continue
+        full_name = f"{mv.first_name} {mv.last_name}".strip()
+        official = _ensure_official(session, bioguide, full_name)
+        if mv.party:
+            party = _ensure_party(session, mv.party)
+            if not session.execute(
+                select(OfficeTerm).where(
+                    OfficeTerm.official_id == official.id, OfficeTerm.party_id == party.id
+                )
+            ).scalar_one_or_none():
+                session.add(OfficeTerm(official_id=official.id, party_id=party.id))
+        session.add(VotePosition(vote_id=vote.id, official_id=official.id, position=mv.position))
+        if mv.position == winning_position:
+            winning_official_ids.append(official.id)
+    session.flush()
+    return sv, winning_official_ids
 
 
 def load_observations(

@@ -33,6 +33,18 @@ def test_state_policy_spec_well_formed(key: str) -> None:
     assert spec.objective_text.strip()
     # Every policy has an attribution anchor: a signer, a sponsor, or both.
     assert spec.signer_name or spec.sponsor_name, "no one to attribute the action to"
+    # The comparison-design metric kind is one we know how to resolve to a BLS series.
+    assert spec.metric_kind in {"employment", "wage"}
+
+
+def test_state_series_ids_are_well_formed() -> None:
+    from degreezeor.pipeline import state_series_id
+
+    # BLS SM series are 20 chars: SM + seasonal + FIPS(2) + area(5) + industry(8) + datatype(2).
+    emp = state_series_id("06", "employment")
+    wage = state_series_id("06", "wage")
+    assert emp == "SMS06000000000000001" and len(emp) == 20
+    assert wage == "SMU06000000500000003" and len(wage) == 20
 
 
 def test_state_policy_keys_unique() -> None:

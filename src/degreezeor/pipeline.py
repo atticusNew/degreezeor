@@ -82,6 +82,36 @@ def state_employment_series_id(fips: str) -> str:
     return f"SMS{fips}000000000000001"
 
 
+def state_wage_series_id(fips: str) -> str:
+    """BLS state average hourly earnings, total private (NSA): SMU + FIPS(2) + area(00000)
+    + industry(05000000 = total private) + datatype(03 = avg hourly earnings, all employees).
+    Seasonally adjusted AHE is not published at the state level, so the not-seasonally-adjusted
+    series is used; the synthetic-control donor pool matches the shared seasonal path across
+    states, so a treated-vs-synthetic comparison at matched months is still valid."""
+    return f"SMU{fips}000000500000003"
+
+
+# Metric descriptor per comparison-design ``metric_kind``. Both are objective BLS state
+# series with direction_good = up (more jobs / higher wages is toward the stated goal).
+STATE_METRIC_KINDS: dict[str, dict[str, str]] = {
+    "employment": {
+        "code": "state_nonfarm_employment",
+        "name": "Total Nonfarm Employment (SA)",
+        "unit": "thousands of jobs",
+    },
+    "wage": {
+        "code": "state_avg_hourly_earnings",
+        "name": "Average Hourly Earnings, Total Private (NSA)",
+        "unit": "dollars/hour",
+    },
+}
+
+
+def state_series_id(fips: str, metric_kind: str = "employment") -> str:
+    """Resolve the BLS state series id for a comparison-design metric kind."""
+    return state_wage_series_id(fips) if metric_kind == "wage" else state_employment_series_id(fips)
+
+
 @dataclass
 class StatePolicySpec:
     key: str  # e.g. "KS-HB2117"
@@ -98,6 +128,8 @@ class StatePolicySpec:
     sponsor_name: str | None = None
     signer_party: str | None = None  # public record; audit metadata only
     sponsor_party: str | None = None
+    # Comparison-design outcome metric: "employment" (jobs) or "wage" (avg hourly earnings).
+    metric_kind: str = "employment"
 
 
 # Documented demo state policies (public record). The objective text states the
@@ -212,6 +244,58 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         # Enacted over the governor's veto; credit goes to the bill's sponsor, not a signer.
         enacted_year=2014, enacted_month=5, lag_window_months=48,
         sponsor_name="Will Kraus", sponsor_party="R",
+    ),
+    # --- Minimum-wage increases (metric_kind="wage"): the policy's own stated goal is to
+    # raise workers' wages, measured against the official state average-hourly-earnings
+    # series via synthetic control. Same neutral question, a different objective metric.
+    "CA-2016-SB3": StatePolicySpec(
+        key="CA-2016-SB3",
+        title="California 2016 minimum wage increase (SB 3)",
+        state_fips="06",
+        state_name="California",
+        # Large/diverse states that kept the federal minimum (no comparable $15 increase).
+        donor_fips=["48", "42", "13", "37", "51"],  # TX PA GA NC VA
+        source_url="https://leginfo.legislature.ca.gov/faces/billNavClient.xhtml?bill_id=201520160SB3",
+        objective_text=(
+            "Raise the statewide minimum wage to $15 per hour so that full-time work does not "
+            "leave workers in poverty, raising wages for low-wage workers."
+        ),
+        enacted_year=2016, enacted_month=4, lag_window_months=48,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="wage",
+    ),
+    "MA-2018-H4640": StatePolicySpec(
+        key="MA-2018-H4640",
+        title="Massachusetts 2018 minimum wage increase (H 4640, grand bargain)",
+        state_fips="25",
+        state_name="Massachusetts",
+        # Regional states without a comparable minimum-wage increase in the window.
+        donor_fips=["33", "42", "51", "48", "37"],  # NH PA VA TX NC
+        source_url="https://malegislature.gov/Bills/190/H4640",
+        objective_text=(
+            "Raise the state minimum wage from $11 to $15 per hour over five years to raise "
+            "workers' wages."
+        ),
+        enacted_year=2018, enacted_month=6, lag_window_months=48,
+        signer_name="Charlie Baker", signer_party="R",
+        metric_kind="wage",
+    ),
+    "MD-2019-SB280": StatePolicySpec(
+        key="MD-2019-SB280",
+        title="Maryland 2019 minimum wage increase (SB 280, Fight for Fifteen)",
+        state_fips="24",
+        state_name="Maryland",
+        # Regional states without a comparable minimum-wage increase in the window.
+        donor_fips=["42", "37", "47", "13", "48"],  # PA NC TN GA TX
+        source_url="https://mgaleg.maryland.gov/mgawebsite/Legislation/Details/sb0280?ys=2019RS",
+        objective_text=(
+            "Raise Maryland's minimum wage to $15 per hour (Fight for Fifteen) to raise wages "
+            "for workers."
+        ),
+        # Enacted over the governor's veto; credit goes to the bill's sponsor, not a signer.
+        enacted_year=2019, enacted_month=3, lag_window_months=48,
+        sponsor_name="Cory McCray", sponsor_party="D",
+        metric_kind="wage",
     ),
 }
 
@@ -820,7 +904,7 @@ def _eu_donor_observations(action: Action) -> tuple[dict[str, list[tuple[str, ob
         sy = spec.enacted_year - 3
         ey = spec.enacted_year + (spec.lag_window_months // 12) + 2
         for dfips in spec.donor_fips:
-            dfetch = bls_adapter.fetch(state_employment_series_id(dfips), start_year=sy, end_year=ey)
+            dfetch = bls_adapter.fetch(state_series_id(dfips, spec.metric_kind), start_year=sy, end_year=ey)
             donor_source_urls.append(dfetch.source_url)
             dseries = json.loads(dfetch.content)["Results"]["series"][0]
             donor_observations[dfips] = [
@@ -1706,7 +1790,9 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     composite, because a donor pool addresses the confounding a single series cannot.
     """
     ensure_bls_source(session)
-    sign_goal = 1  # "create jobs" => higher employment is toward the stated goal
+    # Higher is toward the stated goal for both kinds: more jobs (employment) or higher
+    # wages (average hourly earnings). sign_goal is fixed at pre-registration.
+    sign_goal = 1
 
     # --- Tier-0 action provenance: fetch the official state source URL ---
     fetch = generic_url_adapter.fetch(spec.source_url, label=spec.key)
@@ -1736,17 +1822,19 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     if sponsor and spec.sponsor_party:
         ensure_party_term(session, sponsor, spec.sponsor_party)
 
-    # Treated-state employment metric (get-or-create).
+    # Treated-state outcome metric (get-or-create), per the policy's comparison-design kind.
+    kind = spec.metric_kind
+    descr = STATE_METRIC_KINDS.get(kind, STATE_METRIC_KINDS["employment"])
     metric = session.execute(
-        select(Metric).where(Metric.code == f"state_nonfarm_employment_{spec.state_fips}")
+        select(Metric).where(Metric.code == f"{descr['code']}_{spec.state_fips}")
     ).scalar_one_or_none()
     if metric is None:
         metric = Metric(
-            code=f"state_nonfarm_employment_{spec.state_fips}",
-            name=f"{spec.state_name} Total Nonfarm Employment (SA)",
-            unit="thousands of jobs", direction_good="up",
+            code=f"{descr['code']}_{spec.state_fips}",
+            name=f"{spec.state_name} {descr['name']}",
+            unit=descr["unit"], direction_good="up",
             source_id=session.execute(select(DataSource.id).where(DataSource.name == "BLS")).scalar_one(),
-            native_series_id=state_employment_series_id(spec.state_fips),
+            native_series_id=state_series_id(spec.state_fips, kind),
             domain="Economics and Public Finance",
         )
         session.add(metric)
@@ -1798,7 +1886,7 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     donor_observations: dict[str, list[tuple[str, object]]] = {}
     donor_source_urls: list[str] = []
     for dfips in spec.donor_fips:
-        dfetch = bls_adapter.fetch(state_employment_series_id(dfips), start_year=start_year, end_year=end_year)
+        dfetch = bls_adapter.fetch(state_series_id(dfips, kind), start_year=start_year, end_year=end_year)
         land(session, dfetch)
         donor_source_urls.append(dfetch.source_url)
         dseries = json.loads(dfetch.content)["Results"]["series"][0]

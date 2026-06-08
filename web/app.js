@@ -561,6 +561,84 @@ async function renderCoverage() {
   app.appendChild(el("p", { class: "muted", style: "font-size:12px" }, c.note));
 }
 
+async function renderAbout() {
+  const app = $("#app");
+  app.innerHTML = "";
+  let m = {};
+  try { m = await getJSON("/api/methodology"); } catch (e) { /* fall back to static copy */ }
+
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "What this is — and what it is not"));
+
+  // The neutral framing, in plain language (the credibility spine of the platform).
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "The one question it answers"),
+    el("p", { class: "narrative" },
+      "For each public action, degreezeor asks a single factual question: did the measurable " +
+      "outcome tied to the action\u2019s OWN stated objective move \u2014 relative to a defensible " +
+      "baseline \u2014 and how much of that movement is credibly attributable to this official, with " +
+      "what confidence? Every number links back to an official government source."),
+    el("p", { class: "muted", style: "font-size:13px" },
+      "The yardstick is the policy\u2019s own stated goal (statutory purpose / official summary / " +
+      "its own committed target). That makes the question party-symmetric: a jobs bill and a tax " +
+      "cut are each asked the same neutral thing.")));
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "What it deliberately does NOT do"),
+    el("ul", { style: "line-height:1.7" },
+      el("li", {}, el("b", {}, "No default \u201Cgood/bad politician\u201D number."), " A single composite " +
+        "requires a hidden value function (weighing liberty vs. equality vs. growth\u2026) \u2014 i.e. an " +
+        "ideology. The default output is a decomposed, source-linked vector; a composite is opt-in, " +
+        "value-laden, and shown only with a watermark."),
+      el("li", {}, el("b", {}, "It is not an ideology scorer, fact-checker, or pundit."), " No " +
+        "left/right axis, no editorial \u201Cmisleading\u201D labels \u2014 only numbers, intervals, and sources."),
+      el("li", {}, el("b", {}, "\u201CInsufficient evidence\u201D is never a low score."), " When a " +
+        "defensible baseline cannot separate the policy from concurrent shocks, the composite is " +
+        "suppressed and the unit is marked insufficient evidence \u2014 honest abstention, not a verdict."))));
+
+  if (m.philosophy) {
+    app.appendChild(el("div", { class: "card" },
+      el("h3", {}, "Scoring philosophy"),
+      el("p", { class: "narrative" }, m.philosophy)));
+  }
+
+  if (Array.isArray(m.bias_controls) && m.bias_controls.length) {
+    app.appendChild(el("div", { class: "card" },
+      el("h3", {}, "How bias is minimized (adversarial neutrality)"),
+      el("ul", { style: "line-height:1.7" }, ...m.bias_controls.map((b) => el("li", {}, b)))));
+  }
+
+  const factual = m.components_factual || [];
+  const valueLaden = m.components_value_laden_off_by_default || [];
+  if (factual.length || valueLaden.length) {
+    app.appendChild(el("div", { class: "card" },
+      el("h3", {}, "Factual vs. value-laden components"),
+      el("p", { class: "muted", style: "font-size:13px" },
+        "Factual components are combined by default; value-laden lenses are OFF unless you turn " +
+        "them on (and any non-neutral weighting is watermarked)."),
+      el("div", { class: "row" }, el("span", { class: "k" }, "factual (default)"),
+        el("span", { class: "v mono" }, factual.join(", ") || "\u2014")),
+      el("div", { class: "row" }, el("span", { class: "k" }, "value-laden (opt-in)"),
+        el("span", { class: "v mono" }, valueLaden.join(", ") || "\u2014")),
+      m.confidence_publish_threshold !== undefined
+        ? el("div", { class: "row" }, el("span", { class: "k" }, "confidence publish threshold"),
+            el("span", { class: "v mono" }, `${(m.confidence_publish_threshold * 100).toFixed(0)}% \u2014 below this, the composite is suppressed`))
+        : null));
+  }
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "The three things that can never be fully empirical"),
+    el("p", { class: "muted", style: "font-size:13px" },
+      "These residues are labeled, never hidden: (1) which metric operationalizes the objective; " +
+      "(2) which counterfactual baseline is \u201Cright\u201D; (3) how to assign causal credit among many " +
+      "actors. We shrink them (pre-registration, baseline ensembles, attribution intervals + a large " +
+      "unattributable residual) but never to zero \u2014 and when a residue dominates, the answer is " +
+      "\u201Cinsufficient evidence.\u201D")));
+
+  app.appendChild(el("p", { class: "muted", style: "font-size:12px" },
+    "Every published score is independently reproducible (see the Integrity tab) and the full " +
+    "method is open source."));
+}
+
 async function renderIntegrity() {
   const app = $("#app");
   app.innerHTML = "";
@@ -654,6 +732,7 @@ async function route() {
     else if (location.hash.startsWith("#/graph")) await renderGraph();
     else if (location.hash.startsWith("#/coverage")) await renderCoverage();
     else if (location.hash.startsWith("#/integrity")) await renderIntegrity();
+    else if (location.hash.startsWith("#/about")) await renderAbout();
     else await renderList();
   } catch (e) {
     $("#app").innerHTML = `<div class="card">Error: ${e.message}. Is the API running?</div>`;

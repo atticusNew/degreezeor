@@ -96,6 +96,8 @@ class StatePolicySpec:
     lag_window_months: int = 24
     signer_name: str | None = None
     sponsor_name: str | None = None
+    signer_party: str | None = None  # public record; audit metadata only
+    sponsor_party: str | None = None
 
 
 # Documented demo state policies (public record). The objective text states the
@@ -118,7 +120,7 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         # 48-month horizon: a structural income-tax cut's job-creation claim is
         # appropriately evaluated over a multi-year window, declared at pre-registration.
         lag_window_months=48,
-        signer_name="Sam Brownback",
+        signer_name="Sam Brownback", signer_party="R",
     ),
     "NC-2013-TAX": StatePolicySpec(
         key="NC-2013-TAX",
@@ -133,7 +135,7 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
             "create jobs and employment."
         ),
         enacted_year=2013, enacted_month=7, lag_window_months=48,
-        signer_name="Pat McCrory",
+        signer_name="Pat McCrory", signer_party="R",
     ),
 }
 
@@ -1650,6 +1652,11 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
 
     signer = _ensure_named_official(session, spec.signer_name) if spec.signer_name else None
     sponsor = _ensure_named_official(session, spec.sponsor_name) if spec.sponsor_name else None
+    from degreezeor.core.reference import ensure_party_term
+    if signer and spec.signer_party:
+        ensure_party_term(session, signer, spec.signer_party)
+    if sponsor and spec.sponsor_party:
+        ensure_party_term(session, sponsor, spec.sponsor_party)
 
     # Treated-state employment metric (get-or-create).
     metric = session.execute(

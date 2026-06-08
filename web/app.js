@@ -522,7 +522,7 @@ async function renderOfficials() {
     const scoredText = o.composite !== null
       ? `composite ${fmt(o.composite, 1)} · confidence ${(o.confidence * 100).toFixed(0)}%`
       : "insufficient evidence";
-    const meta = `${o.party ? o.party + " · " : ""}${o.scored_actions}/${o.total_actions} scored · ` +
+    const meta = `${o.party || "Unknown"} · ${o.scored_actions}/${o.total_actions} scored · ` +
       `coverage ${(o.coverage * 100).toFixed(0)}% · role share ${(o.involvement * 100).toFixed(1)}%`;
     app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
       el("div", {}, el("div", { class: "title" }, o.name || `Official #${o.id}`),
@@ -555,7 +555,7 @@ async function renderOfficialDetail(id) {
   app.appendChild(el("div", { class: "headline" },
     el("p", { class: "name" }, o.name),
     el("div", { class: "submeta" },
-      [o.party ? `Party ${o.party}` : null, o.bioguide_id ? `Bioguide ${o.bioguide_id}` : null].filter(Boolean).join(" · ") || "n/a"),
+      ["Party " + (o.party || "Unknown"), o.bioguide_id ? `Bioguide ${o.bioguide_id}` : null].filter(Boolean).join(" · ")),
     el("div", { class: "big" },
       scored
         ? el("span", { class: "bignum scored" }, fmt(r.composite, 1))

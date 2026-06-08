@@ -33,8 +33,9 @@ def test_state_policy_spec_well_formed(key: str) -> None:
     assert spec.objective_text.strip()
     # Every policy has an attribution anchor: a signer, a sponsor, or both.
     assert spec.signer_name or spec.sponsor_name, "no one to attribute the action to"
-    # The comparison-design metric kind is one we know how to resolve to a BLS series.
-    assert spec.metric_kind in {"employment", "wage"}
+    # The comparison-design metric kind is one we know how to resolve to an official series.
+    from degreezeor.pipeline import STATE_METRIC_KINDS
+    assert spec.metric_kind in STATE_METRIC_KINDS
 
 
 def test_state_series_ids_are_well_formed() -> None:
@@ -45,6 +46,12 @@ def test_state_series_ids_are_well_formed() -> None:
     wage = state_series_id("06", "wage")
     assert emp == "SMS06000000000000001" and len(emp) == 20
     assert wage == "SMU06000000500000003" and len(wage) == 20
+    # Census/EIA kinds resolve to their adapter-prefixed, per-state series ids.
+    assert state_series_id("06", "poverty") == "CENSUS|timeseries/poverty/saipe|SAEPOVRTALL_PT|state:06"
+    assert state_series_id("06", "income") == "CENSUS|timeseries/poverty/saipe|SAEMHI_PT|state:06"
+    assert state_series_id("06", "uninsured") == "CENSUS|timeseries/healthins/sahie|PCTUI_PT|state:06"
+    assert state_series_id("06", "energy") == (
+        "EIA|co2-emissions/co2-emissions-aggregates|stateId=CA;sectorId=TT;fuelId=TO")
 
 
 def test_state_policy_keys_unique() -> None:

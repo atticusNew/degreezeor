@@ -91,25 +91,85 @@ def state_wage_series_id(fips: str) -> str:
     return f"SMU{fips}000000500000003"
 
 
-# Metric descriptor per comparison-design ``metric_kind``. Both are objective BLS state
-# series with direction_good = up (more jobs / higher wages is toward the stated goal).
-STATE_METRIC_KINDS: dict[str, dict[str, str]] = {
-    "employment": {
-        "code": "state_nonfarm_employment",
-        "name": "Total Nonfarm Employment (SA)",
-        "unit": "thousands of jobs",
-    },
-    "wage": {
-        "code": "state_avg_hourly_earnings",
-        "name": "Average Hourly Earnings, Total Private (NSA)",
-        "unit": "dollars/hour",
-    },
+# FIPS -> USPS abbreviation (EIA state series key on the postal abbreviation, not FIPS).
+_FIPS_USPS: dict[str, str] = {
+    "01": "AL", "02": "AK", "04": "AZ", "05": "AR", "06": "CA", "08": "CO", "09": "CT",
+    "10": "DE", "11": "DC", "12": "FL", "13": "GA", "15": "HI", "16": "ID", "17": "IL",
+    "18": "IN", "19": "IA", "20": "KS", "21": "KY", "22": "LA", "23": "ME", "24": "MD",
+    "25": "MA", "26": "MI", "27": "MN", "28": "MS", "29": "MO", "30": "MT", "31": "NE",
+    "32": "NV", "33": "NH", "34": "NJ", "35": "NM", "36": "NY", "37": "NC", "38": "ND",
+    "39": "OH", "40": "OK", "41": "OR", "42": "PA", "44": "RI", "45": "SC", "46": "SD",
+    "47": "TN", "48": "TX", "49": "UT", "50": "VT", "51": "VA", "53": "WA", "54": "WV",
+    "55": "WI", "56": "WY",
 }
+
+# Descriptor per comparison-design ``metric_kind``: the official state series and which way
+# is "toward" the policy's own stated goal. ``sign`` is fixed at pre-registration.
+STATE_METRIC_KINDS: dict[str, dict[str, object]] = {
+    "employment": {"code": "state_nonfarm_employment", "name": "Total Nonfarm Employment (SA)",
+                   "unit": "thousands of jobs", "direction_good": "up", "sign": 1,
+                   "domain": "Economics and Public Finance"},
+    "wage": {"code": "state_avg_hourly_earnings", "name": "Average Hourly Earnings, Total Private (NSA)",
+             "unit": "dollars/hour", "direction_good": "up", "sign": 1,
+             "domain": "Economics and Public Finance"},
+    "poverty": {"code": "state_poverty_rate", "name": "Poverty Rate, All Ages (Census SAIPE)",
+                "unit": "percent", "direction_good": "down", "sign": -1, "domain": "Income and Poverty"},
+    "income": {"code": "state_median_household_income", "name": "Median Household Income (Census SAIPE)",
+               "unit": "dollars", "direction_good": "up", "sign": 1, "domain": "Income and Poverty"},
+    "uninsured": {"code": "state_uninsured_rate", "name": "Uninsured Rate, All Ages (Census SAHIE)",
+                  "unit": "percent", "direction_good": "down", "sign": -1, "domain": "Health"},
+    "energy": {"code": "state_co2_emissions", "name": "Total Energy CO2 Emissions (EIA)",
+               "unit": "million metric tons CO2", "direction_good": "down", "sign": -1,
+               "domain": "Energy and Environment"},
+}
+_ANNUAL_KINDS = {"poverty", "income", "uninsured", "energy"}
 
 
 def state_series_id(fips: str, metric_kind: str = "employment") -> str:
-    """Resolve the BLS state series id for a comparison-design metric kind."""
-    return state_wage_series_id(fips) if metric_kind == "wage" else state_employment_series_id(fips)
+    """Resolve the official state series id for a comparison-design metric kind
+    (BLS for jobs/wages; Census SAIPE/SAHIE for poverty/income/uninsured; EIA for CO2)."""
+    if metric_kind == "wage":
+        return state_wage_series_id(fips)
+    if metric_kind == "poverty":
+        return f"CENSUS|timeseries/poverty/saipe|SAEPOVRTALL_PT|state:{fips}"
+    if metric_kind == "income":
+        return f"CENSUS|timeseries/poverty/saipe|SAEMHI_PT|state:{fips}"
+    if metric_kind == "uninsured":
+        return f"CENSUS|timeseries/healthins/sahie|PCTUI_PT|state:{fips}"
+    if metric_kind == "energy":
+        return f"EIA|co2-emissions/co2-emissions-aggregates|stateId={_FIPS_USPS.get(fips, fips)};sectorId=TT;fuelId=TO"
+    return state_employment_series_id(fips)
+
+
+def _series_is_annual(native_series_id: str | None) -> bool:
+    return bool(native_series_id) and native_series_id.startswith(("CENSUS|", "EIA|", "CDC|"))
+
+
+def _pre_years_for(native_series_id: str | None) -> int:
+    """Pre-period span to pull. Annual official series need a longer pre-window than monthly
+    BLS series to give the comparison-design pre-fit enough points (>= 6)."""
+    return 12 if _series_is_annual(native_series_id) else 3
+
+
+def _fetch_state_series_points(native_series_id: str, start_year: int, end_year: int):
+    """Fetch one official state series via the right adapter; return (RawFetch, points) where
+    points are [(ISO-date, value)] (monthly -> YYYY-MM-01; annual -> YYYY-01-01)."""
+    from degreezeor.ingestion.adapters.census import census_adapter
+    from degreezeor.ingestion.adapters.eia import eia_adapter
+
+    if native_series_id.startswith("CENSUS|"):
+        f = census_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+        pts = [(f"{y}-01-01", v) for y, v in census_adapter.parse_series(f.content, native_series_id)]
+        return f, pts
+    if native_series_id.startswith("EIA|"):
+        f = eia_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+        pts = [(f"{y}-01-01", v) for y, v in eia_adapter.parse_series(f.content, native_series_id)]
+        return f, pts
+    f = bls_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+    series = json.loads(f.content)["Results"]["series"][0]
+    pts = [(f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
+           for pt in series["data"] if pt["period"].startswith("M")]
+    return f, pts
 
 
 @dataclass
@@ -297,6 +357,43 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         sponsor_name="Cory McCray", sponsor_party="D",
         metric_kind="wage",
     ),
+    # --- Energy and environment (metric_kind="energy"): scored on EIA state CO2 emissions,
+    # where a fall is toward the policy's own stated decarbonization goal. ---
+    "CA-2015-SB350": StatePolicySpec(
+        key="CA-2015-SB350",
+        title="California 2015 Clean Energy and Pollution Reduction Act (SB 350)",
+        state_fips="06",
+        state_name="California",
+        # Large states without a comparable 2015 clean-energy/emissions mandate.
+        donor_fips=["48", "12", "39", "42", "13"],  # TX FL OH PA GA
+        source_url="https://leginfo.legislature.ca.gov/faces/billNavClient.xhtml?bill_id=201520160SB350",
+        objective_text=(
+            "Cut greenhouse gas emissions by raising the renewable electricity share to 50% and "
+            "doubling energy efficiency savings by 2030 (Clean Energy and Pollution Reduction Act)."
+        ),
+        enacted_year=2015, enacted_month=10, lag_window_months=48,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="energy",
+    ),
+    # --- Health (metric_kind="uninsured"): scored on the Census SAHIE state uninsured rate,
+    # where a fall is toward the policy's own stated coverage goal. ---
+    "CA-2014-MEDICAID": StatePolicySpec(
+        key="CA-2014-MEDICAID",
+        title="California Affordable Care Act Medicaid (Medi-Cal) expansion (ABX1 1)",
+        state_fips="06",
+        state_name="California",
+        # Large states that did not expand Medicaid in 2014 (clean non-treated controls).
+        donor_fips=["48", "12", "13", "37", "47"],  # TX FL GA NC TN
+        source_url="https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=201320141ABX11",
+        objective_text=(
+            "Expand Medicaid (Medi-Cal) eligibility under the Affordable Care Act to reduce the "
+            "number of uninsured Californians."
+        ),
+        # Evaluated from the coverage effective date (Jan 1, 2014).
+        enacted_year=2014, enacted_month=1, lag_window_months=36,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="uninsured",
+    ),
 }
 
 
@@ -379,17 +476,23 @@ class ScoreOutcome:
     reproducible_hash: str | None
 
 
-def _obs_window(enacted: date, lag_months: int) -> tuple[str, str]:
+def _obs_window(enacted: date, lag_months: int, pre_years: int = 3) -> tuple[str, str]:
     """Inclusive ISO bounds for an EU's outcome series, so EUs that share a metric
     (e.g. two laws both scored on nonfarm employment) never pollute each other's
-    observation set — which keeps every score run deterministic and reproducible."""
-    start = f"{enacted.year - 3}-01-01"
+    observation set — which keeps every score run deterministic and reproducible.
+    ``pre_years`` widens the pre-period (annual official series need more years)."""
+    start = f"{enacted.year - pre_years}-01-01"
     end = f"{enacted.year + (lag_months // 12) + 2}-12-31"
     return start, end
 
 
 def _windowed_observations(session: Session, metric_id: int, enacted: date, lag_months: int):
-    start, end = _obs_window(enacted, lag_months)
+    # Derive the pre-window from the metric's series kind so the original score and any
+    # reproduced re-run pull the exact same observation set (annual -> longer pre-window).
+    nsid = session.execute(
+        select(Metric.native_series_id).where(Metric.id == metric_id)
+    ).scalar_one_or_none()
+    start, end = _obs_window(enacted, lag_months, _pre_years_for(nsid))
     rows = session.execute(
         select(Observation.period, Observation.value).where(
             Observation.metric_id == metric_id,
@@ -901,16 +1004,13 @@ def _eu_donor_observations(action: Action) -> tuple[dict[str, list[tuple[str, ob
     prev = os.environ.get("DZ_HTTP_CACHE")
     os.environ["DZ_HTTP_CACHE"] = "1"
     try:
-        sy = spec.enacted_year - 3
+        nsid0 = state_series_id(spec.state_fips, spec.metric_kind)
+        sy = spec.enacted_year - _pre_years_for(nsid0)
         ey = spec.enacted_year + (spec.lag_window_months // 12) + 2
         for dfips in spec.donor_fips:
-            dfetch = bls_adapter.fetch(state_series_id(dfips, spec.metric_kind), start_year=sy, end_year=ey)
+            dfetch, pts = _fetch_state_series_points(state_series_id(dfips, spec.metric_kind), start_year=sy, end_year=ey)
             donor_source_urls.append(dfetch.source_url)
-            dseries = json.loads(dfetch.content)["Results"]["series"][0]
-            donor_observations[dfips] = [
-                (f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
-                for pt in dseries["data"] if pt["period"].startswith("M")
-            ]
+            donor_observations[dfips] = pts
     finally:
         if prev is None:
             os.environ.pop("DZ_HTTP_CACHE", None)
@@ -1789,10 +1889,14 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     This is the path that can legitimately clear the confidence gate and produce a
     composite, because a donor pool addresses the confounding a single series cannot.
     """
+    from degreezeor.ingestion.loader import ensure_census_source, ensure_eia_source
+
     ensure_bls_source(session)
-    # Higher is toward the stated goal for both kinds: more jobs (employment) or higher
-    # wages (average hourly earnings). sign_goal is fixed at pre-registration.
-    sign_goal = 1
+    kind = spec.metric_kind
+    descr = STATE_METRIC_KINDS.get(kind, STATE_METRIC_KINDS["employment"])
+    # sign_goal is fixed at pre-registration and depends on the metric: more jobs/wages/income
+    # is toward the goal (+1); less poverty/uninsured/CO2 is toward the goal (-1).
+    sign_goal = int(descr["sign"])
 
     # --- Tier-0 action provenance: fetch the official state source URL ---
     fetch = generic_url_adapter.fetch(spec.source_url, label=spec.key)
@@ -1823,8 +1927,13 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
         ensure_party_term(session, sponsor, spec.sponsor_party)
 
     # Treated-state outcome metric (get-or-create), per the policy's comparison-design kind.
-    kind = spec.metric_kind
-    descr = STATE_METRIC_KINDS.get(kind, STATE_METRIC_KINDS["employment"])
+    nsid = state_series_id(spec.state_fips, kind)
+    if nsid.startswith("CENSUS|"):
+        src_id = ensure_census_source(session).id
+    elif nsid.startswith("EIA|"):
+        src_id = ensure_eia_source(session).id
+    else:
+        src_id = session.execute(select(DataSource.id).where(DataSource.name == "BLS")).scalar_one()
     metric = session.execute(
         select(Metric).where(Metric.code == f"{descr['code']}_{spec.state_fips}")
     ).scalar_one_or_none()
@@ -1832,10 +1941,8 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
         metric = Metric(
             code=f"{descr['code']}_{spec.state_fips}",
             name=f"{spec.state_name} {descr['name']}",
-            unit=descr["unit"], direction_good="up",
-            source_id=session.execute(select(DataSource.id).where(DataSource.name == "BLS")).scalar_one(),
-            native_series_id=state_series_id(spec.state_fips, kind),
-            domain="Economics and Public Finance",
+            unit=str(descr["unit"]), direction_good=str(descr["direction_good"]),
+            source_id=src_id, native_series_id=nsid, domain=str(descr["domain"]),
         )
         session.add(metric)
         session.flush()
@@ -1874,7 +1981,8 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
         lag_window_months=spec.lag_window_months, masked_objective=mask_party_and_name(spec.objective_text)[:280],
     )
 
-    start_year = spec.enacted_year - 3
+    pre_years = _pre_years_for(nsid)
+    start_year = spec.enacted_year - pre_years
     end_year = spec.enacted_year + (spec.lag_window_months // 12) + 2
     load_observations(session, metric, start_year, end_year)
     observations = _windowed_observations(
@@ -1882,18 +1990,15 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     )
     event_period = f"{spec.enacted_year}-{spec.enacted_month:02d}-01"
 
-    # Donor (control) states: land for provenance + build in-memory series for the design.
+    # Donor (control) states: land for provenance + build in-memory series for the design,
+    # via the adapter that matches this metric kind (BLS / Census / EIA).
     donor_observations: dict[str, list[tuple[str, object]]] = {}
     donor_source_urls: list[str] = []
     for dfips in spec.donor_fips:
-        dfetch = bls_adapter.fetch(state_series_id(dfips, kind), start_year=start_year, end_year=end_year)
+        dfetch, pts = _fetch_state_series_points(state_series_id(dfips, kind), start_year, end_year)
         land(session, dfetch)
         donor_source_urls.append(dfetch.source_url)
-        dseries = json.loads(dfetch.content)["Results"]["series"][0]
-        donor_observations[dfips] = [
-            (f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
-            for pt in dseries["data"] if pt["period"].startswith("M")
-        ]
+        donor_observations[dfips] = pts
 
     comp = compute_outcome(
         observations, event_period=event_period, lag_window_months=spec.lag_window_months,

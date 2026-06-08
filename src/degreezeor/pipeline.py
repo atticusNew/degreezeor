@@ -357,6 +357,24 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         sponsor_name="Cory McCray", sponsor_party="D",
         metric_kind="wage",
     ),
+    # --- Poverty and income (metric_kind="poverty"): scored on the Census SAIPE state
+    # poverty rate, where a fall is toward the policy's own stated anti-poverty goal. ---
+    "CA-2015-SB80": StatePolicySpec(
+        key="CA-2015-SB80",
+        title="California Earned Income Tax Credit (CalEITC, SB 80)",
+        state_fips="06",
+        state_name="California",
+        # Large states without a comparable refundable state EITC enacted in the window.
+        donor_fips=["48", "12", "13", "37", "42"],  # TX FL GA NC PA
+        source_url="https://leginfo.legislature.ca.gov/faces/billNavClient.xhtml?bill_id=201520160SB80",
+        objective_text=(
+            "Create a refundable California Earned Income Tax Credit whose stated statutory purpose "
+            "is to reduce poverty among California's poorest working families and individuals."
+        ),
+        enacted_year=2015, enacted_month=6, lag_window_months=48,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="poverty",
+    ),
     # --- Energy and environment (metric_kind="energy"): scored on EIA state CO2 emissions,
     # where a fall is toward the policy's own stated decarbonization goal. ---
     "CA-2015-SB350": StatePolicySpec(

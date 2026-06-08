@@ -166,6 +166,39 @@ def test_noncovid_delivery_integrity_guards() -> None:
         os.environ.pop("DZ_HTTP_CACHE", None)
 
 
+def test_cares_delivery_credits_passage_voters_and_reproduces() -> None:
+    """A delivery-scored law credits the legislators who PASSED it (both chambers), and
+    the run — including that vote-based attribution — reproduces bit-for-bit."""
+    import os
+
+    from sqlalchemy import select
+
+    from degreezeor.core.models import AttributionWeight, ScoreRun, Vote
+    from degreezeor.pipeline import TARGET_SPECS, rescore_eu, score_target
+
+    os.environ["DZ_HTTP_CACHE"] = "1"
+    s = _fresh_session()
+    try:
+        r = score_target(s, TARGET_SPECS["CARES-DELIVERY"])
+        s.commit()
+        assert r.status == "scored"  # directly-attributable delivery clears the gate
+        chambers = set(s.execute(select(Vote.chamber).where(Vote.action_id == r.action_id)).scalars())
+        assert {"house", "senate"} <= chambers  # CARES: House 419-6 + Senate 96-0
+        decisive = s.execute(
+            select(AttributionWeight).where(
+                AttributionWeight.eu_id == r.eu_id, AttributionWeight.role == "decisive_vote"
+            )
+        ).scalars().all()
+        assert len(decisive) > 400  # hundreds of passing legislators now connected
+        run = s.execute(
+            select(ScoreRun).where(ScoreRun.eu_id == r.eu_id).order_by(ScoreRun.id.desc()).limit(1)
+        ).scalar_one()
+        assert run.reproducible_hash == rescore_eu(s, r.eu_id).reproducible_hash
+    finally:
+        s.close()
+        os.environ.pop("DZ_HTTP_CACHE", None)
+
+
 def test_budget_execution_scores_and_reproduces() -> None:
     from sqlalchemy import select
 

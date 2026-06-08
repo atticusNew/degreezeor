@@ -20,6 +20,8 @@
   --gate: #b07d2b;
 }
 * { box-sizing: border-box; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { * { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
 body {
   margin: 0;
   background: var(--bg);
@@ -44,7 +46,9 @@ header.top nav { display: flex; gap: 6px; flex-wrap: wrap; margin-left: 8px; }
 header.top nav a { color: var(--muted); font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; border: 1px solid transparent; }
 header.top nav a:hover { color: var(--text); background: var(--panel2); text-decoration: none; }
 header.top nav a.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-border); }
-.audit-badge { margin-left: auto; flex: 0 0 auto; white-space: nowrap; font-size: 12px; font-family: ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.hsearch { margin-left: auto; flex: 0 1 240px; min-width: 0; padding: 7px 12px; font-size: 13px; background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 999px; }
+.hsearch:focus { outline: none; border-color: var(--accent-border); }
+.audit-badge { flex: 0 0 auto; white-space: nowrap; font-size: 12px; font-family: ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .audit-badge.ok { color: var(--good); border-color: rgba(46,204,113,.4); background: rgba(46,204,113,.08); }
 .audit-badge.bad { color: var(--bad); border-color: rgba(231,76,60,.5); background: rgba(231,76,60,.1); }
 
@@ -53,9 +57,9 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
   flex-direction: column; gap: 14px; color: var(--muted); font-size: 13px; }
 .foot a { color: var(--muted); }
 .foot a:hover { color: var(--accent); }
-.foot-cats { display: flex; gap: 8px; width: 100%; }
-.foot-cats a { flex: 1 1 0; min-width: 0; text-align: center; padding: 8px 6px; border: 1px solid var(--line);
-  border-radius: 8px; background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.foot-cats { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; justify-content: center; }
+.foot-cats a { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
+  font-size: 12px; white-space: nowrap; }
 .foot-cats a:hover { border-color: var(--accent-border); color: var(--text); text-decoration: none; }
 .foot-meta { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; justify-content: center; }
 
@@ -264,6 +268,8 @@ button:disabled { opacity: .6; cursor: default; }
   header.top .tag { font-size: 12px; flex-basis: 100%; }
   /* Brand left, audit pill top-right on the first row; nav fills its own row below as a
      single clean row of evenly-sized pills (no wrap, no broken overflow scroll). */
+  .hsearch { display: none; }
+  header.top .audit-badge { margin-left: auto; }
   header.top nav { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: nowrap; gap: 4px; }
   header.top nav a { flex: 1 1 0; min-width: 0; text-align: center; padding: 6px 4px; font-size: 12px; white-space: nowrap; }
   .container { padding: 16px 14px 64px; }
@@ -280,9 +286,6 @@ button:disabled { opacity: .6; cursor: default; }
   .kpi .item { min-width: 100px; padding: 10px 12px; }
   .kpi .item .n { font-size: 19px; }
   .list-item { flex-wrap: wrap; gap: 8px; }
-  /* Footer category links wrap to two per row instead of cramming into one. */
-  .foot-cats { flex-wrap: wrap; }
-  .foot-cats a { flex: 1 1 40%; }
   /* Tighter landing hero on small screens. */
   .hero { padding: 24px 6px 18px; }
   .hero img.mark { width: 72px; height: 72px; }

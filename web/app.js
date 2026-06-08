@@ -1240,9 +1240,21 @@ function hideSplash() {
   if (s) { s.classList.add("fade"); setTimeout(() => s.remove(), 400); }
 }
 
+function wireHeaderSearch() {
+  const h = $("#hsearch");
+  if (!h) return;
+  h.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const q = h.value.trim();
+    h.value = "";
+    location.hash = "#/officials" + (q ? "?q=" + encodeURIComponent(q) : "");
+  });
+}
+
 window.addEventListener("hashchange", route);
 window.addEventListener("DOMContentLoaded", () => {
   showSplash();
+  wireHeaderSearch();
   renderFooterCategories();  // fire-and-forget; populates the footer category links once
   route().finally(hideSplash);
 });

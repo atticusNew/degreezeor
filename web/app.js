@@ -694,7 +694,7 @@ async function renderOfficials() {
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Officials"));
   app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
-    "Search a name, jump by letter, or browse the most active. Open anyone for their record."));
+    "Search a name, jump by letter, or filter by topic. Open anyone for their record."));
 
   if (!index.length) {
     app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
@@ -737,26 +737,45 @@ async function renderOfficials() {
   const countEl = el("div", { class: "muted mono", style: "margin:8px 0" });
   const listEl = el("div", {});
 
-  function matches() {
-    let rows = index;
-    if (state.q) rows = rows.filter((o) => matchOfficial(o._blob, state.q));
-    if (state.letter && state.letter !== "All") rows = rows.filter((o) => o._initial === state.letter);
-    if (state.cat) rows = rows.filter((o) => (o.categories || []).includes(state.cat));
-    if (state.scoredOnly) rows = rows.filter((o) => o.scored_actions > 0);
+  const blobOf = (o) => o._blob || `${formatName(o.name)} ${formatNameNatural(o.name)} ${o.name || ""}`.toLowerCase();
+  const initialOf = (o) => {
+    if (o._initial) return o._initial;
+    const c = (formatName(o.name)[0] || "#").toUpperCase();
+    return new RegExp("[A-Z]").test(c) ? c : "#";
+  };
+
+  // Topic / scored filters run server-side (reliable regardless of the index payload);
+  // name + letter then narrow that set client-side. Cached per filter combination.
+  let serverCache = { key: null, rows: null };
+  async function sourceRows() {
+    if (!state.cat && !state.scoredOnly) return index;
+    const key = `${state.cat}|${state.scoredOnly}`;
+    if (serverCache.key === key) return serverCache.rows;
+    const qs = new URLSearchParams();
+    if (state.cat) qs.set("category", state.cat);
+    if (state.scoredOnly) qs.set("scored_only", "true");
+    qs.set("min_involvement", "0.005");
+    const rows = await getJSON("/api/officials?" + qs.toString());
+    serverCache = { key, rows };
     return rows;
   }
 
-  function renderList() {
-    listEl.innerHTML = "";
+  async function renderList() {
     const browsing = !state.q && !state.letter && !state.cat && !state.scoredOnly;
     if (browsing) {
-      countEl.textContent = "";
+      listEl.innerHTML = ""; countEl.textContent = "";
       listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
         el("p", {}, "Search a name, jump by letter, or filter by topic to see officials."),
         el("p", { style: "font-size:13px" }, "There are ", el("b", {}, String(index.length)), " officials in the directory.")));
       return;
     }
-    const rows = matches();
+    listEl.innerHTML = ""; listEl.appendChild(spinner("Loading…")); countEl.textContent = "";
+    let rows;
+    try { rows = await sourceRows(); }
+    catch (e) { listEl.innerHTML = ""; listEl.appendChild(el("div", { class: "card", style: "color:var(--muted)" }, "Could not load officials. Retry in a moment.")); return; }
+    if (state.q) rows = rows.filter((o) => matchOfficial(blobOf(o), state.q));
+    if (state.letter && state.letter !== "All") rows = rows.filter((o) => initialOf(o) === state.letter);
+    listEl.innerHTML = "";
     countEl.textContent = `${rows.length} result(s)`;
     if (!rows.length) {
       listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
@@ -960,7 +979,7 @@ async function renderOfficialDetail(id) {
     return (b.date || "").localeCompare(a.date || "");
   });
   const listWrap = el("div", {});
-  const CAP = 15;
+  const CAP = 8;
   const head = actions.slice(0, CAP);
   for (const a of head) listWrap.appendChild(officialActionRow(a));
   if (actions.length > CAP) {

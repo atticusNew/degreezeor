@@ -320,6 +320,35 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         enacted_year=2011, enacted_month=5, lag_window_months=48,
         signer_name="Rick Snyder", signer_party="R",
     ),
+    "UT-2022-SB59": StatePolicySpec(
+        key="UT-2022-SB59",
+        title="Utah 2022 income tax cut (SB 59)",
+        state_fips="49",
+        state_name="Utah",
+        donor_fips=["16", "56", "32", "30", "35"],  # ID WY NV MT NM
+        source_url="https://le.utah.gov/~2022/bills/static/SB0059.html",
+        objective_text=(
+            "Cut the individual and corporate income tax rate (4.95% to 4.85%) to return money to "
+            "families and support the economy."
+        ),
+        enacted_year=2022, enacted_month=2, lag_window_months=36,
+        signer_name="Spencer Cox", signer_party="R",
+    ),
+    "KY-2022-HB8": StatePolicySpec(
+        key="KY-2022-HB8",
+        title="Kentucky 2022 income tax cut (HB 8)",
+        state_fips="21",
+        state_name="Kentucky",
+        donor_fips=["47", "54", "39", "29", "18"],  # TN WV OH MO IN
+        source_url="https://apps.legislature.ky.gov/record/22rs/hb8.html",
+        objective_text=(
+            "Cut the individual income tax rate (5% to 4.5%, with triggers toward elimination) to "
+            "grow Kentucky's economy and competitiveness."
+        ),
+        # Enacted over the governor's veto; credit goes to the bill's sponsor, not a signer.
+        enacted_year=2022, enacted_month=4, lag_window_months=36,
+        sponsor_name="Jason Petrie", sponsor_party="R",
+    ),
     "IA-2018-SF2417": StatePolicySpec(
         key="IA-2018-SF2417",
         title="Iowa 2018 income tax cut (SF 2417)",

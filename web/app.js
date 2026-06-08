@@ -224,16 +224,18 @@ function statusBadge(status) {
 async function renderList() {
   const app = $("#app");
   app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Actions"));
   app.appendChild(el("p", { class: "muted" },
-    "Each entry is an Evaluation Unit: an action measured against its own stated objective. " +
-    "The platform abstains (\"insufficient evidence\") rather than over-claim when a defensible " +
-    "baseline cannot separate the policy from concurrent shocks."));
+    "Each row is a public action — a law, executive order, rule, or budget — scored against the goal " +
+    "it set for itself. Click any to see the full breakdown and sources. When we can't separate the " +
+    "policy's effect from everything else happening at the time, we say \u201Cinsufficient evidence\u201D " +
+    "instead of guessing (never a low score)."));
   const units = await getJSON("/api/evaluation-units");
   for (const u of units) {
     app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/eu/${u.id}`; } },
       el("div", {},
         el("div", { class: "title" }, u.title),
-        el("div", { class: "muted mono" }, (u.public_law ? `Public Law ${u.public_law}` : `EU #${u.id}`))),
+        el("div", { class: "muted mono" }, (u.public_law ? `Public Law ${u.public_law}` : `Action #${u.id}`))),
       el("div", { style: "text-align:right" },
         statusBadge(u.status),
         el("div", { class: "muted", style: "margin-top:6px;font-size:12px" },
@@ -328,7 +330,7 @@ async function renderDetail(id) {
   const card = await getJSON(`/api/evaluation-units/${id}`);
   app.innerHTML = "";
 
-  app.appendChild(el("a", { class: "back", href: "#/actions" }, "← all evaluation units"));
+  app.appendChild(el("a", { class: "back", href: "#/actions" }, "← all actions"));
   app.appendChild(el("h2", { style: "margin:6px 0" }, card.action.title));
   app.appendChild(el("div", { class: "muted mono" },
     `${card.action.type.toUpperCase()} · ${card.action.public_law_number ? "Public Law " + card.action.public_law_number : ""} · ${card.action.domain || ""} · enacted ${card.action.enacted_date || "—"}`));

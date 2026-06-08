@@ -1689,6 +1689,55 @@ def batch_score_executive_orders(session: Session, limit: int = 25) -> list[Scor
     return results
 
 
+def backfill_eo_signers(session: Session, *, limit: int = 5000) -> int:
+    """Repair executive orders scored before their president's term was on record (e.g. EOs
+    signed after the last known term started): set the signer from the action date and
+    re-derive the (deterministic) attribution so the EO appears on that president's record.
+
+    The EO composite is signer-independent — only the official rollup changes — so this
+    produces exactly what a fresh scoring run would, without re-scoring or touching the audit
+    chain of scores. Idempotent: once a signer is set the EO is no longer selected."""
+    from degreezeor.core.reference import president_on
+
+    rows = session.execute(
+        select(ExecutiveOrder, Action)
+        .join(Action, Action.id == ExecutiveOrder.action_id)
+        .where(ExecutiveOrder.signing_official_id.is_(None), Action.action_date.is_not(None))
+        .limit(limit)
+    ).all()
+    fixed = 0
+    for eo, action in rows:
+        pres = president_on(session, action.action_date)
+        if pres is None:
+            continue
+        eo.signing_official_id = pres.id
+        for eu in session.execute(
+            select(EvaluationUnit).where(EvaluationUnit.action_id == action.id)
+        ).scalars().all():
+            # Only re-derive for FINALIZED EUs (those already carry attribution rows); leave
+            # insufficient/non-scoreable EUs untouched so nothing un-scored gains attribution.
+            if session.execute(
+                select(AttributionWeight.id).where(AttributionWeight.eu_id == eu.id).limit(1)
+            ).scalar() is None:
+                continue
+            actx = AttributionContext(
+                eu_id=eu.id, action_type=action.type, sponsor_official_id=None,
+                signer_official_id=pres.id, vote_margin=None, member_on_winning_side=None,
+            )
+            attributions = build_attribution(actx)
+            session.execute(sa_delete(AttributionWeight).where(AttributionWeight.eu_id == eu.id))
+            for a in attributions:
+                session.add(AttributionWeight(
+                    eu_id=eu.id, official_id=a.official_id, role=a.role,
+                    authority=q_score(a.authority), pivotality=q_score(a.pivotality),
+                    attribution=q_score(a.attribution), attr_ci_low=q_score(a.attr_ci_low),
+                    attr_ci_high=q_score(a.attr_ci_high), is_residual=a.is_residual,
+                ))
+        fixed += 1
+    session.flush()
+    return fixed
+
+
 def batch_score_regulations(session: Session, limit: int = 25) -> list[ScoreOutcome]:
     """Breadth: ingest + score recent final agency rules (Federal Register, keyless).
     Most land insufficient-evidence (a single federal series can't isolate one rule) —
@@ -2167,6 +2216,101 @@ def ingest_house_votes(
     return inserted
 
 
+def ingest_senate_votes(
+    session: Session, year: int, *, new_limit: int = 250, max_vote: int = 800,
+) -> int:
+    """Activity/record layer: every Senate recorded (roll-call) vote for a calendar year, as
+    Vote + VotePosition rows. Keyless (senate.gov); senators key on ``lis_member_id`` so we
+    resolve each to a Bioguide-keyed Official via the crosswalk. Idempotent on the roll-call
+    URL, resumable, capped per run, categorized via the referenced bill when in our record."""
+    import re
+
+    from degreezeor.categories import category_for
+    from degreezeor.core.models import Vote, VotePosition
+    from degreezeor.ingestion.adapters.congress_legislators import congress_legislators_adapter
+    from degreezeor.ingestion.adapters.senate import parse_senate_vote, senate_rollcall_adapter
+
+    congress = (year - 1789) // 2 + 1
+    sess = year - (1789 + 2 * (congress - 1)) + 1  # 1 = first (odd) year, 2 = second (even)
+    base = "https://www.senate.gov/legislative/LIS/roll_call_votes"
+    prefix = f"{base}/vote{congress}{sess}/vote_{congress}_{sess}_"
+    done: set[int] = set()
+    for (q,) in session.execute(select(Vote.question).where(Vote.question.like(prefix + "%"))).all():
+        m = re.search(r"_(\d+)\.xml", q or "")
+        if m:
+            done.add(int(m.group(1)))
+
+    bill_idx: dict[str, tuple[int, str | None]] = {}
+    for bn, aid, domain in session.execute(
+        select(Bill.bill_number, Bill.action_id, Action.domain)
+        .join(Action, Action.id == Bill.action_id)
+        .where(Bill.congress == congress)
+    ).all():
+        if bn:
+            bill_idx[bn] = (aid, domain)
+
+    lis_map = congress_legislators_adapter.lis_to_bioguide()
+    inserted = 0
+    misses = 0
+    for n in range(1, max_vote + 1):
+        if inserted >= new_limit:
+            break
+        if n in done:
+            continue
+        url = f"{prefix}{n:05d}.xml"
+        try:
+            vf = senate_rollcall_adapter.fetch(url)
+            sv = parse_senate_vote(vf.content)
+        except Exception:  # noqa: BLE001 - a missing vote (301/redirect) ends the session
+            misses += 1
+            if misses >= 2:
+                break
+            continue
+        if not sv.positions:
+            misses += 1
+            if misses >= 2:
+                break
+            continue
+        misses = 0
+        land(session, vf)
+        bn = _norm_legis_num(sv.document)
+        linked = bill_idx.get(bn) if bn else None
+        category = category_for(linked[1], "bill") if linked else None
+        vote = Vote(
+            action_id=linked[0] if linked else None, chamber="senate", question=url,
+            vote_date=sv.vote_date, yea=sv.yea, nay=sv.nay, present=sv.present,
+            not_voting=sv.not_voting, result=sv.result,
+            congress=sv.congress or congress, roll_call=sv.vote_number or n,
+            bill_number=bn, category=category,
+        )
+        session.add(vote)
+        session.flush()
+        seen_v: set[int] = set()
+        for mv in sv.positions:
+            bio = lis_map.get(mv.lis_member_id)
+            if not bio:
+                continue
+            official = session.execute(
+                select(Official).where(Official.bioguide_id == bio)
+            ).scalar_one_or_none()
+            name = " ".join(x for x in [mv.first_name, mv.last_name] if x).strip() or bio
+            if official is None:
+                official = Official(full_name=name, bioguide_id=bio)
+                session.add(official)
+                session.flush()
+            elif official.full_name and (
+                len(official.full_name.split()) <= 1 or "(" in official.full_name
+            ):
+                official.full_name = name
+            if official.id in seen_v:
+                continue
+            seen_v.add(official.id)
+            session.add(VotePosition(vote_id=vote.id, official_id=official.id, position=mv.position))
+        inserted += 1
+    session.flush()
+    return inserted
+
+
 def refresh_all(
     session: Session, *, budget_fiscal_year: int = 2024, congress: int = 117,
     law_limit: int = 25, eo_limit: int = 15,
@@ -2218,19 +2362,20 @@ def refresh_all(
         return total
     _stage("member_bills", _member_bills)
 
-    # House roll-call votes: how members voted, recency-first, capped per run. Keyless.
-    def _house_votes() -> int:
+    # Roll-call votes: how members voted, recency-first, capped per run. Keyless.
+    def _chamber_votes(fn, label: str) -> int:
         total = 0
         this_year = date.today().year
         for y in range(this_year, this_year - 4, -1):
             try:
-                total += ingest_house_votes(session, y, new_limit=200)
-                _safe_commit(f"house votes {y}")
+                total += fn(session, y, new_limit=200)
+                _safe_commit(f"{label} votes {y}")
             except Exception as exc:  # noqa: BLE001 - never fatal
-                log.warning("house-vote ingestion for %s skipped: %s", y, exc)
+                log.warning("%s-vote ingestion for %s skipped: %s", label, y, exc)
                 _safe_rollback()
         return total
-    _stage("house_votes", _house_votes)
+    _stage("house_votes", lambda: _chamber_votes(ingest_house_votes, "house"))
+    _stage("senate_votes", lambda: _chamber_votes(ingest_senate_votes, "senate"))
 
     _stage("defc_delivery", lambda: len(ingest_defc_delivery(session)))
 
@@ -2259,6 +2404,7 @@ def refresh_all(
                      label=f"curated target {key}")))
     _stage("laws", lambda: len(batch_score_laws(session, congress, limit=law_limit)))
     _stage("executive_orders", lambda: len(batch_score_executive_orders(session, limit=eo_limit)))
+    _stage("eo_signers_backfilled", lambda: backfill_eo_signers(session))
     _stage("regulations", lambda: len(batch_score_regulations(session, limit=eo_limit)))
 
     # Best-effort name enrichment (bounded by Congress.gov throughput).

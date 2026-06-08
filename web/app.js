@@ -561,6 +561,51 @@ async function renderCoverage() {
   app.appendChild(el("p", { class: "muted", style: "font-size:12px" }, c.note));
 }
 
+async function renderIntegrity() {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.appendChild(el("p", { class: "muted" },
+    "Integrity-at-scale monitoring. Scoring is provably party-blind (the formula never reads " +
+    "party); this page reads party for AUDIT ONLY, to watch the distribution of scored outcomes. " +
+    "A flagged gap triggers a HUMAN methodological review of metric/baseline choices — never an " +
+    "automated correction, and never a change to any individual score."));
+  const r = await getJSON("/api/integrity/party-symmetry");
+
+  const banner = el("div", { class: "gate-banner " + (r.review_required ? "gated" : "scored") },
+    r.review_required
+      ? "REVIEW FLAGGED — a systematic gap exceeded a review threshold (see reasons below)."
+      : "No systematic gap exceeds the review thresholds on the current scored set.");
+  app.appendChild(banner);
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "Party-level distribution of scored outcomes (audit only)"),
+    el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", {}, "party"), el("th", { class: "right" }, "attributed EUs"),
+        el("th", { class: "right" }, "scored EUs"), el("th", { class: "right" }, "scored share"),
+        el("th", { class: "right" }, "mean composite"), el("th", { class: "right" }, "mean confidence"))),
+      el("tbody", {}, ...r.parties.map((p) =>
+        el("tr", {},
+          el("td", {}, p.abbrev),
+          el("td", { class: "right mono" }, String(p.attributed_eus)),
+          el("td", { class: "right mono" }, String(p.scored_eus)),
+          el("td", { class: "right mono" }, (p.scored_share * 100).toFixed(0) + "%"),
+          el("td", { class: "right mono" }, p.mean_composite !== null ? fmt(p.mean_composite, 1) : "—"),
+          el("td", { class: "right mono" }, p.mean_confidence !== null ? (p.mean_confidence * 100).toFixed(0) + "%" : "—")))))));
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "Gap checks (vs. review thresholds)"),
+    el("div", { class: "row" }, el("span", { class: "k" }, "mean-composite gap"),
+      el("span", { class: "v mono" }, (r.composite_gap !== null ? fmt(r.composite_gap, 1) : "n/a (need ≥2 comparable parties)") + ` (threshold ${fmt(r.composite_gap_threshold, 0)})`)),
+    el("div", { class: "row" }, el("span", { class: "k" }, "scored-share gap"),
+      el("span", { class: "v mono" }, (r.scored_share_gap !== null ? (r.scored_share_gap * 100).toFixed(0) + "%" : "n/a") + ` (threshold ${(r.scored_share_gap_threshold * 100).toFixed(0)}%)`)),
+    ...(r.review_reasons.length
+      ? r.review_reasons.map((reason) => el("div", { class: "hint" }, reason))
+      : [el("div", { class: "muted", style: "font-size:13px;margin-top:8px" }, "No review reasons flagged.")])));
+
+  app.appendChild(el("p", { class: "muted", style: "font-size:12px" }, r.disclaimer));
+}
+
 async function route() {
   await renderAuditStatus();
   const eu = location.hash.match(/#\/eu\/(\d+)/);
@@ -571,6 +616,7 @@ async function route() {
     else if (location.hash.startsWith("#/officials")) await renderOfficials();
     else if (location.hash.startsWith("#/graph")) await renderGraph();
     else if (location.hash.startsWith("#/coverage")) await renderCoverage();
+    else if (location.hash.startsWith("#/integrity")) await renderIntegrity();
     else await renderList();
   } catch (e) {
     $("#app").innerHTML = `<div class="card">Error: ${e.message}. Is the API running?</div>`;

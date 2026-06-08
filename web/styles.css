@@ -31,6 +31,21 @@ header.top .brand:hover { text-decoration: none; }
 header.top .logo { width: 28px; height: 28px; border-radius: 6px; display: block; }
 header.top h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
 header.top .tag { color: var(--muted); font-size: 13px; }
+header.top nav { display: flex; gap: 6px; flex-wrap: wrap; margin-left: 8px; }
+header.top nav a { color: var(--muted); font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; border: 1px solid transparent; }
+header.top nav a:hover { color: var(--text); background: var(--panel2); text-decoration: none; }
+header.top nav a.active { color: var(--accent); background: rgba(79,156,249,.12); border-color: rgba(79,156,249,.4); }
+.audit-badge { margin-left: auto; font-size: 12px; font-family: ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.audit-badge.ok { color: var(--good); border-color: rgba(46,204,113,.4); background: rgba(46,204,113,.08); }
+.audit-badge.bad { color: var(--bad); border-color: rgba(231,76,60,.5); background: rgba(231,76,60,.1); }
+
+/* Boot splash / title screen shown while the app (and a cold-started server) come up. */
+.splash { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 18px; z-index: 200; transition: opacity .35s; }
+.splash img { width: 110px; height: 110px; border-radius: 22px; }
+.splash .title { font-size: 30px; font-weight: 800; letter-spacing: .5px; }
+.splash .sub { color: var(--muted); font-size: 14px; }
+.splash.fade { opacity: 0; pointer-events: none; }
 .container { max-width: 1080px; margin: 0 auto; padding: 24px 28px 80px; }
 .muted { color: var(--muted); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }

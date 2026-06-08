@@ -21,7 +21,7 @@ const el = (tag, attrs = {}, ...kids) => {
   }
   return n;
 };
-const fmt = (x, d = 2) => (x === null || x === undefined ? "—" : Number(x).toFixed(d));
+const fmt = (x, d = 2) => (x === null || x === undefined ? "n/a" : Number(x).toFixed(d));
 
 // Build a <select> from [[value, label], ...] with the given value pre-selected.
 const selectEl = (options, selected = "") => {
@@ -38,22 +38,20 @@ const selectEl = (options, selected = "") => {
 // Plain-language explainers, surfaced as inline "i" tooltips next to key terms.
 const TIPS = {
   composite:
-    "0–100: how much an action met ITS OWN stated objective, scaled by our confidence in " +
-    "the evidence (measured outcome vs. a baseline, plus how durable it was). For an official, " +
-    "it's the attribution-weighted average over their SCORED actions. Not a good/bad rating.",
+    "0 to 100: how fully an action met the goal it set for itself, scaled by our confidence in the " +
+    "evidence. For an official, the average over their scored actions, weighted by their share of credit.",
   attribution:
-    "The share of an action's outcome credibly assignable to this official — from their role " +
-    "(sponsor, signer, decisive vote) and how pivotal they were — always leaving a large " +
-    "'unattributable residual' (most of a macro outcome isn't any one person's doing).",
+    "The share of an outcome credited to this official, based on their role and how pivotal they were. " +
+    "Most of any outcome stays unattributed to any single person.",
   coverage:
-    "Of this official's attributable actions, the fraction that were actually scoreable. The " +
-    "rest are 'insufficient evidence' (we can't credibly isolate the effect) — never counted as a low score.",
+    "Of the actions tied to this official, the share we could actually score. The rest read " +
+    "\u201Cinsufficient evidence\u201D, meaning we could not isolate the effect.",
   confidence:
-    "How sure we are the result is real: combines causal-design strength, data quality, attribution " +
-    "tightness, and robustness. Below the publish threshold, the composite is withheld.",
+    "How sure we are the result is real, from the strength of the method, data, and attribution. " +
+    "When confidence is low, we withhold the score.",
   insufficient:
-    "We could not credibly separate the policy's effect from everything else happening at the time, " +
-    "so we report no score. This is honest abstention — NOT a low or bad score.",
+    "We could not separate this policy's effect from everything else happening at the time, so we " +
+    "report no score rather than guess.",
 };
 const tip = (key) => el("span", {
   class: "tip", tabindex: "0", role: "img",
@@ -115,7 +113,7 @@ async function disputesCard(euId) {
   const card = el("div", { class: "card" });
   card.appendChild(el("h3", {}, "Challenge / appeal this score"));
   card.appendChild(el("p", { class: "muted", style: "font-size:13px" },
-    "Anyone may dispute a score. Resolution is not editorial — it triggers an independent, " +
+    "Anyone may dispute a score. Resolution is not editorial. It triggers an independent, " +
     "deterministic re-run and publishes whether the score changed (a public diff). Every step " +
     "is recorded on the append-only audit chain."));
 
@@ -187,34 +185,43 @@ function spinner(msg = "Loading…") {
 async function renderLanding() {
   const app = $("#app");
   app.innerHTML = "";
-  const hero = el("div", { class: "hero" },
+  app.appendChild(el("div", { class: "hero" },
     el("img", { class: "mark", src: "/logo.png", alt: "DegreeZero" }),
     el("h1", {}, "DegreeZero"),
     el("div", { class: "sub" },
-      "Did a public action meet its OWN stated objective? We measure outcomes against the goal " +
-      "the policy set for itself — source-anchored, party-blind, and fully auditable. No ideology " +
-      "score. No good/bad ranking. When the evidence can't tell, we say so."),
+      "Did a public action meet the goal it set for itself? We measure outcomes against each " +
+      "policy's own stated objective, with sources you can check and confidence we report plainly."),
     el("div", { class: "ctas" },
       el("a", { class: "cta", href: "#/officials" }, "Explore officials"),
       el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"),
-      el("a", { class: "cta ghost", href: "#/about" }, "How it works")),
-    el("div", { class: "pillars" },
-      el("div", { class: "pillar" }, el("b", {}, "Its own yardstick"),
-        el("p", {}, "Each action is judged against the objective it stated for itself — the same neutral question for every party.")),
-      el("div", { class: "pillar" }, el("b", {}, "Credit where due"),
-        el("p", {}, "Outcomes are attributed by each official's causal share, always leaving a large unattributable residual.")),
-      el("div", { class: "pillar" }, el("b", {}, "Honest about doubt"),
-        el("p", {}, "When a result can't be separated from the noise, it reads \u201Cinsufficient evidence\u201D \u2014 never a low score."))));
-  app.appendChild(hero);
+      el("a", { class: "cta ghost", href: "#/about" }, "How it works"))));
+}
+
+const NAV = [["#/officials", "Officials"], ["#/actions", "Actions"], ["#/coverage", "Coverage"],
+             ["#/integrity", "Integrity"], ["#/about", "About"]];
+function renderNav() {
+  const nav = $("#nav");
+  if (!nav) return;
+  nav.innerHTML = "";
+  const h = location.hash || "";
+  for (const [href, label] of NAV) {
+    const base = href.slice(1);  // e.g. "/officials"
+    const active = h.startsWith("#" + base) || h.startsWith(href);
+    nav.appendChild(el("a", { href, class: active ? "active" : "" }, label));
+  }
 }
 
 async function renderAuditStatus() {
+  const node = $("#audit-status");
+  if (!node) return;
   try {
     const a = await getJSON("/api/audit/verify");
-    const node = $("#audit-status");
-    node.textContent = a.audit_chain_ok ? "● audit chain verified" : "● AUDIT CHAIN BROKEN";
-    node.className = "mono " + (a.audit_chain_ok ? "audit-ok" : "audit-bad");
-  } catch (e) { /* ignore */ }
+    node.textContent = a.audit_chain_ok ? "✓ Audit chain verified" : "✕ Audit chain broken";
+    node.className = "audit-badge " + (a.audit_chain_ok ? "ok" : "bad");
+  } catch (e) {
+    node.textContent = "";
+    node.className = "audit-badge";
+  }
 }
 
 function statusBadge(status) {
@@ -226,10 +233,10 @@ async function renderList() {
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Actions"));
   app.appendChild(el("p", { class: "muted" },
-    "Each row is a public action — a law, executive order, rule, or budget — scored against the goal " +
-    "it set for itself. Click any to see the full breakdown and sources. When we can't separate the " +
-    "policy's effect from everything else happening at the time, we say \u201Cinsufficient evidence\u201D " +
-    "instead of guessing (never a low score)."));
+    "Each row is a public action (a law, executive order, rule, or budget) scored against the goal it " +
+    "set for itself. Click any to see the full breakdown and sources. When we cannot separate the " +
+    "policy's effect from everything else at the time, we mark it \u201Cinsufficient evidence\u201D " +
+    "rather than guess."));
   const units = await getJSON("/api/evaluation-units");
   for (const u of units) {
     app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/eu/${u.id}`; } },
@@ -239,7 +246,7 @@ async function renderList() {
       el("div", { style: "text-align:right" },
         statusBadge(u.status),
         el("div", { class: "muted", style: "margin-top:6px;font-size:12px" },
-          `confidence ${u.confidence === null ? "—" : (u.confidence * 100).toFixed(1) + "%"}`,
+          `confidence ${u.confidence === null ? "n/a" : (u.confidence * 100).toFixed(1) + "%"}`,
           u.composite !== null ? ` · composite ${fmt(u.composite, 1)}` : " · composite suppressed"))));
   }
 }
@@ -256,19 +263,18 @@ function gateBanner(card) {
   const s = card.score;
   if (!s) {
     return el("div", { class: "gate-banner none" },
-      `Non-scoreable: ${card.evaluation_unit.non_scoreable_reason || "no operational metric / outcome."} ` +
-      "This is reported as absence of evidence — never as a low score.");
+      `Not scoreable: ${card.evaluation_unit.non_scoreable_reason || "no operational metric or outcome."} ` +
+      "This is reported as absence of evidence, not as a low score.");
   }
   if (s.gated) {
     return el("div", { class: "gate-banner gated" },
-      `INSUFFICIENT EVIDENCE — confidence ${(s.confidence * 100).toFixed(1)}% is below the ` +
-      `${(s.publish_threshold * 100).toFixed(0)}% publish threshold. No composite verdict is issued. ` +
-      "The full decomposition below is still shown for transparency.",
+      `Insufficient evidence. Confidence ${(s.confidence * 100).toFixed(1)}% is below the ` +
+      `${(s.publish_threshold * 100).toFixed(0)}% threshold, so no score is issued. ` +
+      "The full breakdown below is still shown.",
       tip("insufficient"));
   }
   return el("div", { class: "gate-banner scored" },
-    `Composite ${fmt(s.composite, 1)}/100 (confidence-scaled, factual components only). ` +
-    `Confidence ${(s.confidence * 100).toFixed(1)}%.`,
+    `Composite ${fmt(s.composite, 1)} of 100, scaled by ${(s.confidence * 100).toFixed(1)}% confidence.`,
     tip("composite"));
 }
 
@@ -293,7 +299,7 @@ function valueWeightPanel(card) {
     } else {
       mark.className = "watermark";
       mark.style.fontSize = "12px";
-      mark.textContent = "⚠ CUSTOM VALUE WEIGHTS — value-laden, not the neutral default.";
+      mark.textContent = "Custom value weights applied (not the neutral default).";
     }
     const total = present.reduce((a, n) => a + weights[n], 0) || 1;
     const weighted = present.reduce((a, n) => a + (weights[n] / total) * comps[n], 0);
@@ -302,7 +308,7 @@ function valueWeightPanel(card) {
       result.textContent = "Non-scoreable: no composite can be formed.";
     } else if (gated) {
       result.innerHTML = `Composite still <b>suppressed</b> (insufficient evidence) regardless of weights. ` +
-        `Indicative weighted mean (NOT published): ${weighted.toFixed(1)}`;
+        `Indicative weighted mean (not published): ${weighted.toFixed(1)}`;
     } else {
       result.innerHTML = `Custom-weighted composite: <b>${(card.score.confidence * weighted).toFixed(1)}</b> ` +
         `(confidence-scaled).`;
@@ -333,7 +339,9 @@ async function renderDetail(id) {
   app.appendChild(el("a", { class: "back", href: "#/actions" }, "← all actions"));
   app.appendChild(el("h2", { style: "margin:6px 0" }, card.action.title));
   app.appendChild(el("div", { class: "muted mono" },
-    `${card.action.type.toUpperCase()} · ${card.action.public_law_number ? "Public Law " + card.action.public_law_number : ""} · ${card.action.domain || ""} · enacted ${card.action.enacted_date || "—"}`));
+    [card.action.type, card.action.public_law_number ? "Public Law " + card.action.public_law_number : null,
+     card.action.domain, card.action.enacted_date ? "enacted " + card.action.enacted_date : null]
+      .filter(Boolean).join(" · ")));
   app.appendChild(el("div", { style: "margin:10px 0" }, statusBadge(card.evaluation_unit.status)));
 
   app.appendChild(gateBanner(card));
@@ -346,14 +354,14 @@ async function renderDetail(id) {
   // Components vector
   if (card.components.length) {
     app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Decomposed score vector (default output — not a single verdict)", tip("composite")),
+      el("h3", {}, "Score breakdown", tip("composite")),
       ...card.components.map(componentBar)));
   }
 
   // Objective + metric
   if (card.objective) {
     app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Stated objective (the yardstick — the action's OWN goal)"),
+      el("h3", {}, "Stated objective (the goal this action set for itself)"),
       el("div", { class: "row" }, el("span", { class: "k" }, "objective level"), el("span", { class: "v" }, card.objective.level)),
       el("p", { class: "muted", style: "max-height:160px;overflow:auto" }, card.objective.text.slice(0, 1200) + (card.objective.text.length > 1200 ? "…" : "")),
       el("div", { class: "src" }, el("a", { href: card.objective.source_url, target: "_blank" }, "official source ↗")),
@@ -390,7 +398,7 @@ async function renderDetail(id) {
         el("tbody", {}, ...card.attribution.map((a) =>
           el("tr", {},
             el("td", {}, a.is_residual ? el("span", { class: "pill" }, a.role.replaceAll("_", " ")) : a.role),
-            el("td", {}, a.official_name || "—"),
+            el("td", {}, a.official_name || "n/a"),
             el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
             el("td", { class: "right mono" }, `[${(a.ci_low * 100).toFixed(0)}, ${(a.ci_high * 100).toFixed(0)}]%`)))))));
   }
@@ -420,11 +428,11 @@ async function renderDetail(id) {
   // Reproducibility + pre-registration
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "Reproducibility & pre-registration (audit this)"),
-    el("div", { class: "row" }, el("span", { class: "k" }, "pre-registration hash (committed before outcomes fetched)"), el("span", { class: "v mono" }, (card.evaluation_unit.prereg_hash || "—").slice(0, 24) + "…")),
-    el("div", { class: "row" }, el("span", { class: "k" }, "pre-registered at"), el("span", { class: "v mono" }, card.evaluation_unit.prereg_at || "—")),
-    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "reproducible run hash"), el("span", { class: "v mono" }, (card.run.reproducible_hash || "—").slice(0, 24) + "…")) : null,
+    el("div", { class: "row" }, el("span", { class: "k" }, "pre-registration hash (committed before outcomes fetched)"), el("span", { class: "v mono" }, (card.evaluation_unit.prereg_hash || "n/a").slice(0, 24) + "…")),
+    el("div", { class: "row" }, el("span", { class: "k" }, "pre-registered at"), el("span", { class: "v mono" }, card.evaluation_unit.prereg_at || "n/a")),
+    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "reproducible run hash"), el("span", { class: "v mono" }, (card.run.reproducible_hash || "n/a").slice(0, 24) + "…")) : null,
     card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "data snapshot id"), el("span", { class: "v mono" }, card.run.data_snapshot_id.slice(0, 24) + "…")) : null,
-    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "methodology version · seed · git"), el("span", { class: "v mono" }, `${card.run.methodology_version} · ${card.run.seed} · ${(card.run.code_git_sha || "—").slice(0, 8)}`)) : null));
+    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "methodology version · seed · git"), el("span", { class: "v mono" }, `${card.run.methodology_version} · ${card.run.seed} · ${(card.run.code_git_sha || "n/a").slice(0, 8)}`)) : null));
 
   // Source trail
   app.appendChild(el("div", { class: "card" },
@@ -442,16 +450,11 @@ async function renderOfficials() {
   const app = $("#app");
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Officials"));
-  // Framing banner — make the (non-ideological, non-leaderboard) meaning unmissable.
-  app.appendChild(el("div", { class: "gate-banner none" },
-    "This measures whether an official's OWN actions met their OWN stated objectives — weighted " +
-    "by their causal share, shown only with coverage and confidence. It is NOT a good/bad rating, " +
-    "an ideology score, or a leaderboard. Most actions can't be causally isolated and honestly read " +
-    "\u201Cinsufficient evidence\u201D (never a low score)."));
-  // One-line legend with inline explainers for the two key numbers.
-  app.appendChild(el("div", { class: "muted", style: "font-size:13px;margin:4px 0 8px" },
-    "Each official shows ", el("b", {}, "composite"), tip("composite"),
-    " and ", el("b", {}, "coverage"), tip("coverage"), "."));
+  // Short, neutral framing; the depth lives in About and the per-official drill-down.
+  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 6px" },
+    "How well an official's actions met the goals those actions set, weighted by their share of credit ",
+    tip("composite"),
+    ". Shown with coverage ", tip("coverage"), ". Search or filter to begin."));
 
   // Search/filter panel — labels left, inputs right.
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
@@ -494,6 +497,17 @@ async function renderOfficials() {
       el("button", { onclick: apply }, "Search"),
       el("a", { class: "cta ghost", href: "#/officials", style: "padding:8px 14px;border-radius:6px" }, "Clear"))));
 
+  // Do not list everyone by default. Show results only once a search or filter is applied.
+  const hasQuery = ["q", "party", "action_type", "scored_only"].some((k) => params.get(k));
+  if (!hasQuery) {
+    app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+      el("p", {}, "Search by name, or pick a party or action type, to see officials."),
+      el("p", { style: "font-size:13px" },
+        "Tip: try ", el("a", { href: "#/officials?scored_only=1" }, "officials with a scored action"),
+        " to see who has a result.")));
+    return;
+  }
+
   const qs = new URLSearchParams();
   if (params.get("q")) qs.set("q", params.get("q"));
   if (params.get("party")) qs.set("party", params.get("party"));
@@ -503,13 +517,13 @@ async function renderOfficials() {
   if (params.get("all") !== "1") qs.set("min_involvement", "0.005");
   const officials = await getJSON("/api/officials" + (qs.toString() ? "?" + qs.toString() : ""));
   app.appendChild(el("div", { class: "muted mono", style: "margin-bottom:8px" },
-    `${officials.length} officials` + (params.get("all") === "1" ? " (incl. negligible-role)" : " (meaningful role; toggle 'show all')")));
+    `${officials.length} result(s)` + (params.get("all") === "1" ? ", including negligible-role ties" : "")));
   for (const o of officials) {
     const scoredText = o.composite !== null
       ? `composite ${fmt(o.composite, 1)} · confidence ${(o.confidence * 100).toFixed(0)}%`
       : "insufficient evidence";
     const meta = `${o.party ? o.party + " · " : ""}${o.scored_actions}/${o.total_actions} scored · ` +
-      `coverage ${(o.coverage * 100).toFixed(0)}% · involvement ${(o.involvement * 100).toFixed(1)}%`;
+      `coverage ${(o.coverage * 100).toFixed(0)}% · role share ${(o.involvement * 100).toFixed(1)}%`;
     app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
       el("div", {}, el("div", { class: "title" }, o.name || `Official #${o.id}`),
         el("div", { class: "muted mono" }, meta)),
@@ -529,19 +543,19 @@ async function renderOfficialDetail(id) {
   const r = card.rollup;
   const o = card.official;
   const scored = r.composite !== null;
-  const pct = (x) => (x === null || x === undefined ? "—" : (x * 100).toFixed(0) + "%");
+  const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(0) + "%");
   const plain = scored
-    ? `Of the ${r.scored_actions} of ${o.name}'s ${r.total_actions} attributable action(s) we could ` +
-      `credibly score, their own stated objectives were met to ${fmt(r.composite, 1)} out of 100 ` +
-      `(confidence-weighted). This reflects only scoreable actions — not a good/bad rating.`
-    : `None of ${o.name}'s ${r.total_actions} attributable action(s) could be causally isolated yet, ` +
-      `so we report no score. That's "insufficient evidence" — not a low or bad score.`;
+    ? `Across the ${r.scored_actions} of ${o.name}'s ${r.total_actions} attributable action(s) we could ` +
+      `score, the goals those actions set were met to ${fmt(r.composite, 1)} out of 100, weighted by confidence. ` +
+      `This reflects only the actions we could score.`
+    : `None of ${o.name}'s ${r.total_actions} attributable action(s) could be isolated yet, so we ` +
+      `report no score. We mark this "insufficient evidence" rather than guess.`;
 
   // Headline: name + big composite + plain-language summary + secondary chips.
   app.appendChild(el("div", { class: "headline" },
     el("p", { class: "name" }, o.name),
     el("div", { class: "submeta" },
-      [o.party ? `Party ${o.party}` : null, o.bioguide_id ? `Bioguide ${o.bioguide_id}` : null].filter(Boolean).join(" · ") || "—"),
+      [o.party ? `Party ${o.party}` : null, o.bioguide_id ? `Bioguide ${o.bioguide_id}` : null].filter(Boolean).join(" · ") || "n/a"),
     el("div", { class: "big" },
       scored
         ? el("span", { class: "bignum scored" }, fmt(r.composite, 1))
@@ -551,7 +565,7 @@ async function renderOfficialDetail(id) {
     el("p", { class: "plain" }, plain),
     el("div", { class: "chips" },
       el("span", { class: "chip" }, "coverage ", el("b", {}, pct(r.coverage)), tip("coverage")),
-      el("span", { class: "chip" }, "confidence ", el("b", {}, r.confidence !== null ? pct(r.confidence) : "—"), tip("confidence")),
+      el("span", { class: "chip" }, "confidence ", el("b", {}, r.confidence !== null ? pct(r.confidence) : "n/a"), tip("confidence")),
       el("span", { class: "chip" }, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`))),
     el("div", { style: "margin-top:12px" },
       el("a", { href: "#", onclick: (e) => {
@@ -578,7 +592,7 @@ async function renderOfficialDetail(id) {
           el("td", {}, a.role),
           el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
           el("td", {}, statusBadge(a.status || "pending")),
-          el("td", { class: "right mono" }, a.composite !== null ? fmt(a.composite, 1) : "—")))))));
+          el("td", { class: "right mono" }, a.composite !== null ? fmt(a.composite, 1) : "n/a")))))));
 }
 
 const NODE_COLORS = { official: "#4f9cf9", action: "#2ecc71", jurisdiction: "#f1c40f", metric: "#a06fd0" };
@@ -680,10 +694,11 @@ async function renderCoverage() {
   const app = $("#app");
   app.innerHTML = "";
   const c = await getJSON("/api/coverage");
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Coverage"));
   app.appendChild(el("p", { class: "muted" },
-    "Complete visibility: every action the platform has considered, including those it could " +
-    "not score. \u201CInsufficient evidence\u201D is honest abstention — not a low score — and the " +
-    "scored subset is not a complete or representative record of any official."));
+    "Every action the platform has considered, including those it could not score. " +
+    "\u201CInsufficient evidence\u201D is honest abstention, not a low score. The scored subset is not " +
+    "a complete or representative record of any official."));
   app.appendChild(el("div", { class: "kpi" },
     el("div", { class: "item" }, el("div", { class: "n" }, String(c.total_evaluation_units)), el("div", { class: "l" }, "actions considered")),
     el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--good)" }, String(c.scored)), el("div", { class: "l" }, "scored")),
@@ -715,33 +730,33 @@ async function renderAbout() {
   let m = {};
   try { m = await getJSON("/api/methodology"); } catch (e) { /* fall back to static copy */ }
 
-  app.appendChild(el("h2", { style: "margin:6px 0" }, "What this is — and what it is not"));
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "What this is, and what it is not"));
 
   // The neutral framing, in plain language (the credibility spine of the platform).
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "The one question it answers"),
     el("p", { class: "narrative" },
-      "For each public action, degreezeor asks a single factual question: did the measurable " +
-      "outcome tied to the action\u2019s OWN stated objective move \u2014 relative to a defensible " +
-      "baseline \u2014 and how much of that movement is credibly attributable to this official, with " +
-      "what confidence? Every number links back to an official government source."),
+      "For each public action, DegreeZero asks one factual question: did the measurable outcome " +
+      "tied to the action's own stated objective move, relative to a defensible baseline, and how " +
+      "much of that movement is credibly attributable to this official, with what confidence? " +
+      "Every number links back to an official government source."),
     el("p", { class: "muted", style: "font-size:13px" },
-      "The yardstick is the policy\u2019s own stated goal (statutory purpose / official summary / " +
-      "its own committed target). That makes the question party-symmetric: a jobs bill and a tax " +
-      "cut are each asked the same neutral thing.")));
+      "The yardstick is the policy's own stated goal (statutory purpose, official summary, or its " +
+      "own committed target). That makes the question party-symmetric: a jobs bill and a tax cut " +
+      "are each asked the same neutral thing.")));
 
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "What it deliberately does NOT do"),
+    el("h3", {}, "What it deliberately avoids"),
     el("ul", { style: "line-height:1.7" },
-      el("li", {}, el("b", {}, "No default \u201Cgood/bad politician\u201D number."), " A single composite " +
-        "requires a hidden value function (weighing liberty vs. equality vs. growth\u2026) \u2014 i.e. an " +
-        "ideology. The default output is a decomposed, source-linked vector; a composite is opt-in, " +
-        "value-laden, and shown only with a watermark."),
-      el("li", {}, el("b", {}, "It is not an ideology scorer, fact-checker, or pundit."), " No " +
-        "left/right axis, no editorial \u201Cmisleading\u201D labels \u2014 only numbers, intervals, and sources."),
-      el("li", {}, el("b", {}, "\u201CInsufficient evidence\u201D is never a low score."), " When a " +
-        "defensible baseline cannot separate the policy from concurrent shocks, the composite is " +
-        "suppressed and the unit is marked insufficient evidence \u2014 honest abstention, not a verdict."))));
+      el("li", {}, el("b", {}, "No default \u201Cgood or bad\u201D number. "),
+        "A single composite would require a hidden value function (weighing liberty, equality, " +
+        "growth, and so on), which is an ideology. The default output is a decomposed, " +
+        "source-linked vector; a composite is opt-in, value-laden, and shown only with a watermark."),
+      el("li", {}, el("b", {}, "Not an ideology scorer, fact-checker, or pundit. "),
+        "No left/right axis, no editorial labels, only numbers, intervals, and sources."),
+      el("li", {}, el("b", {}, "\u201CInsufficient evidence\u201D is never a low score. "),
+        "When a defensible baseline cannot separate the policy from other forces, the composite is " +
+        "withheld and the action is marked insufficient evidence, which is honest abstention."))));
 
   if (m.philosophy) {
     app.appendChild(el("div", { class: "card" },
@@ -761,26 +776,26 @@ async function renderAbout() {
     app.appendChild(el("div", { class: "card" },
       el("h3", {}, "Factual vs. value-laden components"),
       el("p", { class: "muted", style: "font-size:13px" },
-        "Factual components are combined by default; value-laden lenses are OFF unless you turn " +
+        "Factual components are combined by default; value-laden lenses are off unless you turn " +
         "them on (and any non-neutral weighting is watermarked)."),
       el("div", { class: "row" }, el("span", { class: "k" }, "factual (default)"),
-        el("span", { class: "v mono" }, factual.join(", ") || "\u2014")),
+        el("span", { class: "v mono" }, factual.join(", ") || "none")),
       el("div", { class: "row" }, el("span", { class: "k" }, "value-laden (opt-in)"),
-        el("span", { class: "v mono" }, valueLaden.join(", ") || "\u2014")),
+        el("span", { class: "v mono" }, valueLaden.join(", ") || "none")),
       m.confidence_publish_threshold !== undefined
         ? el("div", { class: "row" }, el("span", { class: "k" }, "confidence publish threshold"),
-            el("span", { class: "v mono" }, `${(m.confidence_publish_threshold * 100).toFixed(0)}% \u2014 below this, the composite is suppressed`))
+            el("span", { class: "v mono" }, `${(m.confidence_publish_threshold * 100).toFixed(0)}%, below this the composite is withheld`))
         : null));
   }
 
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "The three things that can never be fully empirical"),
     el("p", { class: "muted", style: "font-size:13px" },
-      "These residues are labeled, never hidden: (1) which metric operationalizes the objective; " +
-      "(2) which counterfactual baseline is \u201Cright\u201D; (3) how to assign causal credit among many " +
-      "actors. We shrink them (pre-registration, baseline ensembles, attribution intervals + a large " +
-      "unattributable residual) but never to zero \u2014 and when a residue dominates, the answer is " +
-      "\u201Cinsufficient evidence.\u201D")));
+      "These residues are labeled, never hidden: (1) which metric operationalizes the objective, " +
+      "(2) which counterfactual baseline is right, (3) how to assign causal credit among many " +
+      "actors. We shrink them (pre-registration, baseline ensembles, attribution intervals, and a " +
+      "large unattributable residual) but never to zero. When a residue dominates, the answer is " +
+      "\u201Cinsufficient evidence\u201D.")));
 
   app.appendChild(el("p", { class: "muted", style: "font-size:12px" },
     "Every published score is independently reproducible (see the Integrity tab) and the full " +
@@ -790,16 +805,16 @@ async function renderAbout() {
 async function renderIntegrity() {
   const app = $("#app");
   app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Integrity"));
   app.appendChild(el("p", { class: "muted" },
-    "Integrity-at-scale monitoring. Scoring is provably party-blind (the formula never reads " +
-    "party); this page reads party for AUDIT ONLY, to watch the distribution of scored outcomes. " +
-    "A flagged gap triggers a HUMAN methodological review of metric/baseline choices — never an " +
-    "automated correction, and never a change to any individual score."));
+    "Scoring is provably party-blind (the formula never reads party). This page reads party for " +
+    "audit only, to watch the distribution of scored outcomes. A flagged gap prompts a human review " +
+    "of metric and baseline choices. It never triggers an automated correction or changes any score."));
   const r = await getJSON("/api/integrity/party-symmetry");
 
   const banner = el("div", { class: "gate-banner " + (r.review_required ? "gated" : "scored") },
     r.review_required
-      ? "REVIEW FLAGGED — a systematic gap exceeded a review threshold (see reasons below)."
+      ? "Review flagged: a systematic gap exceeded a review threshold (see reasons below)."
       : "No systematic gap exceeds the review thresholds on the current scored set.");
   app.appendChild(banner);
 
@@ -816,8 +831,8 @@ async function renderIntegrity() {
           el("td", { class: "right mono" }, String(p.attributed_eus)),
           el("td", { class: "right mono" }, String(p.scored_eus)),
           el("td", { class: "right mono" }, (p.scored_share * 100).toFixed(0) + "%"),
-          el("td", { class: "right mono" }, p.mean_composite !== null ? fmt(p.mean_composite, 1) : "—"),
-          el("td", { class: "right mono" }, p.mean_confidence !== null ? (p.mean_confidence * 100).toFixed(0) + "%" : "—")))))));
+          el("td", { class: "right mono" }, p.mean_composite !== null ? fmt(p.mean_composite, 1) : "n/a"),
+          el("td", { class: "right mono" }, p.mean_confidence !== null ? (p.mean_confidence * 100).toFixed(0) + "%" : "n/a")))))));
 
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "Gap checks (vs. review thresholds)"),
@@ -849,14 +864,14 @@ async function renderIntegrity() {
         out.appendChild(el("div", { class: "gate-banner " + (a.all_reproduced ? "scored" : "gated") },
           a.all_reproduced
             ? `All ${a.reproduced}/${a.total} published scores reproduced bit-for-bit.`
-            : `${a.mismatched} mismatch(es) and ${a.errored} inconclusive of ${a.total} scores — investigate.`));
+            : `${a.mismatched} mismatch(es) and ${a.errored} inconclusive of ${a.total} scores. Please investigate.`));
         if (a.checks.some((c) => c.status !== "reproduced")) {
           out.appendChild(el("table", {},
             el("thead", {}, el("tr", {}, el("th", {}, "EU"), el("th", {}, "status"), el("th", {}, "detail"))),
             el("tbody", {}, ...a.checks.filter((c) => c.status !== "reproduced").map((c) =>
               el("tr", {}, el("td", { class: "mono" }, String(c.eu_id)),
                 el("td", {}, el("span", { class: "badge insufficient_evidence" }, c.status)),
-                el("td", { class: "muted", style: "font-size:12px" }, c.detail || "—"))))));
+                el("td", { class: "muted", style: "font-size:12px" }, c.detail || "n/a"))))));
         }
       } catch (err) {
         out.textContent = "Error: " + err.message;
@@ -870,6 +885,7 @@ async function renderIntegrity() {
 }
 
 async function route() {
+  renderNav();
   const eu = location.hash.match(/#\/eu\/(\d+)/);
   const off = location.hash.match(/#\/official\/(\d+)/);
   // Show a spinner immediately so navigation (and cold starts) never look frozen.
@@ -887,9 +903,26 @@ async function route() {
     else if (location.hash.startsWith("#/actions")) await renderList();
     else await renderLanding();  // default = welcoming landing/hero
   } catch (e) {
-    $("#app").innerHTML = `<div class="card">Error: ${e.message}. The API may be waking up — retry in a moment.</div>`;
+    $("#app").innerHTML = `<div class="card">Error: ${e.message}. The API may be waking up. Retry in a moment.</div>`;
   }
 }
 
+// Boot splash / title screen shown while the app (and a possibly cold-started server) come up.
+function showSplash() {
+  if (document.getElementById("splash")) return;
+  document.body.appendChild(el("div", { class: "splash", id: "splash" },
+    el("img", { src: "/logo.png", alt: "" }),
+    el("div", { class: "title" }, "DegreeZero"),
+    el("div", { class: "spinner" }),
+    el("div", { class: "sub" }, "Loading. First load can take a moment while the server wakes up.")));
+}
+function hideSplash() {
+  const s = document.getElementById("splash");
+  if (s) { s.classList.add("fade"); setTimeout(() => s.remove(), 400); }
+}
+
 window.addEventListener("hashchange", route);
-window.addEventListener("DOMContentLoaded", route);
+window.addEventListener("DOMContentLoaded", () => {
+  showSplash();
+  route().finally(hideSplash);
+});

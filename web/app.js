@@ -242,6 +242,25 @@ function spinner(msg = "Loading…") {
       "First load can take a moment while the server wakes up."));
 }
 
+// Collapsible section that lazily builds its body the first time it is opened, so deep
+// panels (and any async fetches) stay off the initial render and out of the way.
+function disclosure(title, buildFn) {
+  const body = el("div", { class: "disc-body" });
+  const det = el("details", { class: "disc" }, el("summary", {}, title), body);
+  let built = false;
+  det.addEventListener("toggle", async () => {
+    if (!det.open || built) return;
+    built = true;
+    body.appendChild(el("div", { class: "muted", style: "font-size:13px" }, "Loading…"));
+    try {
+      const node = await buildFn();
+      body.innerHTML = "";
+      if (node) body.appendChild(node);
+    } catch (e) { body.innerHTML = ""; body.appendChild(el("div", { class: "muted" }, "Unavailable.")); }
+  });
+  return det;
+}
+
 async function renderLanding() {
   const app = $("#app");
   app.innerHTML = "";
@@ -536,44 +555,55 @@ async function renderDetail(id) {
           card.action.category_label)
       : null));
 
+  // Top line: the result + the plain explanation.
   app.appendChild(gateBanner(card));
-
-  // Narrative
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Why this scored this way"),
+    el("h3", {}, "What this measured"),
     el("div", { class: "narrative" }, card.narrative)));
 
   // Descriptive peer-group context (non-ranking; shown only with a sufficient sample).
   if (card.descriptive_context && card.descriptive_context.length) {
     app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "How this compares (descriptive context)"),
       ...card.descriptive_context.map((c) => el("div", { class: "hint" }, c))));
   }
 
-  // Components vector
-  if (card.components.length) {
+  // Who is credited: promoted up because voters care who is responsible. Names link out.
+  if (card.attribution.length) {
     app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Score breakdown", tip("composite")),
-      ...card.components.map(componentBar)));
+      el("h3", {}, "Who is credited", tip("attribution")),
+      el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+        "Most of any outcome stays unattributed to any one person; the rest is shared by role."),
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "role"), el("th", {}, "who"), el("th", { class: "right" }, "share"))),
+        el("tbody", {}, ...card.attribution.map((a) =>
+          el("tr", {},
+            el("td", {}, a.is_residual ? el("span", { class: "pill" }, a.role.replaceAll("_", " ")) : a.role.replaceAll("_", " ")),
+            el("td", {}, a.official_name
+              ? (a.official_id
+                  ? el("a", { href: `#/official/${a.official_id}` }, formatName(a.official_name))
+                  : formatName(a.official_name))
+              : "n/a"),
+            el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%")))))));
   }
 
-  // Objective + metric
+  // Everything deeper lives in collapsible sections so the top stays clean.
+  const details = el("div", { class: "discs" });
+  details.appendChild(el("h3", { class: "group-h", style: "margin-top:18px" }, "Full details, methodology, and sources"));
+
   if (card.objective) {
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Stated objective (the goal this action set for itself)"),
+    details.appendChild(disclosure("Stated objective and metric", () => el("div", {},
       el("div", { class: "row" }, el("span", { class: "k" }, "objective level"), el("span", { class: "v" }, card.objective.level)),
-      el("p", { class: "muted", style: "max-height:160px;overflow:auto" }, card.objective.text.slice(0, 1200) + (card.objective.text.length > 1200 ? "…" : "")),
+      el("p", { class: "muted", style: "max-height:200px;overflow:auto" }, card.objective.text.slice(0, 1500) + (card.objective.text.length > 1500 ? "…" : "")),
       el("div", { class: "src" }, el("a", { href: card.objective.source_url, target: "_blank" }, "official source ↗")),
-      card.metric ? el("div", { class: "row", style: "margin-top:10px" },
-        el("span", { class: "k" }, "mapped metric"),
-        el("span", { class: "v" }, `${card.metric.name} (${card.metric.unit}; better = ${card.metric.direction_good}) · ${card.metric.native_series_id}`)) : null));
+      card.metric ? el("div", { class: "row", style: "margin-top:10px" }, el("span", { class: "k" }, "mapped metric"),
+        el("span", { class: "v" }, `${card.metric.name} (${card.metric.unit}; better = ${card.metric.direction_good})`)) : null)));
   }
-
-  // Outcome + baseline ensemble
+  if (card.components.length) {
+    details.appendChild(disclosure("Score breakdown", () => el("div", {}, ...card.components.map(componentBar))));
+  }
   if (card.outcome) {
     const o = card.outcome;
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Outcome vs. counterfactual baseline"),
+    details.appendChild(disclosure("Outcome vs. counterfactual baseline", () => el("div", {},
       el("div", { class: "kpi" },
         el("div", { class: "item" }, el("div", { class: "n" }, fmt(o.observed, 0)), el("div", { class: "l" }, "observed")),
         el("div", { class: "item" }, el("div", { class: "n" }, fmt(o.baseline_pooled, 0)), el("div", { class: "l" }, "baseline (pooled)")),
@@ -585,68 +615,32 @@ async function renderDetail(id) {
         el("thead", {}, el("tr", {}, el("th", {}, "baseline method"), el("th", { class: "right" }, "value"), el("th", { class: "right" }, "95% CI"))),
         el("tbody", {}, ...card.baselines.map((b) =>
           el("tr", {}, el("td", {}, b.method), el("td", { class: "right mono" }, fmt(b.baseline_value, 1)),
-            el("td", { class: "right mono" }, `[${fmt(b.ci_low, 1)}, ${fmt(b.ci_high, 1)}]`)))))));
+            el("td", { class: "right mono" }, `[${fmt(b.ci_low, 1)}, ${fmt(b.ci_high, 1)}]`))))))));
   }
-
-  // Attribution
-  if (card.attribution.length) {
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Attribution (always leaves a large unattributable residual)", tip("attribution")),
-      el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "role"), el("th", {}, "who"), el("th", { class: "right" }, "attribution"), el("th", { class: "right" }, "95% band"))),
-        el("tbody", {}, ...card.attribution.map((a) =>
-          el("tr", {},
-            el("td", {}, a.is_residual ? el("span", { class: "pill" }, a.role.replaceAll("_", " ")) : a.role),
-            el("td", {}, a.official_name
-              ? (a.official_id
-                  ? el("a", { href: `#/official/${a.official_id}` }, formatName(a.official_name))
-                  : formatName(a.official_name))
-              : "n/a"),
-            el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
-            el("td", { class: "right mono" }, `[${(a.ci_low * 100).toFixed(0)}, ${(a.ci_high * 100).toFixed(0)}]%`)))))));
-  }
-
-  // User value weights (composite path demo, gate-respecting)
-  if (card.components.length) {
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Your value weights (optional · default = neutral)"),
-      valueWeightPanel(card)));
-  }
-
-  // Sensitivity analysis (robustness across alternative lag windows)
   if (card.metric && card.outcome) {
-    app.appendChild(await sensitivityCard(card.evaluation_unit.id, card.metric.unit));
+    details.appendChild(disclosure("Robustness across evaluation horizons", () => sensitivityCard(card.evaluation_unit.id, card.metric.unit)));
   }
-
-  // Challenge / appeal (dispute workflow)
-  app.appendChild(await disputesCard(card.evaluation_unit.id));
-
-  // What would change the score
+  if (card.components.length) {
+    details.appendChild(disclosure("Your value weights (optional, default neutral)", () => valueWeightPanel(card)));
+  }
   if (card.what_would_change_the_score && card.what_would_change_the_score.length) {
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "What would change this score"),
-      ...card.what_would_change_the_score.map((h) => el("div", { class: "hint" }, h))));
+    details.appendChild(disclosure("What would change this score", () => el("div", {},
+      ...card.what_would_change_the_score.map((h) => el("div", { class: "hint" }, h)))));
   }
-
-  // Reproducibility + pre-registration
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Reproducibility & pre-registration (audit this)"),
-    el("div", { class: "row" }, el("span", { class: "k" }, "pre-registration hash (committed before outcomes fetched)"), el("span", { class: "v mono" }, (card.evaluation_unit.prereg_hash || "n/a").slice(0, 24) + "…")),
+  details.appendChild(disclosure("Reproducibility and pre-registration", () => el("div", {},
+    el("div", { class: "row" }, el("span", { class: "k" }, "pre-registration hash"), el("span", { class: "v mono" }, (card.evaluation_unit.prereg_hash || "n/a").slice(0, 24) + "…")),
     el("div", { class: "row" }, el("span", { class: "k" }, "pre-registered at"), el("span", { class: "v mono" }, card.evaluation_unit.prereg_at || "n/a")),
     card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "reproducible run hash"), el("span", { class: "v mono" }, (card.run.reproducible_hash || "n/a").slice(0, 24) + "…")) : null,
-    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "data snapshot id"), el("span", { class: "v mono" }, card.run.data_snapshot_id.slice(0, 24) + "…")) : null,
-    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "methodology version · seed · git"), el("span", { class: "v mono" }, `${card.run.methodology_version} · ${card.run.seed} · ${(card.run.code_git_sha || "n/a").slice(0, 8)}`)) : null));
-
-  // Source trail
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Source trail (every datum → official bytes + content hash)"),
-    el("table", { class: "src" },
-      el("thead", {}, el("tr", {}, el("th", {}, "source"), el("th", {}, "sha256"), el("th", {}, "retrieved"))),
-      el("tbody", {}, ...card.source_trail.map((s) =>
-        el("tr", {},
-          el("td", {}, el("a", { href: s.source_url, target: "_blank" }, (s.native_identifier || s.source_url).slice(0, 48) + " ↗")),
-          el("td", { class: "mono" }, s.content_hash.slice(0, 16) + "…"),
-          el("td", { class: "mono" }, (s.retrieved_at || "").slice(0, 19))))))));
+    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "methodology version · seed · git"), el("span", { class: "v mono" }, `${card.run.methodology_version} · ${card.run.seed} · ${(card.run.code_git_sha || "n/a").slice(0, 8)}`)) : null)));
+  details.appendChild(disclosure("Source trail (official bytes + content hash)", () => el("table", { class: "src" },
+    el("thead", {}, el("tr", {}, el("th", {}, "source"), el("th", {}, "sha256"), el("th", {}, "retrieved"))),
+    el("tbody", {}, ...card.source_trail.map((s) =>
+      el("tr", {},
+        el("td", {}, el("a", { href: s.source_url, target: "_blank" }, (s.native_identifier || s.source_url).slice(0, 48) + " ↗")),
+        el("td", { class: "mono" }, s.content_hash.slice(0, 16) + "…"),
+        el("td", { class: "mono" }, (s.retrieved_at || "").slice(0, 19))))))));
+  details.appendChild(disclosure("Challenge or appeal this score", () => disputesCard(card.evaluation_unit.id)));
+  app.appendChild(details);
 }
 
 function officialRow(o) {

@@ -11,7 +11,10 @@
 
 databases:
   - name: degreezeor-db
-    plan: starter            # or 'free' for trials
+    # Render's new "flexible" Postgres plans (legacy 'starter'/'standard'/'pro' are no
+    # longer allowed for new DBs). 'free' = 1 GB, expires after 30 days (good for a trial);
+    # switch to 'basic-256mb' (default) or 'basic-1gb' for a durable production database.
+    plan: free
     postgresMajorVersion: "16"
 
 services:

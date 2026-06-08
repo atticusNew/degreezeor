@@ -15,8 +15,11 @@ from degreezeor.config import settings
 from degreezeor.core.models import Base
 
 config = context.config
-# Inject the app's database URL (env-driven) rather than hardcoding it in alembic.ini.
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Use the app's env-driven DSN UNLESS a concrete URL was explicitly provided (e.g. by a
+# test or a one-off command). The alembic.ini default is the 'driver://' placeholder.
+_existing = config.get_main_option("sqlalchemy.url")
+if not _existing or _existing.startswith("driver://"):
+    config.set_main_option("sqlalchemy.url", settings.database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -24,9 +27,13 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _url() -> str:
+    return config.get_main_option("sqlalchemy.url")
+
+
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

@@ -89,7 +89,15 @@ entrypoint), which runs every scorer above, enriches names, and self-validates t
 states using **synthetic control / difference-in-differences** on official BLS state series. The
 bundled Kansas 2012 tax-cut demo (`KS-HB2117`) is well-identified, clears the confidence gate, and
 yields a real composite — a neutral, sourced finding that the policy's *own* job-creation objective
-was not met relative to its synthetic control.
+was not met relative to its synthetic control. The curated set also includes North Carolina 2013,
+Wisconsin 2011, Maine 2011, Indiana 2013, Ohio 2013, and Missouri 2014 (each source-verified); the
+synthetic-control pre-fit gate decides which clear the confidence gate vs. honestly abstain.
+
+**Neutral presentation:** the user-facing app shows no party (only name and, where derivable, the
+office), uses a neutral mauve tone for scores (no green/red/party-blue), and groups actions into
+objective topic categories (jobs and economy, cost and spending, health, public safety, energy and
+environment, poverty and income, education) derived from each action's official domain and metric.
+Party stays in the data layer for the audit-only party-symmetry monitor on the Integrity page.
 
 API keys: Congress.gov/GovInfo accept the shared `DEMO_KEY` (rate-limited) by default; the Federal
 Register API is keyless. **Set `DZ_BLS_API_KEY`** (free registration) to raise BLS limits — the

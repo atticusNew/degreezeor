@@ -163,6 +163,17 @@ evidence."** This is the correct, humble behavior — not a failure.
     choices — never an automated correction, and never a change to any individual score. Party is
     read here for audit only. (`/api/integrity/party-symmetry`, `degreezeor party-symmetry`, and the
     "Integrity" view.)
+14. **Display neutrality** — party is removed from the entire user-facing experience (no party
+    label, filter, or sort on officials); only the name and, where derivable from the public record,
+    the office (President, Governor, Senator, Representative) are shown. Party remains in the data
+    layer solely for the audit-only party-symmetry monitor (item 13). Score-bearing surfaces use a
+    neutral mauve tone, never green-as-good, red-as-bad, or party-blue. Actions are grouped into
+    objective topic **categories** (jobs and economy, cost and spending, health, public safety,
+    energy and environment, poverty and income, education) derived deterministically from each
+    action's official subject domain and the metric it was measured against; categories never feed
+    scoring. Official-to-official and action context is **descriptive only** (how a result sits next
+    to the typical scored result for its action type or category, shown only with a sufficient
+    sample), never a ranking.
 
 ## 10. What cannot be made fully empirical
 
@@ -181,7 +192,10 @@ sign disagreement across baselines, or confidence below the publish threshold.
   confidence gate; API + UI.
 - **Phase 2 (in progress):** **difference-in-differences & synthetic control shipped** (with
   tiered pooling and state-policy scoring on official BLS state series — e.g. the Kansas 2012 tax
-  cuts demo, which clears the gate and yields a real composite). **Executive orders shipped**
+  cuts demo, which clears the gate and yields a real composite; the curated state set now also
+  includes North Carolina 2013, Wisconsin 2011, Maine 2011, Indiana 2013, Ohio 2013, and Missouri
+  2014, each source-verified, with the synthetic-control pre-fit gate deciding which clear the gate
+  vs. honestly abstain). **Executive orders shipped**
   (Federal Register Tier-0 ingestion; the signing president carries high unilateral executive
   authority vs. shared law-signing). **Final agency rules (regulations) shipped** (Federal Register
   Tier-0; attributed to the administration in office on the rule's effective date). **Senate

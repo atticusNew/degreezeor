@@ -47,11 +47,24 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
 .audit-badge.ok { color: var(--good); border-color: rgba(46,204,113,.4); background: rgba(46,204,113,.08); }
 .audit-badge.bad { color: var(--bad); border-color: rgba(231,76,60,.5); background: rgba(231,76,60,.1); }
 
-/* Footer with open-source + navigation links. */
-.foot { border-top: 1px solid var(--line); margin-top: 40px; padding: 18px 24px 40px; display: flex; gap: 18px;
-  flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 13px; }
+/* Footer: a row of evenly aligned category links above the open-source/meta links. */
+.foot { border-top: 1px solid var(--line); margin-top: 40px; padding: 18px 24px 40px; display: flex;
+  flex-direction: column; gap: 14px; color: var(--muted); font-size: 13px; }
 .foot a { color: var(--muted); }
 .foot a:hover { color: var(--accent); }
+.foot-cats { display: flex; gap: 8px; width: 100%; }
+.foot-cats a { flex: 1 1 0; min-width: 0; text-align: center; padding: 8px 6px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.foot-cats a:hover { border-color: var(--accent-border); color: var(--text); text-decoration: none; }
+.foot-meta { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; justify-content: center; }
+
+/* Category chip filter + grouped section headers (Actions view). */
+.chipbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
+.fchip { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel);
+  color: var(--muted); font-size: 13px; font-weight: 600; }
+.fchip:hover { color: var(--text); border-color: var(--accent-border); text-decoration: none; }
+.fchip.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-border); }
+.group-h { margin: 22px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); }
 
 /* Boot splash / title screen shown while the app (and a cold-started server) come up. */
 .splash { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column;
@@ -234,4 +247,7 @@ button:disabled { opacity: .6; cursor: default; }
   .kpi .item { min-width: 100px; padding: 10px 12px; }
   .kpi .item .n { font-size: 19px; }
   .list-item { flex-wrap: wrap; gap: 8px; }
+  /* Footer category links wrap to two per row instead of cramming into one. */
+  .foot-cats { flex-wrap: wrap; }
+  .foot-cats a { flex: 1 1 40%; }
 }

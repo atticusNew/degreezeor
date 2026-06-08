@@ -316,6 +316,15 @@ function renderNav() {
   }
 }
 
+async function renderFooterCategories() {
+  const node = $("#foot-cats");
+  if (!node || node.childElementCount) return;  // populate once
+  try {
+    const cats = (await getJSON("/api/categories")).categories.filter((c) => c.key !== "other");
+    for (const c of cats) node.appendChild(el("a", { href: "#/actions?category=" + c.key }, c.label));
+  } catch (e) { /* best-effort; footer category links are non-essential */ }
+}
+
 async function renderAuditStatus() {
   const node = $("#audit-status");
   if (!node) return;
@@ -333,26 +342,58 @@ function statusBadge(status) {
   return el("span", { class: "badge " + status }, status.replaceAll("_", " "));
 }
 
+function actionRow(u) {
+  return el("div", { class: "list-item", onclick: () => { location.hash = `#/eu/${u.id}`; } },
+    el("div", {},
+      el("div", { class: "title" }, u.title),
+      el("div", { class: "muted mono" }, (u.public_law ? `Public Law ${u.public_law}` : `Action #${u.id}`))),
+    el("div", { style: "text-align:right" },
+      statusBadge(u.status),
+      el("div", { class: "muted", style: "margin-top:6px;font-size:12px" },
+        `confidence ${u.confidence === null ? "n/a" : (u.confidence * 100).toFixed(1) + "%"}`,
+        u.composite !== null ? ` · composite ${fmt(u.composite, 1)}` : " · composite suppressed")));
+}
+
 async function renderList() {
   const app = $("#app");
   app.innerHTML = "";
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const active = params.get("category") || "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Actions"));
   app.appendChild(el("p", { class: "muted" },
-    "Each row is a public action (a law, executive order, rule, or budget) scored against the goal it " +
-    "set for itself. Click any to see the full breakdown and sources. When we cannot separate the " +
-    "policy's effect from everything else at the time, we mark it \u201Cinsufficient evidence\u201D " +
-    "rather than guess."));
+    "Public actions scored against the goal each set for itself. Pick a category, or open any action " +
+    "for the full breakdown and sources."));
+
+  let cats = [];
+  try { cats = (await getJSON("/api/categories")).categories; } catch (e) { /* best-effort */ }
   const units = await getJSON("/api/evaluation-units");
-  for (const u of units) {
-    app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/eu/${u.id}`; } },
-      el("div", {},
-        el("div", { class: "title" }, u.title),
-        el("div", { class: "muted mono" }, (u.public_law ? `Public Law ${u.public_law}` : `Action #${u.id}`))),
-      el("div", { style: "text-align:right" },
-        statusBadge(u.status),
-        el("div", { class: "muted", style: "margin-top:6px;font-size:12px" },
-          `confidence ${u.confidence === null ? "n/a" : (u.confidence * 100).toFixed(1) + "%"}`,
-          u.composite !== null ? ` · composite ${fmt(u.composite, 1)}` : " · composite suppressed"))));
+  const order = cats.map((c) => c.key);
+  const labelOf = (k) => (cats.find((c) => c.key === k) || {}).label || k;
+
+  // Category chip filter (only categories that actually have actions).
+  const present = new Set(units.map((u) => u.category));
+  const chipBar = el("div", { class: "chipbar" });
+  const chip = (key, label) => el("a", {
+    class: "fchip" + ((active === key || (!active && key === "")) ? " active" : ""),
+    href: "#/actions" + (key ? "?category=" + key : ""),
+  }, label);
+  chipBar.appendChild(chip("", "All"));
+  for (const c of cats) if (present.has(c.key)) chipBar.appendChild(chip(c.key, c.label));
+  app.appendChild(chipBar);
+
+  const shown = active ? units.filter((u) => u.category === active) : units;
+  if (!shown.length) {
+    app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+      el("p", {}, "No actions in this category yet."))); return;
+  }
+  // Group by category, in catalog order.
+  const byCat = new Map();
+  for (const u of shown) { if (!byCat.has(u.category)) byCat.set(u.category, []); byCat.get(u.category).push(u); }
+  const groups = [...byCat.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+  for (const [key, list] of groups) {
+    app.appendChild(el("h3", { class: "group-h" }, labelOf(key),
+      el("span", { class: "muted", style: "font-weight:400;margin-left:8px" }, String(list.length))));
+    for (const u of list) app.appendChild(actionRow(u));
   }
 }
 
@@ -445,9 +486,13 @@ async function renderDetail(id) {
   app.appendChild(el("h2", { style: "margin:6px 0" }, card.action.title));
   app.appendChild(el("div", { class: "muted mono" },
     [card.action.type, card.action.public_law_number ? "Public Law " + card.action.public_law_number : null,
-     card.action.domain, card.action.enacted_date ? "enacted " + card.action.enacted_date : null]
+     card.action.enacted_date ? "enacted " + card.action.enacted_date : null]
       .filter(Boolean).join(" · ")));
-  app.appendChild(el("div", { style: "margin:10px 0" }, statusBadge(card.evaluation_unit.status)));
+  app.appendChild(el("div", { style: "margin:10px 0" }, statusBadge(card.evaluation_unit.status),
+    card.action.category_label
+      ? el("a", { class: "pill", href: "#/actions?category=" + card.action.category, style: "margin-left:8px" },
+          card.action.category_label)
+      : null));
 
   app.appendChild(gateBanner(card));
 
@@ -455,6 +500,13 @@ async function renderDetail(id) {
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "Why this scored this way"),
     el("div", { class: "narrative" }, card.narrative)));
+
+  // Descriptive peer-group context (non-ranking; shown only with a sufficient sample).
+  if (card.descriptive_context && card.descriptive_context.length) {
+    app.appendChild(el("div", { class: "card" },
+      el("h3", {}, "How this compares (descriptive context)"),
+      ...card.descriptive_context.map((c) => el("div", { class: "hint" }, c))));
+  }
 
   // Components vector
   if (card.components.length) {
@@ -698,17 +750,36 @@ async function renderOfficialDetail(id) {
           el("p", { class: "muted", style: "font-size:12px" }, r.note)));
       } }, "How is this calculated? →"))));
 
+  // Record by category: the same measure split by topic (descriptive, never a ranking).
+  if (card.by_category && card.by_category.length >= 2) {
+    app.appendChild(el("div", { class: "card" },
+      el("h3", {}, "Record by category"),
+      el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+        "The same measure, split by topic. Descriptive only, not a ranking."),
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "category"), el("th", { class: "right" }, "scored"),
+          el("th", { class: "right" }, "coverage"), el("th", { class: "right" }, "composite"))),
+        el("tbody", {}, ...card.by_category.map((b) =>
+          el("tr", {},
+            el("td", {}, b.category_label),
+            el("td", { class: "right mono" }, `${b.scored_actions}/${b.total_actions}`),
+            el("td", { class: "right mono" }, b.coverage !== null ? (b.coverage * 100).toFixed(0) + "%" : "n/a"),
+            el("td", { class: "right mono", style: b.composite !== null ? "color:var(--score)" : "" },
+              b.composite !== null ? fmt(b.composite, 1) : "insufficient")))))));
+  }
+
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "Their attributable actions"),
     el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
       "Every action this official is credited on. Click any row to open its full, source-anchored scorecard (outcome vs. baseline, attribution, confidence, sources)."),
     el("table", {},
-      el("thead", {}, el("tr", {}, el("th", {}, "action"), el("th", {}, "role"),
+      el("thead", {}, el("tr", {}, el("th", {}, "action"), el("th", {}, "category"), el("th", {}, "role"),
         el("th", { class: "right" }, "attribution", tip("attribution")), el("th", {}, "status"),
         el("th", { class: "right" }, "composite", tip("composite")))),
       el("tbody", {}, ...card.actions.map((a) =>
         el("tr", {},
           el("td", {}, el("a", { href: `#/eu/${a.eu_id}` }, a.action_title || `EU ${a.eu_id}`)),
+          el("td", { class: "muted", style: "font-size:12px" }, a.category_label || ""),
           el("td", {}, a.role),
           el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
           el("td", {}, statusBadge(a.status || "pending")),
@@ -1047,5 +1118,6 @@ function hideSplash() {
 window.addEventListener("hashchange", route);
 window.addEventListener("DOMContentLoaded", () => {
   showSplash();
+  renderFooterCategories();  // fire-and-forget; populates the footer category links once
   route().finally(hideSplash);
 });

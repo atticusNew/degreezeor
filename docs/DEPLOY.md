@@ -56,6 +56,15 @@ read-only) so the UI is always quick and the heavy work runs on a schedule.
 - **Scaling:** the API is stateless/read-only — scale horizontally. Postgres has indexes on the hot
   paths (`evaluation_units.action_id/status`, `attribution_weights.eu_id/official_id`, score-run FKs).
 - **Audit:** the hash-chained audit log (`/api/audit/verify`) detects any tampering with history.
+  The nightly cron (`degreezeor refresh`) self-validates this chain after each pass and reports
+  `audit_chain_ok` (logging loudly on a break).
+- **Reproducibility self-audit:** `degreezeor verify-scores` (or `GET /api/integrity/reproducibility`)
+  independently re-runs every published score and confirms each reproduces its pinned hash
+  bit-for-bit; it exits non-zero on a mismatch, so you can wire it into a post-deploy or scheduled
+  integrity check.
+- **Party-symmetry monitoring:** `degreezeor party-symmetry` (or `GET /api/integrity/party-symmetry`)
+  reports the party-level distribution of scored outcomes for human review (audit only; scoring is
+  party-blind).
 
 ## Local development (no Render)
 Use SQLite + a quick subset (see the README quickstart). For a Postgres dev env, set

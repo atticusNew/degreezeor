@@ -1323,6 +1323,14 @@ def refresh_all(
         counts["names_enriched"] = enrich_official_names(session)
     except Exception as exc:  # noqa: BLE001
         log.warning("name enrichment skipped: %s", exc)
+
+    # Self-validate: the nightly pass must leave the append-only audit chain intact.
+    # A break here means history was altered out-of-band — surfaced loudly, never hidden.
+    session.flush()
+    chain_ok, broken_id = audit.verify_chain(session)
+    counts["audit_chain_ok"] = 1 if chain_ok else 0
+    if not chain_ok:
+        log.error("AUDIT CHAIN BROKEN after refresh (first broken record id=%s)", broken_id)
     return counts
 
 

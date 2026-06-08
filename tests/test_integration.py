@@ -154,3 +154,40 @@ def test_full_stack_composes(session) -> None:
     # Category filter narrows / widens the officials list correctly.
     assert presentation.list_officials(session, category="public_safety", scored_only=True)
     assert presentation.list_officials(session, category="health", scored_only=True) == []
+
+
+def test_activity_layer_sponsored_and_cosponsored(session) -> None:
+    """The unscored activity/record layer: a member who only sponsored/cosponsored bills
+    still appears in the directory and their record, separate from any scored composite."""
+    from degreezeor.core.models import Bill, BillCosponsor
+    from degreezeor.core.reference import ensure_us_federal
+
+    src = _get_or_create_source(session)
+    jur = ensure_us_federal(session)
+
+    sponsor = Official(full_name="Jane Sponsor", bioguide_id="X000001")
+    backer = Official(full_name="John Backer", bioguide_id="X000002")
+    session.add_all([sponsor, backer])
+    session.flush()
+
+    action = Action(type="bill", title="A jobs bill", action_date=date(2024, 3, 1),
+                    jurisdiction_id=jur.id, source_id=src.id, source_url="https://congress/hr1",
+                    native_identifier="bill/118/hr/1", domain="Economics and Public Finance")
+    session.add(action)
+    session.flush()
+    session.add(Bill(action_id=action.id, congress=118, bill_number="HR1",
+                     sponsor_official_id=sponsor.id, status="introduced"))
+    session.add(BillCosponsor(action_id=action.id, official_id=backer.id))
+    session.flush()
+
+    idx = {o["name"]: o for o in presentation.officials_index(session)}
+    assert idx["Jane Sponsor"]["sponsored"] == 1
+    assert idx["John Backer"]["cosponsored"] == 1
+    assert "jobs_economy" in idx["John Backer"]["categories"]
+
+    rec = presentation.build_official(session, backer.id)["record"]
+    assert rec["cosponsored_total"] == 1
+    assert any(c["category"] == "jobs_economy" for c in rec["cosponsored_by_category"])
+
+    srec = presentation.build_official(session, sponsor.id)["record"]
+    assert srec["sponsored_total"] == 1

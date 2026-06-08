@@ -133,6 +133,23 @@ evidence."** This is the correct, humble behavior — not a failure.
 - **Official roll-up:** attribution-weighted mean of EU scores, always reported with **coverage**
   (fraction of actions that are scoreable) and confidence.
 
+## 8b. Two layers: "did it work?" vs. "what did they act on?"
+
+A scoreable unit requires an isolatable, measured outcome (§3). Most legislative behaviour does
+not meet that bar, yet voters reasonably ask *what an official acted on*. We therefore publish two
+clearly separated layers, never blended:
+
+- **Scored layer ("did it work?"):** composite scores and the factual component vector above. Only
+  EUs that pass the confidence gate (§7) receive a composite.
+- **Record layer ("what they acted on"):** the **unscored** legislative record — bills a member
+  **sponsored** and **cosponsored** — grouped by the objective category taxonomy. These are
+  source-anchored facts (Congress.gov) describing breadth of activity by topic. They are **never**
+  fed into any score, attribution, or the party-symmetry monitor; they exist purely so the public
+  record of activity is visible alongside (and visually distinct from) the rigorous scored layer.
+
+The record layer is ingested recency-first and incrementally, capped per run so the per-key request
+budget is respected; repeated nightly runs fill in the remaining history.
+
 ## 9. Bias-minimization protocol
 
 1. Identical pipeline for all officials; **scoring code is party-blind** — enforced statically (no

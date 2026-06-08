@@ -28,7 +28,8 @@ const fmt = (x, d = 2) => (x === null || x === undefined ? "n/a" : Number(x).toF
 function cleanName(name) {
   if (!name) return "";
   return String(name)
-    .replace(new RegExp("\\[[^\\]]*\\]", "g"), "")
+    .replace(new RegExp("\\[[^\\]]*\\]", "g"), "")   // strip "[D-CT-2]" style tags
+    .replace(new RegExp("\\([^)]*\\)", "g"), "")        // strip "(CA)" / "(D-NJ)" style tags
     .replace(new RegExp("\\b(Rep|Sen|Gov|President|Senator|Representative|Dr)\\.?\\s+", "gi"), "")
     .replace(new RegExp("\\s+", "g"), " ").trim();
 }
@@ -264,22 +265,13 @@ function disclosure(title, buildFn) {
 async function renderLanding() {
   const app = $("#app");
   app.innerHTML = "";
-
-  // Search-forward hero: the primary action is finding an official.
-  const search = el("input", { type: "text", placeholder: "Search an official by name…",
-    autocomplete: "off", "aria-label": "Search officials" });
-  const go = () => { location.hash = "#/officials" + (search.value.trim() ? "?q=" + encodeURIComponent(search.value.trim()) : ""); };
-  search.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
-
-  const hero = el("div", { class: "hero" },
+  app.appendChild(el("div", { class: "hero" },
     el("img", { class: "mark", src: "/logo.png", alt: "DegreeZero" }),
-    el("div", { class: "sub" }, "See what your officials actually did, and whether it worked."),
-    el("div", { class: "hero-search" }, search, el("button", { onclick: go }, "Search")),
+    el("div", { class: "sub" }, "What your officials did, and whether it worked. Measured against each action's own goal, with sources."),
     el("div", { class: "ctas" },
-      el("a", { class: "cta ghost", href: "#/officials" }, "Browse officials"),
+      el("a", { class: "cta", href: "#/officials" }, "Find an official"),
       el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"),
-      el("a", { class: "cta ghost", href: "#/about" }, "How it works")));
-  app.appendChild(hero);
+      el("a", { class: "cta ghost", href: "#/about" }, "How it works"))));
 }
 
 async function renderSources() {
@@ -582,22 +574,34 @@ async function renderDetail(id) {
   }
 
   // Who is credited: promoted up because voters care who is responsible. Names link out.
+  // Long rosters (e.g. every roll-call voter) collapse behind "show all".
   if (card.attribution.length) {
-    app.appendChild(el("div", { class: "card" },
+    const attribRow = (a) => el("tr", {},
+      el("td", {}, a.is_residual ? el("span", { class: "pill" }, a.role.replaceAll("_", " ")) : a.role.replaceAll("_", " ")),
+      el("td", {}, a.official_name
+        ? (a.official_id
+            ? el("a", { href: `#/official/${a.official_id}` }, formatName(a.official_name))
+            : formatName(a.official_name))
+        : "n/a"),
+      el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"));
+    const CAP = 6;
+    const tbody = el("tbody", {}, ...card.attribution.slice(0, CAP).map(attribRow));
+    const card3 = el("div", { class: "card" },
       el("h3", {}, "Who is credited", tip("attribution")),
       el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
         "Most of any outcome stays unattributed to any one person; the rest is shared by role."),
-      el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "role"), el("th", {}, "who"), el("th", { class: "right" }, "share"))),
-        el("tbody", {}, ...card.attribution.map((a) =>
-          el("tr", {},
-            el("td", {}, a.is_residual ? el("span", { class: "pill" }, a.role.replaceAll("_", " ")) : a.role.replaceAll("_", " ")),
-            el("td", {}, a.official_name
-              ? (a.official_id
-                  ? el("a", { href: `#/official/${a.official_id}` }, formatName(a.official_name))
-                  : formatName(a.official_name))
-              : "n/a"),
-            el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%")))))));
+      el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "role"), el("th", {}, "who"), el("th", { class: "right" }, "share"))), tbody));
+    if (card.attribution.length > CAP) {
+      let expanded = false;
+      const btn = el("button", { class: "linkbtn", onclick: () => {
+        expanded = !expanded;
+        tbody.innerHTML = "";
+        (expanded ? card.attribution : card.attribution.slice(0, CAP)).forEach((a) => tbody.appendChild(attribRow(a)));
+        btn.textContent = expanded ? "Show fewer" : `Show all ${card.attribution.length} credited`;
+      } }, `Show all ${card.attribution.length} credited`);
+      card3.appendChild(btn);
+    }
+    app.appendChild(card3);
   }
 
   // Everything deeper lives in collapsible sections so the top stays clean.
@@ -744,19 +748,22 @@ async function renderOfficials() {
 
   function renderList() {
     listEl.innerHTML = "";
-    let rows = matches();
     const browsing = !state.q && !state.letter && !state.cat && !state.scoredOnly;
-    const shown = browsing ? rows.slice(0, 30) : rows;
-    countEl.textContent = browsing
-      ? `Showing the ${shown.length} most active of ${rows.length} officials`
-      : `${rows.length} match(es)`;
-    if (browsing) countEl.textContent = `Most active officials (top ${shown.length})`;
-    if (!shown.length) {
+    if (browsing) {
+      countEl.textContent = "";
       listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
-        el("p", {}, "No officials match. Try a different name or clear the filters.")));
+        el("p", {}, "Search a name, jump by letter, or filter by topic to see officials."),
+        el("p", { style: "font-size:13px" }, "There are ", el("b", {}, String(index.length)), " officials in the directory.")));
       return;
     }
-    for (const o of shown) listEl.appendChild(officialRow(o));
+    const rows = matches();
+    countEl.textContent = `${rows.length} result(s)`;
+    if (!rows.length) {
+      listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+        el("p", {}, "No officials match. Try a different name, letter, or topic.")));
+      return;
+    }
+    for (const o of rows) listEl.appendChild(officialRow(o));
   }
 
   let dropMatches = [];
@@ -1342,8 +1349,7 @@ async function route() {
 function showSplash() {
   if (document.getElementById("splash")) return;
   document.body.appendChild(el("div", { class: "splash", id: "splash" },
-    el("img", { src: "/logo.png", alt: "" }),
-    el("div", { class: "title" }, "DegreeZero"),
+    el("img", { src: "/logo.png", alt: "DegreeZero" }),
     el("div", { class: "spinner" }),
     el("div", { class: "sub" }, "Loading. First load can take a moment while the server wakes up.")));
 }

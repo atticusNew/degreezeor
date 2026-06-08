@@ -40,8 +40,8 @@ header.top {
 }
 header.top .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); flex: 0 0 auto; }
 header.top .brand:hover { text-decoration: none; }
-/* Logo artwork bleeds to its left/right edges, so it must not be corner-clipped. */
-header.top .logo { width: 32px; height: 32px; border-radius: 0; display: block; flex: 0 0 auto; object-fit: contain; }
+/* Logo may be a wordmark, so size by height and let width be automatic; never clipped. */
+header.top .logo { height: 30px; width: auto; max-width: 200px; border-radius: 0; display: block; flex: 0 0 auto; object-fit: contain; }
 header.top h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
 header.top .tag { color: var(--muted); font-size: 13px; }
 header.top nav { display: flex; gap: 6px; flex-wrap: wrap; margin-left: 8px; }
@@ -98,7 +98,7 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
 /* Boot splash / title screen shown while the app (and a cold-started server) come up. */
 .splash { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 18px; z-index: 200; transition: opacity .35s; }
-.splash img { width: 110px; height: 110px; border-radius: 0; object-fit: contain; }
+.splash img { width: auto; height: 96px; max-width: 80vw; border-radius: 0; object-fit: contain; }
 .splash .title { font-size: 30px; font-weight: 800; letter-spacing: .5px; }
 .splash .sub { color: var(--muted); font-size: 14px; }
 .splash.fade { opacity: 0; pointer-events: none; }
@@ -261,7 +261,7 @@ button:disabled { opacity: .55; cursor: default; }
 
 /* Landing / hero. */
 .hero { text-align: center; padding: 48px 20px 30px; }
-.hero img.mark { width: 96px; height: 96px; border-radius: 0; object-fit: contain; margin-bottom: 14px; }
+.hero img.mark { width: auto; height: 96px; max-width: 90%; border-radius: 0; object-fit: contain; margin-bottom: 14px; }
 .hero h1 { font-size: 34px; margin: 6px 0 4px; letter-spacing: .5px; }
 .hero .sub { color: var(--muted); font-size: 16px; max-width: 640px; margin: 6px auto 22px; line-height: 1.5; }
 .hero .ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
@@ -322,7 +322,7 @@ button:disabled { opacity: .55; cursor: default; }
   .list-item { flex-wrap: wrap; gap: 8px; }
   /* Tighter landing hero on small screens. */
   .hero { padding: 24px 6px 18px; }
-  .hero img.mark { width: 72px; height: 72px; }
+  .hero img.mark { height: 66px; width: auto; max-width: 86%; }
   .hero h1 { font-size: 26px; }
   .hero .sub { font-size: 14px; margin: 6px auto 16px; }
   .statline .dot { margin: 0 5px; }

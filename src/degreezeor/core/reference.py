@@ -21,6 +21,8 @@ PRESIDENTS: list[tuple[str, str, str, date, date | None]] = [
     ("Barack Obama", "O000167", "D", date(2009, 1, 20), date(2017, 1, 20)),
     ("Donald J. Trump", "T000452p", "R", date(2017, 1, 20), date(2021, 1, 20)),
     ("Joseph R. Biden Jr.", "B000444p", "D", date(2021, 1, 20), date(2025, 1, 20)),
+    # Second term: SAME bioguide as the first so both terms aggregate on one record.
+    ("Donald J. Trump", "T000452p", "R", date(2025, 1, 20), None),
 ]
 
 

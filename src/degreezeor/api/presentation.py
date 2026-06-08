@@ -730,6 +730,36 @@ def officials_index(session: Session) -> list[dict[str, Any]]:
     return out
 
 
+def build_recent_activity(
+    session: Session, *, limit: int = 50, category: str | None = None,
+) -> list[dict[str, Any]]:
+    """Recent sponsored bills (the activity/record layer), newest first, with the sponsor.
+    These are unscored 'recorded' actions, so they live here rather than in the scored list."""
+    rows = session.execute(
+        select(Action.title, Action.domain, Action.action_date, Action.source_url,
+               Bill.bill_number, Bill.sponsor_official_id, Official.full_name)
+        .join(Bill, Bill.action_id == Action.id)
+        .join(Official, Official.id == Bill.sponsor_official_id, isouter=True)
+        .where(Action.type == "bill")
+        .order_by(Action.action_date.desc().nullslast(), Action.id.desc())
+        .limit(600)
+    ).all()
+    out = []
+    for title, domain, adate, url, bn, oid, oname in rows:
+        cat = category_for(domain, "bill")
+        if category and cat != category:
+            continue
+        out.append({
+            "title": title, "date": adate.isoformat() if adate else None,
+            "category": cat, "category_label": category_label(cat),
+            "bill_number": bn, "source_url": url,
+            "official_id": oid, "official_name": oname,
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 def build_coverage(session: Session) -> dict[str, Any]:
     """Platform-wide coverage (PLAN.md §16 transparency / anti-cherry-picking).
 

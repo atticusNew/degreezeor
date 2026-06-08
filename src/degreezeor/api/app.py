@@ -204,6 +204,13 @@ def sources() -> list[dict]:
         return presentation.build_sources(s)
 
 
+@app.get("/api/recent-activity")
+def recent_activity(limit: int = 50, category: str | None = None) -> list[dict]:
+    """Recent sponsored bills (the activity/record layer), newest first."""
+    with session_scope() as s:
+        return presentation.build_recent_activity(s, limit=min(limit, 200), category=category)
+
+
 @app.get("/api/categories")
 def categories() -> dict:
     """Objective category catalog (derived from action/metric domain) + per-category counts."""

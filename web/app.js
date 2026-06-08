@@ -416,10 +416,14 @@ async function renderList() {
   const labelOf = (k) => (cats.find((c) => c.key === k) || {}).label || k;
   const present = new Set(units.map((u) => u.category));
 
-  const state = { cat: params.get("category") || "", status: params.get("status") || "" };
+  const state = { cat: params.get("category") || "", status: params.get("status") || "",
+                  mode: params.get("mode") === "recent" ? "recent" : "scored" };
 
+  const modeBar = el("div", { class: "chipbar" });
   const catBar = el("div", { class: "chipbar" });
   const statusBar = el("div", { class: "chipbar" });
+  const statusLabel = el("div", { class: "filter-label" }, "Result");
+  const countEl = el("div", { class: "muted mono", style: "margin:6px 0" });
   const listEl = el("div", {});
 
   function chip(bar, val, label, count, key) {
@@ -444,20 +448,59 @@ async function renderList() {
   statusBar.appendChild(chip(statusBar, "insufficient", "Insufficient evidence", counts.insufficient, "status"));
   statusBar.appendChild(chip(statusBar, "non", "Not scoreable", counts.non, "status"));
 
-  // Category filter (only categories present).
+  // Category filter (topics present in scored EUs OR with recorded bills, so the recent
+  // feed can be filtered by topic too).
+  const catKeysPresent = new Set([...present, ...cats.filter((c) => c.recorded > 0).map((c) => c.key)]);
   catBar.appendChild(chip(catBar, "", "All topics", null, "cat"));
-  for (const c of cats) if (present.has(c.key)) catBar.appendChild(chip(catBar, c.key, c.label, null, "cat"));
+  for (const c of cats) if (catKeysPresent.has(c.key)) catBar.appendChild(chip(catBar, c.key, c.label, null, "cat"));
 
-  function render() {
+  // Mode toggle: scored outcomes vs. the recent record of what members sponsored.
+  const modeChip = (val, label) => {
+    const c = el("button", { type: "button", class: "fchip" + (state.mode === val ? " active" : "") }, label);
+    c.addEventListener("click", () => {
+      state.mode = val;
+      for (const ch of modeBar.children) ch.classList.toggle("active", ch === c);
+      statusLabel.style.display = statusBar.style.display = val === "recent" ? "none" : "";
+      render();
+    });
+    return c;
+  };
+  modeBar.appendChild(modeChip("scored", "Scored results"));
+  modeBar.appendChild(modeChip("recent", "Recent activity"));
+
+  function recentRow(b) {
+    return el("div", { class: "list-item", onclick: b.official_id ? () => { location.hash = `#/official/${b.official_id}`; } : null },
+      el("div", { class: "li-main" },
+        el("div", { class: "title" }, b.title),
+        el("div", { class: "muted mono" }, [b.category_label, b.bill_number, b.date ? b.date.slice(0, 10) : null].filter(Boolean).join(" · "))),
+      el("div", { class: "li-side" }, b.official_name ? el("span", { class: "pill" }, formatName(b.official_name)) : null));
+  }
+
+  async function render() {
     listEl.innerHTML = "";
+    if (state.mode === "recent") {
+      listEl.appendChild(spinner());
+      let bills = [];
+      try { bills = await getJSON("/api/recent-activity?limit=150" + (state.cat ? "&category=" + state.cat : "")); }
+      catch (e) { /* handled below */ }
+      listEl.innerHTML = "";
+      countEl.textContent = `${bills.length} recent bill(s)`;
+      if (!bills.length) {
+        listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+          el("p", {}, "No recent bills yet. These load during the nightly refresh; check back after it runs.")));
+        return;
+      }
+      for (const b of bills) listEl.appendChild(recentRow(b));
+      return;
+    }
     let rows = units;
     if (state.cat) rows = rows.filter((u) => u.category === state.cat);
     if (state.status) rows = rows.filter((u) => actionStatus(u) === state.status);
+    countEl.textContent = "";
     if (!rows.length) {
       listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
         el("p", {}, "No actions match these filters."))); return;
     }
-    // Group by category in catalog order; scored first within each group.
     const byCat = new Map();
     for (const u of rows) { if (!byCat.has(u.category)) byCat.set(u.category, []); byCat.get(u.category).push(u); }
     const groups = [...byCat.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
@@ -470,11 +513,15 @@ async function renderList() {
     }
   }
 
-  app.appendChild(el("div", { class: "filter-label" }, "Result"));
+  app.appendChild(el("div", { class: "filter-label" }, "View"));
+  app.appendChild(modeBar);
+  app.appendChild(statusLabel);
   app.appendChild(statusBar);
   app.appendChild(el("div", { class: "filter-label" }, "Topic"));
   app.appendChild(catBar);
+  app.appendChild(countEl);
   app.appendChild(listEl);
+  if (state.mode === "recent") { statusLabel.style.display = statusBar.style.display = "none"; }
   render();
 }
 

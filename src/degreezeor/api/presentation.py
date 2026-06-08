@@ -630,6 +630,18 @@ def build_coverage(session: Session) -> dict[str, Any]:
     for atype, status, n in type_rows:
         by_type.setdefault(atype, {})[status] = n
 
+    # By objective category (derived in Python from action/metric domain + action type).
+    cat_rows = session.execute(
+        select(EvaluationUnit.status, Action.type, Action.domain, Metric.domain)
+        .join(Action, Action.id == EvaluationUnit.action_id)
+        .join(Metric, Metric.id == EvaluationUnit.metric_id, isouter=True)
+    ).all()
+    by_category: dict[str, dict[str, int]] = {}
+    for status, atype, adomain, mdomain in cat_rows:
+        cat = category_for(adomain, atype, mdomain)
+        bucket = by_category.setdefault(cat, {})
+        bucket[status] = bucket.get(status, 0) + 1
+
     return {
         "total_evaluation_units": total,
         "scored": scored,
@@ -638,6 +650,7 @@ def build_coverage(session: Session) -> dict[str, Any]:
         "scored_share": round(scored / total, 4) if total else 0.0,
         "by_status": by_status,
         "by_action_type": by_type,
+        "by_category": by_category,
         "note": (
             "Complete visibility: every action considered is shown, including those we "
             "could not score. 'Insufficient evidence' is honest abstention, never a low score; "

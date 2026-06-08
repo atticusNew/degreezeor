@@ -921,6 +921,31 @@ async function renderCoverage() {
       el("thead", {}, el("tr", {}, el("th", {}, "type"), el("th", { class: "right" }, "scored"),
         el("th", { class: "right" }, "insufficient"), el("th", { class: "right" }, "non-scoreable"), el("th", { class: "right" }, "total"))),
       el("tbody", {}, ...rows))));
+
+  // By category: honest coverage per topic (links to that category's actions).
+  let catMeta = [];
+  try { catMeta = (await getJSON("/api/categories")).categories; } catch (e) { /* best-effort */ }
+  const catLabel = (k) => (catMeta.find((m) => m.key === k) || {}).label || k;
+  const catOrder = catMeta.map((m) => m.key);
+  const catRows = Object.entries(c.by_category || {})
+    .sort((a, b) => catOrder.indexOf(a[0]) - catOrder.indexOf(b[0]))
+    .map(([cat, statuses]) => {
+      const tot = Object.values(statuses).reduce((a, b) => a + b, 0);
+      return el("tr", {},
+        el("td", {}, el("a", { href: "#/actions?category=" + cat }, catLabel(cat))),
+        el("td", { class: "right mono" }, String(statuses.scored || 0)),
+        el("td", { class: "right mono" }, String(statuses.insufficient_evidence || 0)),
+        el("td", { class: "right mono" }, String(tot - (statuses.scored || 0) - (statuses.insufficient_evidence || 0))),
+        el("td", { class: "right mono" }, String(tot)));
+    });
+  if (catRows.length) {
+    app.appendChild(el("div", { class: "card" },
+      el("h3", {}, "By category"),
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "category"), el("th", { class: "right" }, "scored"),
+          el("th", { class: "right" }, "insufficient"), el("th", { class: "right" }, "non-scoreable"), el("th", { class: "right" }, "total"))),
+        el("tbody", {}, ...catRows))));
+  }
   app.appendChild(el("p", { class: "muted", style: "font-size:12px" }, c.note));
 }
 

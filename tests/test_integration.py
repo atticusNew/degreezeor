@@ -95,6 +95,8 @@ def test_full_stack_composes(session) -> None:
     assert cov["scored"] == 2
     assert cov["total_evaluation_units"] == 2
     assert "eo" in cov["by_action_type"]
+    assert "public_safety" in cov["by_category"]
+    assert cov["by_category"]["public_safety"].get("scored") == 2
 
     # 2) Official roll-ups: each signer has a composite (attribution-weighted).
     officials = presentation.list_officials(session, scored_only=True)

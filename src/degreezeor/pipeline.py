@@ -137,6 +137,36 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         enacted_year=2013, enacted_month=7, lag_window_months=48,
         signer_name="Pat McCrory", signer_party="R",
     ),
+    "WI-2011-ACT32": StatePolicySpec(
+        key="WI-2011-ACT32",
+        title="Wisconsin 2011 budget and tax cuts (Act 32)",
+        state_fips="55",
+        state_name="Wisconsin",
+        # Comparable industrial/Midwest states without comparable 2011 income-tax cuts.
+        donor_fips=["27", "17", "19", "26", "42"],  # MN IL IA MI PA
+        source_url="https://docs.legis.wisconsin.gov/2011/related/acts/32",
+        objective_text=(
+            "Cut taxes and restrain spending to grow Wisconsin's economy and create jobs "
+            "(the administration's stated goal of 250,000 private-sector jobs)."
+        ),
+        enacted_year=2011, enacted_month=6, lag_window_months=48,
+        signer_name="Scott Walker", signer_party="R",
+    ),
+    "ME-2011-TAX": StatePolicySpec(
+        key="ME-2011-TAX",
+        title="Maine 2011 tax cuts (LD 1043 / PL 2011 c.380)",
+        state_fips="23",
+        state_name="Maine",
+        # New England + New York comparison pool without comparable 2011 income-tax cuts.
+        donor_fips=["33", "50", "25", "09", "44", "36"],  # NH VT MA CT RI NY
+        source_url="https://legislature.maine.gov/LawMakerWeb/summary.asp?SessionID=9&paper=HP0778",
+        objective_text=(
+            "Reduce Maine's top individual income tax rate (8.5% to 7.95%) to provide tax relief "
+            "and grow the state economy."
+        ),
+        enacted_year=2011, enacted_month=6, lag_window_months=48,
+        signer_name="Paul LePage", signer_party="R",
+    ),
 }
 
 

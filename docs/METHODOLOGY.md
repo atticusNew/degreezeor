@@ -144,7 +144,8 @@ clearly separated layers, never blended:
 - **Record layer ("what they acted on"):** the **unscored** legislative record — bills a member
   **sponsored** and   **cosponsored** (Congress.gov), plus how they **voted** on recorded roll-call
   votes (House: clerk.house.gov; Senate: senate.gov — keyless Tier 0, senators resolved via
-  the lis↔bioguide crosswalk) — grouped by the objective category taxonomy. These are
+  the lis↔bioguide crosswalk), and for the executive, the **executive orders a president
+  signed** (Federal Register) — grouped by the objective category taxonomy. These are
   source-anchored facts describing breadth and positions by topic. They are **never** fed into any
   score, attribution, or the party-symmetry monitor; they exist purely so the public record of
   activity is visible alongside (and visually distinct from) the rigorous scored layer. The

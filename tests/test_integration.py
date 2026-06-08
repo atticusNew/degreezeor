@@ -228,3 +228,33 @@ def test_voting_record_surface(session) -> None:
     # Votes feed the activity timeline (recent years, not only scored actions).
     years = {d["year"] for d in card["activity"]["by_year"]}
     assert {2025} <= years
+
+
+def test_executive_actions_record_surface(session) -> None:
+    """A president's signed executive orders surface as an unscored record across ALL years,
+    feed the activity timeline, and are never a score."""
+    from degreezeor.core.models import Action, DataSource, ExecutiveOrder, Official
+    from degreezeor.core.reference import ensure_us_federal
+
+    src = _get_or_create_source(session)
+    jur = ensure_us_federal(session)
+    assert isinstance(src, DataSource)
+    pres = Official(full_name="Pat President", bioguide_id="P000999")
+    session.add(pres)
+    session.flush()
+    for i, yr in enumerate((2017, 2025, 2026)):
+        a = Action(type="eo", title=f"EO about energy {i}", action_date=date(yr, 2, 1),
+                   jurisdiction_id=jur.id, source_id=src.id, source_url=f"https://fr/{i}",
+                   native_identifier=f"EO-REC-{i}")
+        session.add(a)
+        session.flush()
+        session.add(ExecutiveOrder(action_id=a.id, eo_number=str(14000 + i),
+                                   signing_official_id=pres.id))
+    session.flush()
+
+    card = presentation.build_official(session, pres.id)
+    assert card["executive"]["total"] == 3
+    years = {d["year"] for d in card["activity"]["by_year"]}
+    assert {2017, 2025, 2026} <= years
+    assert card["activity"]["first_year"] == 2017 and card["activity"]["last_year"] == 2026
+    assert card["rollup"]["composite"] is None  # record only; never a score

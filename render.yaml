@@ -49,20 +49,13 @@ services:
       - key: DZ_EIA_API_KEY
         sync: false
 
-  # ---- Static frontend (SPA) ----
-  - type: web
-    name: degreezeor-web
-    runtime: static
-    # Inject the API base URL into config.js at build time from the API service host.
-    buildCommand: "printf 'window.DZ_API_BASE=\"https://%s\";\\n' \"$API_HOST\" > web/config.js"
-    staticPublishPath: web
-    envVars:
-      - key: API_HOST
-        fromService: { type: web, name: degreezeor-api, property: host }
-    routes:
-      - type: rewrite                                # SPA uses hash routing; serve index for all
-        source: /*
-        destination: /index.html
+  # NOTE: The SPA is served by the API web service itself (FastAPI mounts web/ at "/"),
+  # so the UI and /api share one origin and config.js can stay empty (same-origin). This
+  # avoids a separate static site whose API base must be injected from the API host — Render's
+  # `fromService.host` yields the INTERNAL service name (e.g. "degreezeor-api"), not the public
+  # "*.onrender.com" host, which produced ERR_NAME_NOT_RESOLVED. Single-service = one URL that
+  # serves both the UI and the API. (To split later, host the static site and hardcode its
+  # DZ_API_BASE to the API's public https URL.)
 
   # ---- Nightly ingestion + scoring (cron) ----
   - type: cron

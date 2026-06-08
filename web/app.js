@@ -759,23 +759,39 @@ async function renderOfficials() {
     for (const o of shown) listEl.appendChild(officialRow(o));
   }
 
+  let dropMatches = [];
+  let activeIdx = -1;
+  function highlight() {
+    for (let i = 0; i < drop.children.length; i++) drop.children[i].classList.toggle("active", i === activeIdx);
+    if (activeIdx >= 0 && drop.children[activeIdx]) drop.children[activeIdx].scrollIntoView({ block: "nearest" });
+  }
   function renderDrop() {
     drop.innerHTML = "";
+    activeIdx = -1;
     if (!state.q) { drop.style.display = "none"; return; }
-    const top = index.filter((o) => matchOfficial(o._blob, state.q)).slice(0, 8);
-    if (!top.length) { drop.style.display = "none"; return; }
+    dropMatches = index.filter((o) => matchOfficial(o._blob, state.q)).slice(0, 8);
+    if (!dropMatches.length) { drop.style.display = "none"; return; }
     drop.style.display = "block";
-    for (const o of top) {
+    dropMatches.forEach((o) => {
       drop.appendChild(el("div", { class: "ta-item", onmousedown: (e) => { e.preventDefault(); location.hash = `#/official/${o.id}`; } },
         el("span", {}, formatName(o.name)),
         o.position ? el("span", { class: "pill" }, o.position) : null,
         o.scored_actions > 0 ? el("span", { class: "ta-scored" }, `${o.scored_actions} scored`) : null));
-    }
+    });
   }
 
   search.addEventListener("input", () => { state.q = search.value.trim().toLowerCase(); renderDrop(); renderList(); });
   search.addEventListener("focus", renderDrop);
   search.addEventListener("blur", () => { setTimeout(() => { drop.style.display = "none"; }, 150); });
+  search.addEventListener("keydown", (e) => {
+    const open = drop.style.display === "block" && dropMatches.length;
+    if (e.key === "ArrowDown" && open) { e.preventDefault(); activeIdx = Math.min(activeIdx + 1, dropMatches.length - 1); highlight(); }
+    else if (e.key === "ArrowUp" && open) { e.preventDefault(); activeIdx = Math.max(activeIdx - 1, 0); highlight(); }
+    else if (e.key === "Enter") {
+      const pick = activeIdx >= 0 ? dropMatches[activeIdx] : dropMatches[0];
+      if (pick) { e.preventDefault(); location.hash = `#/official/${pick.id}`; }
+    } else if (e.key === "Escape") { drop.style.display = "none"; }
+  });
 
   for (const L of letters) {
     const b = el("button", { class: "azbtn" + (L === "All" ? " active" : ""), type: "button" }, L);
@@ -822,6 +838,26 @@ function officialActionRow(a) {
       a.composite !== null
         ? el("span", { class: "badge scored" }, "composite " + fmt(a.composite, 1))
         : statusBadge(a.status || "pending")));
+}
+
+function activityCard(actions) {
+  const counts = {};
+  for (const a of actions) if (a.date) { const y = +a.date.slice(0, 4); counts[y] = (counts[y] || 0) + 1; }
+  const ys = Object.keys(counts).map(Number).sort((a, b) => a - b);
+  if (ys.length < 2) return null;
+  const all = [];
+  for (let y = ys[0]; y <= ys[ys.length - 1]; y++) all.push([y, counts[y] || 0]);
+  const max = Math.max(...all.map((d) => d[1]), 1);
+  const spark = el("div", { class: "spark" });
+  for (const [y, n] of all) {
+    spark.appendChild(el("div", { class: "spark-col", title: `${y}: ${n} action(s)` },
+      el("div", { class: "spark-bar", style: `height:${Math.round((n / max) * 46) + 2}px` }),
+      el("div", { class: "spark-yr" }, "\u2019" + String(y).slice(2))));
+  }
+  return el("div", { class: "card" },
+    el("h3", {}, "Activity over time"),
+    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" }, "Attributable actions per year (when and how often they act)."),
+    el("div", { class: "spark-wrap" }, spark));
 }
 
 async function officialChallengeSection(card) {
@@ -886,6 +922,10 @@ async function renderOfficialDetail(id) {
       card.most_active_category ? el("span", { class: "chip" }, "most active in ", el("b", {}, card.most_active_category)) : null),
     el("div", { style: "margin-top:12px" },
       el("a", { href: "#", onclick: (e) => { e.preventDefault(); howMeasuredModal(r.note); } }, "How is this measured? →"))));
+
+  // Activity over time (when / how often they act).
+  const actCard = activityCard(card.actions || []);
+  if (actCard) app.appendChild(actCard);
 
   // Record by category: compact mauve bars (the meaningful, neutral breakdown).
   if (card.by_category && card.by_category.length) {

@@ -233,7 +233,7 @@ button:disabled { opacity: .55; cursor: default; }
   box-shadow: 0 12px 40px rgba(0,0,0,.5); }
 .ta-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; border-bottom: 1px solid var(--line); }
 .ta-item:last-child { border-bottom: none; }
-.ta-item:hover { background: var(--panel2); }
+.ta-item:hover, .ta-item.active { background: var(--accent-soft); }
 .ta-item .ta-scored { margin-left: auto; color: var(--score); font-size: 12px; font-weight: 600; }
 .azbar { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 10px; }
 .azbtn { background: var(--panel); color: var(--muted); border: 1px solid var(--line); border-radius: 6px;
@@ -246,6 +246,13 @@ button:disabled { opacity: .55; cursor: default; }
 /* Full-width select that never overflows its card (e.g. the official challenge picker). */
 .full-select { display: block; width: 100%; max-width: 100%; margin-top: 6px; padding: 9px 10px;
   background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; }
+
+/* Activity sparkline (official: actions per year). */
+.spark-wrap { overflow-x: auto; }
+.spark { display: flex; align-items: flex-end; gap: 6px; min-height: 64px; padding-top: 6px; }
+.spark-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 0 0 auto; }
+.spark-bar { width: 18px; background: linear-gradient(180deg, var(--score), #6f6391); border-radius: 3px 3px 0 0; }
+.spark-yr { font-size: 10px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
 
 /* Loading spinner (Render free-tier cold starts can take a moment). */
 .spin-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 60px 20px; color: var(--muted); }

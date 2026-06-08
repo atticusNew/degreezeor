@@ -2,8 +2,32 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from degreezeor.scoring.confidence import compute_confidence
 from degreezeor.scoring.target_outcome import compute_target_outcome
+
+
+def test_fingerprint_stable_across_numeric_float_roundtrip() -> None:
+    """Reproducibility keystone (regression): a trillion-scale money value passed as a
+    raw float (score time) vs. its float-expanded Decimal (after a NUMERIC->REAL->Decimal
+    storage round-trip, as on SQLite) MUST yield the identical fingerprint + outcome.
+    Caught by the reproducibility self-audit: at trillion-scale a double can't hold 4-dp
+    precision, so the cents-quantization at entry is what keeps the hash bit-stable."""
+    realized = 1393415222232.11  # DoD FY2024 obligated
+    target = 1991791156124.69  # DoD FY2024 budgetary resources
+    at_score = compute_target_outcome(
+        realized=realized, target=target, sign_goal=1,
+        directly_attributable=True, eval_period="2024-09-01")
+    # Decimal(float) reproduces the full binary expansion a DB read-back produces.
+    at_rescore = compute_target_outcome(
+        realized=Decimal(realized), target=Decimal(target), sign_goal=1,
+        directly_attributable=True, eval_period="2024-09-01")
+    assert at_score.outcome.input_hash == at_rescore.outcome.input_hash
+    assert at_score.outcome.observed == at_rescore.outcome.observed
+    assert at_score.outcome.baseline_pooled == at_rescore.outcome.baseline_pooled
+    assert at_score.outcome.delta == at_rescore.outcome.delta
+    assert at_score.s_outcome == at_rescore.s_outcome
 
 
 def test_full_delivery_scores_high() -> None:

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from degreezeor.core.hashing import hash_payload
 from degreezeor.core.interfaces import BaselineEstimate
-from degreezeor.core.numeric import D, clamp_score, q_score
+from degreezeor.core.numeric import D, clamp_score, q_money, q_score
 from degreezeor.scoring.outcome import OutcomeComputation
 
 # Relative tolerance: a gap smaller than this share of the target is "on target"
@@ -42,7 +42,13 @@ def compute_target_outcome(
     eval_period: str,
     tolerance: object = DEFAULT_TOLERANCE,
 ) -> TargetComputation:
-    realized_d, target_d = D(realized), D(target)
+    # Quantize the realized/target amounts to cents at entry. This is the reproducibility
+    # keystone for money: a NUMERIC value round-trips through a float in some stores (e.g.
+    # SQLite REAL), and at trillion-scale a double cannot hold sub-cent precision — so a
+    # score-time float and a re-fetched-from-DB Decimal can differ at the 4th decimal and
+    # break the bit-reproducible hash. Cents is coarser than that float noise (and lossless
+    # for the bounded 0..100 indices this also scores), so the fingerprint is stable.
+    realized_d, target_d = q_money(D(realized)), q_money(D(target))
     if target_d == 0:
         raise ValueError("target must be non-zero")
     delta = realized_d - target_d

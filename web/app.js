@@ -23,16 +23,35 @@ const el = (tag, attrs = {}, ...kids) => {
 };
 const fmt = (x, d = 2) => (x === null || x === undefined ? "n/a" : Number(x).toFixed(d));
 
-// Consistent official name formatting: "Last, First (Party)". Strips honorifics and any
-// embedded "[D-CT-2]" junk; handles single-token names and Jr./Sr./III suffixes. Pass
-// party to append it (use null/"" -> "(Unknown)"); omit party to show just the name.
-function formatName(name, party) {
-  if (!name) return "Unknown";
-  // Use RegExp(string) rather than /literals/ so the static paren-balance guard parses cleanly.
-  let s = String(name)
+// Strip honorifics and embedded "[D-CT-2]" junk; collapse whitespace.
+// Use RegExp(string) rather than /literals/ so the static paren-balance guard parses cleanly.
+function cleanName(name) {
+  if (!name) return "";
+  return String(name)
     .replace(new RegExp("\\[[^\\]]*\\]", "g"), "")
     .replace(new RegExp("\\b(Rep|Sen|Gov|President|Senator|Representative|Dr)\\.?\\s+", "gi"), "")
     .replace(new RegExp("\\s+", "g"), " ").trim();
+}
+
+// Natural order "First Last" for headlines and prose (we talk about people naturally).
+// Lists and tables use formatName() -> "Last, First" for scanning.
+function formatNameNatural(name) {
+  const s = cleanName(name);
+  if (!s) return "Unknown";
+  if (s.includes(",")) {
+    const idx = s.indexOf(",");
+    const last = s.slice(0, idx).trim();
+    const rest = s.slice(idx + 1).trim();
+    return rest ? `${rest} ${last}` : last;
+  }
+  return s;
+}
+
+// Consistent official name formatting: "Last, First (Party)". Handles single-token names
+// and Jr./Sr./III suffixes. Pass party to append it (null/"" -> "(Unknown)"); omit to show name only.
+function formatName(name, party) {
+  if (!name) return "Unknown";
+  const s = cleanName(name);
   let formatted;
   if (s.includes(",")) {
     formatted = s.replace(new RegExp("\\s*,\\s*"), ", ");
@@ -564,7 +583,11 @@ async function renderDetail(id) {
         el("tbody", {}, ...card.attribution.map((a) =>
           el("tr", {},
             el("td", {}, a.is_residual ? el("span", { class: "pill" }, a.role.replaceAll("_", " ")) : a.role),
-            el("td", {}, a.official_name ? formatName(a.official_name) : "n/a"),
+            el("td", {}, a.official_name
+              ? (a.official_id
+                  ? el("a", { href: `#/official/${a.official_id}` }, formatName(a.official_name))
+                  : formatName(a.official_name))
+              : "n/a"),
             el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
             el("td", { class: "right mono" }, `[${(a.ci_low * 100).toFixed(0)}, ${(a.ci_high * 100).toFixed(0)}]%`)))))));
   }
@@ -716,7 +739,7 @@ async function renderOfficialDetail(id) {
   const o = card.official;
   const scored = r.composite !== null;
   const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(0) + "%");
-  const who = formatName(o.name);
+  const who = formatNameNatural(o.name);
   const plain = scored
     ? `Across the ${r.scored_actions} of ${who}'s ${r.total_actions} attributable action(s) we could ` +
       `score, the goals those actions set were met to ${fmt(r.composite, 1)} out of 100, weighted by confidence. ` +
@@ -727,7 +750,7 @@ async function renderOfficialDetail(id) {
   // Headline: name + big composite + plain-language summary + secondary chips.
   // Party is intentionally not shown; office (where known) and the record are.
   app.appendChild(el("div", { class: "headline" },
-    el("p", { class: "name" }, formatName(o.name)),
+    el("p", { class: "name" }, formatNameNatural(o.name)),
     el("div", { class: "submeta" },
       [o.position, o.bioguide_id ? `Bioguide ${o.bioguide_id}` : "Official record"]
         .filter(Boolean).join(" · ")),

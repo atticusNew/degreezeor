@@ -167,6 +167,52 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         enacted_year=2011, enacted_month=6, lag_window_months=48,
         signer_name="Paul LePage", signer_party="R",
     ),
+    "IN-2013-HEA1001": StatePolicySpec(
+        key="IN-2013-HEA1001",
+        title="Indiana 2013 income tax cut (HEA 1001)",
+        state_fips="18",
+        state_name="Indiana",
+        # Midwest/border states without a comparable 2013 income-tax cut.
+        donor_fips=["17", "26", "27", "42", "19"],  # IL MI MN PA IA
+        source_url="http://iga.in.gov/legislative/2013/bills/house/1001",
+        objective_text=(
+            "Reduce the individual income tax rate (3.4% to 3.23%) and cut other taxes to grow "
+            "Indiana's economy and create jobs (the administration's stated jobs budget)."
+        ),
+        enacted_year=2013, enacted_month=5, lag_window_months=48,
+        signer_name="Mike Pence", signer_party="R",
+    ),
+    "OH-2013-HB59": StatePolicySpec(
+        key="OH-2013-HB59",
+        title="Ohio 2013 income tax cut (HB 59 budget)",
+        state_fips="39",
+        state_name="Ohio",
+        # Regional states without a comparable 2013 income-tax cut.
+        donor_fips=["42", "26", "17", "27", "21"],  # PA MI IL MN KY
+        source_url="https://search-prod.lis.state.oh.us/api/v2/general_assembly_130/legislation/hb59",
+        objective_text=(
+            "Cut individual income tax rates by 10% over three years and deduct small-business "
+            "income to create a more job-friendly tax climate and spur job creation in Ohio."
+        ),
+        enacted_year=2013, enacted_month=6, lag_window_months=48,
+        signer_name="John Kasich", signer_party="R",
+    ),
+    "MO-2014-SB509": StatePolicySpec(
+        key="MO-2014-SB509",
+        title="Missouri 2014 income tax cut (SB 509)",
+        state_fips="29",
+        state_name="Missouri",
+        # Regional states without a comparable 2014 income-tax cut.
+        donor_fips=["17", "19", "21", "31", "27"],  # IL IA KY NE MN
+        source_url="https://senate.mo.gov/14info/BTS_Web/Bill.aspx?SessionType=R&BillID=27723520",
+        objective_text=(
+            "Phase in a cut to the top individual income tax rate (6% to 5.5%) and a business-income "
+            "deduction to stimulate Missouri's economy, help small businesses grow, and create jobs."
+        ),
+        # Enacted over the governor's veto; credit goes to the bill's sponsor, not a signer.
+        enacted_year=2014, enacted_month=5, lag_window_months=48,
+        sponsor_name="Will Kraus", sponsor_party="R",
+    ),
 }
 
 

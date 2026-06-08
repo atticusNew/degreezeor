@@ -130,7 +130,9 @@ evidence."** This is the correct, humble behavior — not a failure.
 
 ## 9. Bias-minimization protocol
 
-1. Identical pipeline for all officials; **scoring code is party-blind** (statically enforced by tests).
+1. Identical pipeline for all officials; **scoring code is party-blind** — enforced statically (no
+   `scoring/` module reads party) **and** behaviourally (swapping an official's party cannot change a
+   stored score).
 2. **Pre-registration**: metric + baseline + lag + sign_goal hashed to the audit chain **before**
    outcome data is fetched — kills outcome-driven cherry-picking.
 3. **Party-masked** objective→metric selection.
@@ -145,6 +147,13 @@ evidence."** This is the correct, humble behavior — not a failure.
 10. **Dispute / appeal process** — anyone can trigger an independent, deterministic re-run; the
     result (reproduced vs. corrected) + public diff is recorded on the audit chain.
 11. **Relationship graph** — officials↔actions↔jurisdictions↔metrics exposed for transparency.
+12. **Integrity-at-scale monitoring** — because even a party-blind formula can produce uneven
+    *distributions*, the platform publishes the party-level distribution of scored outcomes
+    (attribution-weighted mean composite + coverage per party) and flags any systematic
+    composite-gap or scored-share-gap for **human methodological review** of metric/baseline
+    choices — never an automated correction, and never a change to any individual score. Party is
+    read here for audit only. (`/api/integrity/party-symmetry`, `degreezeor party-symmetry`, and the
+    "Integrity" view.)
 
 ## 10. What cannot be made fully empirical
 

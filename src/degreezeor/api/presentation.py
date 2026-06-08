@@ -391,10 +391,13 @@ def official_activity(session: Session, official_id: int) -> dict[str, Any]:
         .where(Bill.sponsor_official_id == official_id, Action.type == "bill")
     ).all()
     by_cat: dict[str, int] = defaultdict(int)
+    by_year: dict[int, int] = defaultdict(int)
     items = []
     for title, domain, adate, url, bn in rows:
         cat = category_for(domain, "bill")
         by_cat[cat] += 1
+        if adate:
+            by_year[adate.year] += 1
         items.append({
             "title": title, "date": adate.isoformat() if adate else None,
             "category": cat, "category_label": category_label(cat),
@@ -408,12 +411,14 @@ def official_activity(session: Session, official_id: int) -> dict[str, Any]:
     # Cosponsored bills: what else they backed (also unscored breadth).
     co_by_cat: dict[str, int] = defaultdict(int)
     co_total = 0
-    for (domain,) in session.execute(
-        select(Action.domain).join(BillCosponsor, BillCosponsor.action_id == Action.id)
+    for domain, adate in session.execute(
+        select(Action.domain, Action.action_date).join(BillCosponsor, BillCosponsor.action_id == Action.id)
         .where(BillCosponsor.official_id == official_id, Action.type == "bill")
     ).all():
         co_by_cat[category_for(domain, "bill")] += 1
         co_total += 1
+        if adate:
+            by_year[adate.year] += 1
     co_cats = sorted(
         ({"category": k, "category_label": category_label(k), "count": v} for k, v in co_by_cat.items()),
         key=lambda c: (-c["count"], category_sort_key(c["category"])),
@@ -421,6 +426,7 @@ def official_activity(session: Session, official_id: int) -> dict[str, Any]:
     return {
         "sponsored_total": len(rows), "by_category": cats, "recent": items[:10],
         "cosponsored_total": co_total, "cosponsored_by_category": co_cats,
+        "by_year": dict(by_year),
     }
 
 
@@ -516,13 +522,23 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
         })
     categories.sort(key=lambda x: category_sort_key(x["category"]))
 
-    # Activity summary (when / how often they act) from dated actions. Empirical, neutral.
-    years = sorted(int(d["date"][:4]) for d in details if d.get("date"))
+    # Activity summary (when / how often they act). Merge ALL dated activity: scored
+    # attributable actions PLUS the record layer (bills sponsored + cosponsored), so the
+    # timeline reflects recent legislative activity, not only the older scoreable actions.
+    record = official_activity(session, official_id)
+    year_counts: dict[int, int] = defaultdict(int)
+    for d in details:
+        if d.get("date"):
+            year_counts[int(d["date"][:4])] += 1
+    for y, n in record.get("by_year", {}).items():
+        year_counts[int(y)] += n
+    years = sorted(year_counts)
     activity = {
-        "count": len(details),
-        "dated_count": len(years),
+        "count": len(details) + record["sponsored_total"] + record["cosponsored_total"],
+        "dated_count": sum(year_counts.values()),
         "first_year": years[0] if years else None,
         "last_year": years[-1] if years else None,
+        "by_year": [{"year": y, "count": year_counts[y]} for y in years],
     }
     # Most-active category by number of attributable actions (descriptive only).
     most_active = max(categories, key=lambda c: c["total_actions"], default=None)
@@ -550,7 +566,7 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
         },
         "by_category": categories,
         "activity": activity,
-        "record": official_activity(session, official_id),
+        "record": record,
         "most_active_category": most_active_category,
         "actions": details,
     }

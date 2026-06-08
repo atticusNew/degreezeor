@@ -72,6 +72,13 @@ def list_officials(
             party=party, action_type=action_type, category=category)
 
 
+@app.get("/api/officials-index")
+def officials_index() -> list[dict]:
+    """Lightweight directory for client-side typeahead / A-to-Z browse (most-active first)."""
+    with session_scope() as s:
+        return presentation.officials_index(s)
+
+
 @app.get("/api/officials/{official_id}")
 def get_official(official_id: int) -> dict:
     with session_scope() as s:

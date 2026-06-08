@@ -635,97 +635,134 @@ async function renderDetail(id) {
           el("td", { class: "mono" }, (s.retrieved_at || "").slice(0, 19))))))));
 }
 
+function officialRow(o) {
+  const titleRow = el("div", { class: "title" }, formatName(o.name));
+  if (o.position) titleRow.appendChild(el("span", { class: "pill", style: "margin-left:8px" }, o.position));
+  const meta = o.scored_actions > 0
+    ? `${o.scored_actions} scored of ${o.total_actions} action(s) · role share ${(o.involvement * 100).toFixed(1)}%`
+    : `${o.total_actions} action(s) · role share ${(o.involvement * 100).toFixed(1)}%`;
+  return el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
+    el("div", {}, titleRow, el("div", { class: "muted mono" }, meta)),
+    el("div", { style: "text-align:right" },
+      o.scored_actions > 0
+        ? el("span", { class: "badge scored" }, `${o.scored_actions} scored`)
+        : el("span", { class: "badge insufficient_evidence" }, "no scored action yet")));
+}
+
 async function renderOfficials() {
   const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
+  let index = [];
+  try { index = await getJSON("/api/officials-index"); } catch (e) { /* handled below */ }
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Officials"));
-  // Short, neutral framing; the depth lives in About and the per-official drill-down.
-  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 6px" },
-    "How well an official's actions met the goals those actions set, weighted by their share of credit ",
-    tip("composite"),
-    ". Shown with coverage ", tip("coverage"), ". Search or filter to begin."));
+  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
+    "Search a name, jump by letter, or browse the most active. Open anyone for their record."));
 
-  // Search/filter panel — labels left, inputs right. Party is intentionally absent
-  // from the user-facing experience; filter by topic category instead.
-  const params = new URLSearchParams(location.hash.split("?")[1] || "");
-  const search = el("input", { type: "text", placeholder: "type a name…", value: params.get("q") || "" });
-  let catOptions = [["", "All categories"]];
-  try {
-    const cats = await getJSON("/api/categories");
-    catOptions = catOptions.concat(cats.categories.map((c) => [c.key, c.label]));
-  } catch (e) { /* categories are best-effort; the filter still renders */ }
-  const catSel = selectEl(catOptions, params.get("category") || "");
-  const typeSel = selectEl(
-    [["", "All action types"], ["law", "Laws"], ["eo", "Executive orders"], ["regulation", "Regulations"], ["budget", "Budget execution"]],
-    params.get("action_type") || "");
-  const scoredOnly = el("input", { type: "checkbox" });
-  if (params.get("scored_only") === "1") scoredOnly.checked = true;
-  const showAll = el("input", { type: "checkbox" });
-  if (params.get("all") === "1") showAll.checked = true;
-
-  const apply = () => {
-    const p = new URLSearchParams();
-    if (search.value.trim()) p.set("q", search.value.trim());
-    if (catSel.value) p.set("category", catSel.value);
-    if (typeSel.value) p.set("action_type", typeSel.value);
-    if (scoredOnly.checked) p.set("scored_only", "1");
-    if (showAll.checked) p.set("all", "1");
-    location.hash = "#/officials" + (p.toString() ? "?" + p.toString() : "");
-  };
-  search.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
-  for (const ctl of [catSel, typeSel, scoredOnly, showAll]) ctl.addEventListener("change", apply);
-
-  const frow = (label, control, extra) => el("div", { class: "frow" },
-    el("div", { class: "flabel" }, label, extra || null), control);
-  app.appendChild(el("div", { class: "filters" },
-    frow("Official", search),
-    frow("Category", catSel),
-    frow("Action type", typeSel),
-    frow("Options", el("div", { class: "opts" },
-      el("label", {}, scoredOnly, "scored only"),
-      el("label", {}, showAll, "show all",
-        tip("By default we hide officials whose only tie to a scored action is a negligible role " +
-            "(e.g. one vote in a lopsided roll-call, <0.5%). 'Show all' includes them.")))),
-    el("div", { class: "fbtns" },
-      el("button", { onclick: apply }, "Search"),
-      el("a", { class: "cta ghost", href: "#/officials", style: "padding:8px 14px;border-radius:6px" }, "Clear"))));
-
-  // Do not list everyone by default. Show results only once a search or filter is applied.
-  const hasQuery = ["q", "category", "action_type", "scored_only"].some((k) => params.get(k));
-  if (!hasQuery) {
+  if (!index.length) {
     app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
-      el("p", {}, "Search by name, or pick a category or action type, to see officials."),
-      el("p", { style: "font-size:13px" },
-        "Tip: try ", el("a", { href: "#/officials?scored_only=1" }, "officials with a scored action"),
-        " to see who has a result.")));
+      el("p", {}, "The directory is unavailable right now. The server may be waking up; retry in a moment.")));
     return;
   }
 
-  const qs = new URLSearchParams();
-  if (params.get("q")) qs.set("q", params.get("q"));
-  if (params.get("category")) qs.set("category", params.get("category"));
-  if (params.get("action_type")) qs.set("action_type", params.get("action_type"));
-  if (params.get("scored_only")) qs.set("scored_only", "true");
-  // Hide negligible (<0.5%) involvement by default; "show all" turns the floor off.
-  if (params.get("all") !== "1") qs.set("min_involvement", "0.005");
-  const officials = await getJSON("/api/officials" + (qs.toString() ? "?" + qs.toString() : ""));
-  app.appendChild(el("div", { class: "muted mono", style: "margin-bottom:8px" },
-    `${officials.length} result(s)` + (params.get("all") === "1" ? ", including negligible-role ties" : "")));
-  for (const o of officials) {
-    const scoredText = o.composite !== null
-      ? `composite ${fmt(o.composite, 1)} · confidence ${(o.confidence * 100).toFixed(0)}%`
-      : "insufficient evidence";
-    const meta = `${o.scored_actions}/${o.total_actions} scored · ` +
-      `coverage ${(o.coverage * 100).toFixed(0)}% · role share ${(o.involvement * 100).toFixed(1)}%`;
-    const titleRow = el("div", { class: "title" }, formatName(o.name));
-    if (o.position) titleRow.appendChild(el("span", { class: "pill", style: "margin-left:8px" }, o.position));
-    app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
-      el("div", {}, titleRow,
-        el("div", { class: "muted mono" }, meta)),
-      el("div", { style: "text-align:right" },
-        o.composite !== null ? el("span", { class: "badge scored" }, scoredText)
-          : el("span", { class: "badge insufficient_evidence" }, scoredText))));
+  // Precompute a lowercase search blob (covers 'Last, First', 'First Last', raw) + last initial.
+  for (const o of index) {
+    o._blob = `${formatName(o.name)} ${formatNameNatural(o.name)} ${o.name || ""}`.toLowerCase();
+    const ln = formatName(o.name);
+    o._initial = (ln[0] || "#").toUpperCase();
+    if (!new RegExp("[A-Z]").test(o._initial)) o._initial = "#";
   }
+
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const state = {
+    q: (params.get("q") || "").toLowerCase(),
+    letter: "",
+    scoredOnly: params.get("scored_only") === "1",
+    cat: params.get("category") || "",
+  };
+
+  // --- Controls ---
+  const search = el("input", { type: "text", placeholder: "Search an official by name…",
+    autocomplete: "off", "aria-label": "Search officials", value: params.get("q") || "" });
+  const drop = el("div", { class: "typeahead" });
+  const searchWrap = el("div", { class: "search-wrap" }, search, drop);
+
+  const letters = ["All", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("")];
+  const azBar = el("div", { class: "azbar" });
+
+  let catCats = [];
+  try { catCats = (await getJSON("/api/categories")).categories; } catch (e) { /* best-effort */ }
+  const catSel = selectEl([["", "All categories"], ...catCats.map((c) => [c.key, c.label])], state.cat);
+  const scoredOnly = el("input", { type: "checkbox" });
+  scoredOnly.checked = state.scoredOnly;
+
+  const countEl = el("div", { class: "muted mono", style: "margin:8px 0" });
+  const listEl = el("div", {});
+
+  function matches() {
+    let rows = index;
+    if (state.q) rows = rows.filter((o) => o._blob.includes(state.q));
+    if (state.letter && state.letter !== "All") rows = rows.filter((o) => o._initial === state.letter);
+    if (state.cat) rows = rows.filter((o) => (o.categories || []).includes(state.cat));
+    if (state.scoredOnly) rows = rows.filter((o) => o.scored_actions > 0);
+    return rows;
+  }
+
+  function renderList() {
+    listEl.innerHTML = "";
+    let rows = matches();
+    const browsing = !state.q && !state.letter && !state.cat && !state.scoredOnly;
+    const shown = browsing ? rows.slice(0, 30) : rows;
+    countEl.textContent = browsing
+      ? `Showing the ${shown.length} most active of ${rows.length} officials`
+      : `${rows.length} match(es)`;
+    if (browsing) countEl.textContent = `Most active officials (top ${shown.length})`;
+    if (!shown.length) {
+      listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+        el("p", {}, "No officials match. Try a different name or clear the filters.")));
+      return;
+    }
+    for (const o of shown) listEl.appendChild(officialRow(o));
+  }
+
+  function renderDrop() {
+    drop.innerHTML = "";
+    if (!state.q) { drop.style.display = "none"; return; }
+    const top = index.filter((o) => o._blob.includes(state.q)).slice(0, 8);
+    if (!top.length) { drop.style.display = "none"; return; }
+    drop.style.display = "block";
+    for (const o of top) {
+      drop.appendChild(el("div", { class: "ta-item", onmousedown: (e) => { e.preventDefault(); location.hash = `#/official/${o.id}`; } },
+        el("span", {}, formatName(o.name)),
+        o.position ? el("span", { class: "pill" }, o.position) : null,
+        o.scored_actions > 0 ? el("span", { class: "ta-scored" }, `${o.scored_actions} scored`) : null));
+    }
+  }
+
+  search.addEventListener("input", () => { state.q = search.value.trim().toLowerCase(); renderDrop(); renderList(); });
+  search.addEventListener("focus", renderDrop);
+  search.addEventListener("blur", () => { setTimeout(() => { drop.style.display = "none"; }, 150); });
+
+  for (const L of letters) {
+    const b = el("button", { class: "azbtn" + (L === "All" ? " active" : ""), type: "button" }, L);
+    b.addEventListener("click", () => {
+      state.letter = L === "All" ? "" : L;
+      for (const c of azBar.children) c.classList.toggle("active", c.textContent === L);
+      renderList();
+    });
+    azBar.appendChild(b);
+  }
+  catSel.addEventListener("change", () => { state.cat = catSel.value; renderList(); });
+  scoredOnly.addEventListener("change", () => { state.scoredOnly = scoredOnly.checked; renderList(); });
+
+  app.appendChild(searchWrap);
+  app.appendChild(azBar);
+  app.appendChild(el("div", { class: "off-filters" },
+    el("label", {}, "Topic ", catSel),
+    el("label", { class: "chk" }, scoredOnly, " scored only")));
+  app.appendChild(countEl);
+  app.appendChild(listEl);
+  renderList();
 }
 
 async function renderOfficialDetail(id) {

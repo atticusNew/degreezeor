@@ -603,6 +603,66 @@ def list_officials(
     return out
 
 
+def officials_index(session: Session) -> list[dict[str, Any]]:
+    """Lightweight directory of every attributed official for client-side typeahead /
+    A-to-Z browse. Minimal fields (no composite computation) so it loads fast and the
+    whole roster can be filtered in the browser. Sorted most-active first."""
+    aw_rows = session.execute(
+        select(AttributionWeight).where(
+            AttributionWeight.official_id.is_not(None),
+            AttributionWeight.is_residual.is_(False),
+        )
+    ).scalars().all()
+    eu_ids = {aw.eu_id for aw in aw_rows}
+    run_map = _latest_run_map(session, eu_ids)
+    score_map = _scores_by_run(session, [r.id for r in run_map.values()])
+    eu_cat: dict[int, str] = {}
+    if eu_ids:
+        for eid, atype, adomain, mdomain in session.execute(
+            select(EvaluationUnit.id, Action.type, Action.domain, Metric.domain)
+            .join(Action, Action.id == EvaluationUnit.action_id)
+            .join(Metric, Metric.id == EvaluationUnit.metric_id, isouter=True)
+            .where(EvaluationUnit.id.in_(eu_ids))
+        ).all():
+            eu_cat[eid] = category_for(adomain, atype, mdomain)
+    by_off: dict[int, list[AttributionWeight]] = defaultdict(list)
+    for aw in aw_rows:
+        by_off[aw.official_id].append(aw)
+    name_map = {o.id: o.full_name for o in session.execute(
+        select(Official).where(Official.id.in_(by_off.keys()))).scalars()}
+    position_map = _positions_for(session, set(by_off.keys()))
+
+    out = []
+    for oid, aws in by_off.items():
+        seen: set[int] = set()
+        scored = 0
+        involvement = 0.0
+        cats: set[str] = set()
+        for aw in aws:
+            involvement = max(involvement, float(aw.attribution))
+            if eu_cat.get(aw.eu_id):
+                cats.add(eu_cat[aw.eu_id])
+            if aw.eu_id in seen:
+                continue
+            seen.add(aw.eu_id)
+            run = run_map.get(aw.eu_id)
+            score = score_map.get(run.id) if run else None
+            if score is not None and not score.gated and score.composite is not None:
+                scored += 1
+        out.append({
+            "id": oid,
+            "name": name_map.get(oid),
+            "position": position_map.get(oid),
+            "total_actions": len(seen),
+            "scored_actions": scored,
+            "involvement": round(involvement, 4),
+            "categories": sorted(cats, key=category_sort_key),
+        })
+    # Most active first: by scored actions, then total actions, then involvement, then name.
+    out.sort(key=lambda x: (-x["scored_actions"], -x["total_actions"], -x["involvement"], x["name"] or ""))
+    return out
+
+
 def build_coverage(session: Session) -> dict[str, Any]:
     """Platform-wide coverage (PLAN.md §16 transparency / anti-cherry-picking).
 

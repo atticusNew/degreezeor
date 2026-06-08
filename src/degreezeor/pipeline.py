@@ -387,6 +387,36 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         signer_name="Phil Murphy", signer_party="D",
         metric_kind="wage",
     ),
+    "IL-2019-SB1": StatePolicySpec(
+        key="IL-2019-SB1",
+        title="Illinois 2019 minimum wage increase (SB 1, PA 101-0001)",
+        state_fips="17",
+        state_name="Illinois",
+        donor_fips=["18", "55", "19", "21", "48"],  # IN WI IA KY TX
+        source_url="https://www.ilga.gov/Legislation/PublicActs/View/101-0001",
+        objective_text=(
+            "Raise the state minimum wage to $15 per hour by 2025 to lift pay for low-wage workers "
+            "(Lifting Up Illinois Working Families Act)."
+        ),
+        enacted_year=2019, enacted_month=2, lag_window_months=48,
+        signer_name="J.B. Pritzker", signer_party="D",
+        metric_kind="wage",
+    ),
+    "OR-2016-SB1532": StatePolicySpec(
+        key="OR-2016-SB1532",
+        title="Oregon 2016 minimum wage increase (SB 1532)",
+        state_fips="41",
+        state_name="Oregon",
+        donor_fips=["16", "30", "49", "56", "48"],  # ID MT UT WY TX
+        source_url="https://olis.oregonlegislature.gov/liz/2016R1/Measures/Overview/SB1532",
+        objective_text=(
+            "Raise Oregon's minimum wage on a tiered schedule through 2022 to lift pay for "
+            "low-wage workers."
+        ),
+        enacted_year=2016, enacted_month=3, lag_window_months=48,
+        signer_name="Kate Brown", signer_party="D",
+        metric_kind="wage",
+    ),
     # --- Poverty and income (metric_kind="poverty"): scored on the Census SAIPE state
     # poverty rate, where a fall is toward the policy's own stated anti-poverty goal. ---
     "CA-2015-SB80": StatePolicySpec(

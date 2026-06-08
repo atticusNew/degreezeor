@@ -2072,6 +2072,101 @@ def ingest_member_bills(
     return inserted
 
 
+def _norm_legis_num(legis_num: str) -> str | None:
+    """Normalize a Clerk ``legis-num`` ('H R 1', 'H RES 5') to our bill_number ('HR1', 'HRES5').
+    Returns None for non-bill votes (QUORUM, MOTION, journal, etc.)."""
+    norm = (legis_num or "").replace(" ", "").replace(".", "").upper()
+    if not norm or not any(ch.isdigit() for ch in norm) or not norm[0].isalpha():
+        return None
+    return norm
+
+
+def ingest_house_votes(
+    session: Session, year: int, *, new_limit: int = 250, max_roll: int = 900,
+) -> int:
+    """Activity/record layer: every House recorded (roll-call) vote for a calendar year, as
+    Vote + VotePosition rows (the full member record). Keyless (clerk.house.gov), idempotent
+    on the roll-call URL, resumable (skips rolls already stored), capped per run. Votes are
+    categorized via the bill they reference when that bill is in our record."""
+    import re
+
+    from degreezeor.categories import category_for
+    from degreezeor.core.models import Vote, VotePosition
+    from degreezeor.ingestion.adapters.house_clerk import house_clerk_adapter, parse_house_vote
+
+    congress = (year - 1789) // 2 + 1
+    prefix = f"https://clerk.house.gov/evs/{year}/roll"
+    done: set[int] = set()
+    for (q,) in session.execute(select(Vote.question).where(Vote.question.like(prefix + "%"))).all():
+        m = re.search(r"/roll(\d+)\.xml", q or "")
+        if m:
+            done.add(int(m.group(1)))
+
+    # Bill (congress, bill_number) -> (action_id, domain) for categorizing votes by topic.
+    bill_idx: dict[str, tuple[int, str | None]] = {}
+    for bn, aid, domain in session.execute(
+        select(Bill.bill_number, Bill.action_id, Action.domain)
+        .join(Action, Action.id == Bill.action_id)
+        .where(Bill.congress == congress)
+    ).all():
+        if bn:
+            bill_idx[bn] = (aid, domain)
+
+    inserted = 0
+    misses = 0
+    for roll in range(1, max_roll + 1):
+        if inserted >= new_limit:
+            break
+        if roll in done:
+            continue
+        url = f"{prefix}{roll:03d}.xml"
+        try:
+            vf = house_clerk_adapter.fetch(url)
+        except Exception:  # noqa: BLE001 - a 404 means we've passed the last roll of the year
+            misses += 1
+            if misses >= 2:
+                break
+            continue
+        misses = 0
+        try:
+            hv = parse_house_vote(vf.content)
+        except Exception:  # noqa: BLE001 - one malformed file must not abort the batch
+            continue
+        if not hv.positions:
+            continue
+        land(session, vf)
+        bn = _norm_legis_num(hv.legis_num)
+        linked = bill_idx.get(bn) if bn else None
+        category = category_for(linked[1], "bill") if linked else None
+        vote = Vote(
+            action_id=linked[0] if linked else None, chamber="house", question=url,
+            vote_date=hv.vote_date, yea=hv.yea, nay=hv.nay, present=hv.present,
+            not_voting=hv.not_voting, result=hv.result or None,
+            congress=hv.congress or congress, roll_call=hv.rollcall_num or roll,
+            bill_number=bn, category=category,
+        )
+        session.add(vote)
+        session.flush()
+        seen_v: set[int] = set()
+        for mv in hv.positions:
+            if not mv.bioguide_id:
+                continue
+            official = session.execute(
+                select(Official).where(Official.bioguide_id == mv.bioguide_id)
+            ).scalar_one_or_none()
+            if official is None:
+                official = Official(full_name=mv.name or mv.bioguide_id, bioguide_id=mv.bioguide_id)
+                session.add(official)
+                session.flush()
+            if official.id in seen_v:
+                continue
+            seen_v.add(official.id)
+            session.add(VotePosition(vote_id=vote.id, official_id=official.id, position=mv.position))
+        inserted += 1
+    session.flush()
+    return inserted
+
+
 def refresh_all(
     session: Session, *, budget_fiscal_year: int = 2024, congress: int = 117,
     law_limit: int = 25, eo_limit: int = 15,
@@ -2122,6 +2217,20 @@ def refresh_all(
                 _safe_rollback()
         return total
     _stage("member_bills", _member_bills)
+
+    # House roll-call votes: how members voted, recency-first, capped per run. Keyless.
+    def _house_votes() -> int:
+        total = 0
+        this_year = date.today().year
+        for y in range(this_year, this_year - 4, -1):
+            try:
+                total += ingest_house_votes(session, y, new_limit=200)
+                _safe_commit(f"house votes {y}")
+            except Exception as exc:  # noqa: BLE001 - never fatal
+                log.warning("house-vote ingestion for %s skipped: %s", y, exc)
+                _safe_rollback()
+        return total
+    _stage("house_votes", _house_votes)
 
     _stage("defc_delivery", lambda: len(ingest_defc_delivery(session)))
 

@@ -147,7 +147,11 @@ evidence."** This is the correct, humble behavior — not a failure.
 10. **Dispute / appeal process** — anyone can trigger an independent, deterministic re-run; the
     result (reproduced vs. corrected) + public diff is recorded on the audit chain.
 11. **Relationship graph** — officials↔actions↔jurisdictions↔metrics exposed for transparency.
-12. **Integrity-at-scale monitoring** — because even a party-blind formula can produce uneven
+12. **Reproducibility self-audit** — every published score can be independently re-derived from
+    its stored inputs + pinned methodology and must reproduce its hash bit-for-bit; the platform-wide
+    audit re-runs them all and flags any mismatch (non-determinism / tampering) as a hard failure.
+    (`/api/integrity/reproducibility`, `degreezeor verify-scores`.)
+13. **Integrity-at-scale monitoring** — because even a party-blind formula can produce uneven
     *distributions*, the platform publishes the party-level distribution of scored outcomes
     (attribution-weighted mean composite + coverage per party) and flags any systematic
     composite-gap or scored-share-gap for **human methodological review** of metric/baseline

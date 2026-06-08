@@ -604,6 +604,43 @@ async function renderIntegrity() {
       : [el("div", { class: "muted", style: "font-size:13px;margin-top:8px" }, "No review reasons flagged.")])));
 
   app.appendChild(el("p", { class: "muted", style: "font-size:12px" }, r.disclaimer));
+
+  // Reproducibility self-audit (on-demand: it re-runs every published score).
+  const repro = el("div", { class: "card" });
+  repro.appendChild(el("h3", {}, "Reproducibility self-audit"));
+  repro.appendChild(el("p", { class: "muted", style: "font-size:13px" },
+    "Independently re-derives every published score from its stored inputs + pinned methodology " +
+    "and confirms each reproduces its hash bit-for-bit. A mismatch indicates non-determinism or " +
+    "tampering. Read-only (re-runs happen in rolled-back savepoints); re-executes scoring, so it " +
+    "is run on demand."));
+  const out = el("div", { style: "margin-top:8px" });
+  repro.appendChild(el("button", {
+    onclick: async (e) => {
+      e.target.disabled = true; e.target.textContent = "Re-running every score…";
+      try {
+        const a = await getJSON("/api/integrity/reproducibility");
+        out.innerHTML = "";
+        out.appendChild(el("div", { class: "gate-banner " + (a.all_reproduced ? "scored" : "gated") },
+          a.all_reproduced
+            ? `All ${a.reproduced}/${a.total} published scores reproduced bit-for-bit.`
+            : `${a.mismatched} mismatch(es) and ${a.errored} inconclusive of ${a.total} scores — investigate.`));
+        if (a.checks.some((c) => c.status !== "reproduced")) {
+          out.appendChild(el("table", {},
+            el("thead", {}, el("tr", {}, el("th", {}, "EU"), el("th", {}, "status"), el("th", {}, "detail"))),
+            el("tbody", {}, ...a.checks.filter((c) => c.status !== "reproduced").map((c) =>
+              el("tr", {}, el("td", { class: "mono" }, String(c.eu_id)),
+                el("td", {}, el("span", { class: "badge insufficient_evidence" }, c.status)),
+                el("td", { class: "muted", style: "font-size:12px" }, c.detail || "—"))))));
+        }
+      } catch (err) {
+        out.textContent = "Error: " + err.message;
+      } finally {
+        e.target.disabled = false; e.target.textContent = "Run reproducibility self-audit";
+      }
+    },
+  }, "Run reproducibility self-audit"));
+  repro.appendChild(out);
+  app.appendChild(repro);
 }
 
 async function route() {

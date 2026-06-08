@@ -251,6 +251,25 @@ button:disabled { opacity: .55; cursor: default; }
 .full-select { display: block; width: 100%; max-width: 100%; margin-top: 6px; padding: 9px 10px;
   background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; }
 
+/* Compare two officials (descriptive, non-ranking). */
+.cmp-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 12px; }
+.cmp-pick label { display: block; color: var(--muted); font-size: 13px; }
+.cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cmp-col { background: linear-gradient(180deg, var(--panel), var(--panel2)); border: 1px solid var(--line);
+  border-radius: 12px; padding: 16px; }
+.cmp-name { font-size: 18px; font-weight: 700; }
+.cmp-num { font-size: 34px; font-weight: 800; margin: 8px 0; color: var(--score); }
+.cmp-num.none { font-size: 18px; color: var(--gate); font-weight: 700; }
+.cmp-num .ofmax { font-size: 14px; color: var(--muted); font-weight: 600; }
+.cmp-stats { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 13px; }
+.cmp-stats b { color: var(--text); }
+@media (max-width: 640px) {
+  .cmp-pick { grid-template-columns: 1fr; }
+  .cmp-col { padding: 12px; }
+  .cmp-num { font-size: 24px; }
+  .cmp-name { font-size: 15px; }
+}
+
 /* Activity sparkline (official: actions per year). */
 .spark-wrap { overflow-x: auto; }
 .spark { display: flex; align-items: flex-end; gap: 6px; min-height: 64px; padding-top: 6px; }

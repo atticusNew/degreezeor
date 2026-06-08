@@ -695,7 +695,8 @@ async function renderOfficials() {
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Officials"));
   app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
-    "Search a name or jump by letter. Open anyone for their record."));
+    "Search a name or jump by letter. Open anyone for their record, or ",
+    el("a", { href: "#/compare" }, "compare two"), "."));
 
   if (!index.length) {
     app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
@@ -1004,6 +1005,80 @@ async function renderOfficialDetail(id) {
   if (chal) app.appendChild(chal);
 }
 
+async function renderCompare() {
+  const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
+  let index = [];
+  try { index = await getJSON("/api/officials-index"); } catch (e) { /* handled below */ }
+  app.innerHTML = "";
+  app.appendChild(el("a", { class: "back", href: "#/officials" }, "← officials"));
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Compare two officials"));
+  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
+    "A side-by-side of two records. Descriptive only, never a ranking or a judgment."));
+
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const sorted = index.slice().sort((x, y) => formatName(x.name).localeCompare(formatName(y.name)));
+  const opts = [["", "Choose an official…"], ...sorted.map((o) => [String(o.id), formatName(o.name) + (o.position ? ` (${o.position})` : "")])];
+  const selA = selectEl(opts, params.get("a") || ""); selA.className = "full-select";
+  const selB = selectEl(opts, params.get("b") || ""); selB.className = "full-select";
+  const go = () => { location.hash = "#/compare?a=" + (selA.value || "") + "&b=" + (selB.value || ""); };
+  selA.addEventListener("change", go);
+  selB.addEventListener("change", go);
+  app.appendChild(el("div", { class: "cmp-pick" },
+    el("label", {}, "Official A", selA),
+    el("label", {}, "Official B", selB)));
+
+  const panel = el("div", {});
+  app.appendChild(panel);
+
+  const a = params.get("a"), b = params.get("b");
+  if (!a || !b) {
+    panel.appendChild(el("div", { class: "card", style: "color:var(--muted);text-align:center" },
+      el("p", {}, "Pick two officials to compare.")));
+    return;
+  }
+  panel.appendChild(spinner());
+  let ca, cb;
+  try { [ca, cb] = await Promise.all([getJSON(`/api/officials/${a}`), getJSON(`/api/officials/${b}`)]); }
+  catch (e) { panel.innerHTML = ""; panel.appendChild(el("div", { class: "card muted" }, "Could not load one of the officials.")); return; }
+  panel.innerHTML = "";
+
+  const col = (c) => {
+    const r = c.rollup, o = c.official, act = c.activity || {};
+    const period = act.first_year ? (act.first_year === act.last_year ? `${act.first_year}` : `${act.first_year}\u2013${act.last_year}`) : "n/a";
+    return el("div", { class: "cmp-col" },
+      el("div", { class: "cmp-name" }, formatNameNatural(o.name)),
+      el("div", { class: "muted", style: "font-size:13px" }, o.position || "Official record"),
+      r.composite !== null
+        ? el("div", { class: "cmp-num scored" }, fmt(r.composite, 1), el("span", { class: "ofmax" }, " / 100"))
+        : el("div", { class: "cmp-num none" }, "Insufficient evidence"),
+      el("div", { class: "cmp-stats" },
+        el("div", {}, "coverage ", el("b", {}, r.coverage !== null ? (r.coverage * 100).toFixed(0) + "%" : "n/a")),
+        el("div", {}, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`)),
+        el("div", {}, "active ", el("b", {}, period))));
+  };
+  panel.appendChild(el("div", { class: "cmp" }, col(ca), col(cb)));
+
+  // Per-category side-by-side (descriptive).
+  const catMap = (c) => Object.fromEntries((c.by_category || []).map((x) => [x.category, x]));
+  const ma = catMap(ca), mb = catMap(cb);
+  const keys = [...new Set([...Object.keys(ma), ...Object.keys(mb)])];
+  if (keys.length) {
+    const cell = (x) => x && x.composite !== null ? fmt(x.composite, 1) : (x ? "insufficient" : "—");
+    panel.appendChild(el("div", { class: "card" },
+      el("h3", {}, "By category"),
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "category"),
+          el("th", { class: "right" }, formatNameNatural(ca.official.name)),
+          el("th", { class: "right" }, formatNameNatural(cb.official.name)))),
+        el("tbody", {}, ...keys.map((k) =>
+          el("tr", {},
+            el("td", {}, (ma[k] || mb[k]).category_label),
+            el("td", { class: "right mono", style: ma[k] && ma[k].composite !== null ? "color:var(--score)" : "" }, cell(ma[k])),
+            el("td", { class: "right mono", style: mb[k] && mb[k].composite !== null ? "color:var(--score)" : "" }, cell(mb[k]))))))));
+  }
+}
+
 // Neutral categorical hues for node types (no party blue, no judgment red/green).
 const NODE_COLORS = { official: "#c4a7e7", action: "#8a93a6", jurisdiction: "#c79a6a", metric: "#6f6391" };
 const COLUMN_ORDER = ["official", "action", "jurisdiction", "metric"];
@@ -1269,8 +1344,8 @@ async function renderIntegrity() {
 
   const banner = el("div", { class: "gate-banner " + (r.review_required ? "gated" : "scored") },
     r.review_required
-      ? "Review flagged: a systematic gap exceeded a review threshold (see reasons below)."
-      : "No systematic gap exceeds the review thresholds on the current scored set.");
+      ? "Audit note: a distribution gap crossed a review threshold. This prompts a human look at the metric and baseline choices. It does not flag any official and does not change any score."
+      : "No distribution gap crosses the review thresholds on the current scored set.");
   app.appendChild(banner);
 
   app.appendChild(el("div", { class: "card" },
@@ -1350,6 +1425,7 @@ async function route() {
   try {
     if (eu) await renderDetail(eu[1]);
     else if (off) await renderOfficialDetail(off[1]);
+    else if (location.hash.startsWith("#/compare")) await renderCompare();
     else if (location.hash.startsWith("#/officials")) await renderOfficials();
     else if (location.hash.startsWith("#/graph")) await renderGraph();
     else if (location.hash.startsWith("#/coverage")) await renderCoverage();

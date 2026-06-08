@@ -195,7 +195,12 @@ sign disagreement across baselines, or confidence below the publish threshold.
   cuts demo, which clears the gate and yields a real composite; the curated state set now also
   includes North Carolina 2013, Wisconsin 2011, Maine 2011, Indiana 2013, Ohio 2013, and Missouri
   2014, each source-verified, with the synthetic-control pre-fit gate deciding which clear the gate
-  vs. honestly abstain). **Executive orders shipped**
+  vs. honestly abstain). The comparison-design scorer also runs on **state wage** (BLS average
+  hourly earnings; minimum-wage laws in California, Massachusetts, Maryland), **state poverty/income**
+  (Census SAIPE; e.g. the California EITC), **state health coverage** (Census SAHIE uninsured rate;
+  e.g. California's ACA Medicaid expansion, which clears the gate), and **state emissions** (EIA
+  state CO2; e.g. California SB 350) — each measured against the policy's own stated goal with the
+  pre-registered sign (more jobs/wages/income, or less poverty/uninsured/CO2). **Executive orders shipped**
   (Federal Register Tier-0 ingestion; the signing president carries high unilateral executive
   authority vs. shared law-signing). **Final agency rules (regulations) shipped** (Federal Register
   Tier-0; attributed to the administration in office on the rule's effective date). **Senate

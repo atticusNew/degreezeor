@@ -6,8 +6,9 @@
 #   - Static site         : the zero-build SPA (web/), points at the API
 #   - Cron job            : nightly idempotent ingestion/scoring (off the request path)
 #
-# Set the API keys (DZ_CONGRESS_API_KEY, DZ_BLS_API_KEY, optional DZ_COURTLISTENER_TOKEN)
-# as secret env vars in the Render dashboard (sync: false) — never commit them.
+# Set the API keys (DZ_CONGRESS_API_KEY, DZ_BLS_API_KEY, DZ_CENSUS_API_KEY, DZ_EIA_API_KEY,
+# optional DZ_COURTLISTENER_TOKEN / DZ_FBI_API_KEY) as secret env vars in the Render dashboard
+# (sync: false) on BOTH the web service and the cron — never commit them.
 
 databases:
   - name: degreezeor-db
@@ -48,6 +49,8 @@ services:
         sync: false
       - key: DZ_EIA_API_KEY
         sync: false
+      - key: DZ_FBI_API_KEY
+        sync: false
 
   # NOTE: The SPA is served by the API web service itself (FastAPI mounts web/ at "/"),
   # so the UI and /api share one origin and config.js can stay empty (same-origin). This
@@ -83,4 +86,6 @@ services:
       - key: DZ_CENSUS_API_KEY
         sync: false
       - key: DZ_EIA_API_KEY
+        sync: false
+      - key: DZ_FBI_API_KEY
         sync: false

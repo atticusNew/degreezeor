@@ -147,6 +147,17 @@ def coverage() -> dict:
         return presentation.build_coverage(s)
 
 
+@app.get("/api/integrity/party-symmetry")
+def party_symmetry() -> dict:
+    """Integrity-at-scale monitoring (PLAN §9.12): party-level distribution of scored
+    outcomes, for HUMAN methodological review. Party is read here for audit only and
+    never by scoring code (enforced by the party-blindness guard)."""
+    from degreezeor.integrity import party_symmetry_report
+
+    with session_scope() as s:
+        return party_symmetry_report(s).to_public_dict()
+
+
 @app.get("/api/graph")
 def relationship_graph(official_id: int | None = None, min_weight: float = 0.0) -> dict:
     from degreezeor.api import graph as graph_mod

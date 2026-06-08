@@ -199,6 +199,23 @@ def cmd_verify_audit(_: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_party_symmetry(_: argparse.Namespace) -> int:
+    """Integrity-at-scale monitoring (PLAN §9.12): party-level score distribution."""
+    from degreezeor.integrity import party_symmetry_report
+
+    with session_scope() as s:
+        report = party_symmetry_report(s)
+    for p in report.parties:
+        print(f"  {p.abbrev:>4}: attributed={p.attributed_eus:>4} scored={p.scored_eus:>3} "
+              f"share={p.scored_share} mean_composite={p.mean_composite} "
+              f"mean_confidence={p.mean_confidence}")
+    print(f"composite_gap={report.composite_gap} scored_share_gap={report.scored_share_gap}")
+    print(f"review_required={report.review_required}")
+    for r in report.review_reasons:
+        print(f"  REVIEW: {r}")
+    return 0
+
+
 def cmd_list(_: argparse.Namespace) -> int:
     with session_scope() as s:
         rows = s.execute(
@@ -227,6 +244,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("initdb").set_defaults(func=cmd_initdb)
     sub.add_parser("migrate", help="apply DB migrations (alembic upgrade head)").set_defaults(func=cmd_migrate)
     sub.add_parser("verify-audit").set_defaults(func=cmd_verify_audit)
+    sub.add_parser("party-symmetry",
+                   help="integrity monitoring: party-level score distribution (PLAN §9.12)"
+                   ).set_defaults(func=cmd_party_symmetry)
     sub.add_parser("list").set_defaults(func=cmd_list)
 
     rf = sub.add_parser("refresh", help="idempotent full ingestion/scoring pass (cron entrypoint)")

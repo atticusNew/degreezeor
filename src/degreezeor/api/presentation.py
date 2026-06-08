@@ -28,8 +28,10 @@ from degreezeor.core.models import (
     MethodologyVersion,
     Metric,
     Objective,
+    OfficeTerm,
     Official,
     OutcomeResult,
+    Party,
     RawLanding,
     ScoreComponent,
     ScoreRun,
@@ -372,10 +374,16 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
 
 
 def list_officials(
-    session: Session, q: str | None = None, scored_only: bool = False
+    session: Session, q: str | None = None, scored_only: bool = False,
+    min_involvement: float = 0.0, party: str | None = None,
 ) -> list[dict[str, Any]]:
     """Attribution-weighted roll-up for every official. Bulk-loaded (a handful of queries
-    total) so it scales to the full House+Senate roster without per-official N+1 latency."""
+    total) so it scales to the full House+Senate roster without per-official N+1 latency.
+
+    ``involvement`` = the official's LARGEST single-action attribution share — so a bill's
+    sponsor (meaningful share) is distinguishable from a backbench voter whose only tie is a
+    lopsided roll-call (~0.05%). ``min_involvement`` hides negligible ties by default; the UI
+    exposes a "show all" toggle. ``party`` filters by caucus abbrev (audit metadata only)."""
     from degreezeor.scoring.rollup import ActionContribution, rollup
 
     # 1 query: all non-residual attribution edges.
@@ -397,12 +405,23 @@ def list_officials(
         o.id: o.full_name
         for o in session.execute(select(Official).where(Official.id.in_(by_off.keys()))).scalars()
     }
+    # 1 query: party abbrev per official (latest office term; audit metadata only).
+    party_map: dict[int, str] = {}
+    for off_id, abbrev in session.execute(
+        select(OfficeTerm.official_id, Party.abbrev)
+        .join(Party, OfficeTerm.party_id == Party.id)
+        .where(OfficeTerm.official_id.in_(by_off.keys()))
+        .order_by(OfficeTerm.id)
+    ).all():
+        party_map[off_id] = abbrev  # last (most recent) wins
 
     out = []
     for oid, aws in by_off.items():
         contributions = []
         seen: set[int] = set()
+        involvement = 0.0
         for aw in aws:
+            involvement = max(involvement, float(aw.attribution))
             if aw.eu_id in seen:
                 continue
             seen.add(aw.eu_id)
@@ -418,6 +437,8 @@ def list_officials(
         out.append({
             "id": oid,
             "name": name_map.get(oid),
+            "party": party_map.get(oid),
+            "involvement": round(involvement, 4),
             "total_actions": r.total_actions,
             "scored_actions": r.scored_actions,
             "coverage": _num(r.coverage),
@@ -427,9 +448,14 @@ def list_officials(
     if q:
         ql = q.lower()
         out = [o for o in out if ql in (o["name"] or "").lower()]
+    if party:
+        out = [o for o in out if (o["party"] or "").lower() == party.lower()]
     if scored_only:
         out = [o for o in out if o["scored_actions"] > 0]
-    out.sort(key=lambda x: (-(x["scored_actions"]), x["name"] or ""))
+    if min_involvement > 0:
+        out = [o for o in out if o["involvement"] >= min_involvement]
+    # Scored first, then by causal involvement (sponsors above incidental voters), then name.
+    out.sort(key=lambda x: (-(x["scored_actions"]), -x["involvement"], x["name"] or ""))
     return out
 
 

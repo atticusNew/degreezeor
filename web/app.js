@@ -395,38 +395,49 @@ async function renderOfficials() {
     "Each official shows ", el("b", {}, "composite"), tip("composite"),
     " and ", el("b", {}, "coverage"), tip("coverage"), "."));
 
-  // Controls: search-by-official + scored-only filter.
+  // Controls: search + scored-only + show-all (involvement filter).
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
-  const controls = el("div", { style: "display:flex;gap:12px;align-items:center;margin:8px 0" });
+  const controls = el("div", { style: "display:flex;gap:12px;align-items:center;margin:8px 0;flex-wrap:wrap" });
   const search = el("input", { type: "text", placeholder: "search official by name…", value: params.get("q") || "",
-    style: "flex:1;padding:7px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px" });
+    style: "flex:1;min-width:180px;padding:7px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px" });
   const scoredOnly = el("input", { type: "checkbox" });
   if (params.get("scored_only") === "1") scoredOnly.checked = true;
+  const showAll = el("input", { type: "checkbox" });
+  if (params.get("all") === "1") showAll.checked = true;
   const apply = () => {
     const p = new URLSearchParams();
     if (search.value.trim()) p.set("q", search.value.trim());
     if (scoredOnly.checked) p.set("scored_only", "1");
+    if (showAll.checked) p.set("all", "1");
     location.hash = "#/officials" + (p.toString() ? "?" + p.toString() : "");
   };
   search.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
   scoredOnly.addEventListener("change", apply);
+  showAll.addEventListener("change", apply);
   controls.appendChild(search);
   controls.appendChild(el("label", { class: "muted", style: "font-size:13px;display:flex;gap:6px;align-items:center" }, scoredOnly, "scored only"));
+  controls.appendChild(el("label", { class: "muted", style: "font-size:13px;display:flex;gap:6px;align-items:center" }, showAll,
+    "show all", tip("By default we hide officials whose only tie to a scored action is a negligible role (e.g. one vote in a lopsided roll-call, <0.5%). 'Show all' includes them.")));
   controls.appendChild(el("button", { onclick: apply }, "Search"));
   app.appendChild(controls);
 
   const qs = new URLSearchParams();
   if (params.get("q")) qs.set("q", params.get("q"));
   if (params.get("scored_only")) qs.set("scored_only", "true");
+  // Hide negligible (<0.5%) involvement by default; "show all" turns the floor off.
+  if (params.get("all") !== "1") qs.set("min_involvement", "0.005");
   const officials = await getJSON("/api/officials" + (qs.toString() ? "?" + qs.toString() : ""));
-  app.appendChild(el("div", { class: "muted mono", style: "margin-bottom:8px" }, `${officials.length} officials`));
+  app.appendChild(el("div", { class: "muted mono", style: "margin-bottom:8px" },
+    `${officials.length} officials` + (params.get("all") === "1" ? " (incl. negligible-role)" : " (meaningful role; toggle 'show all')")));
   for (const o of officials) {
     const scoredText = o.composite !== null
       ? `composite ${fmt(o.composite, 1)} · confidence ${(o.confidence * 100).toFixed(0)}%`
       : "insufficient evidence";
+    const meta = `${o.party ? o.party + " · " : ""}${o.scored_actions}/${o.total_actions} scored · ` +
+      `coverage ${(o.coverage * 100).toFixed(0)}% · involvement ${(o.involvement * 100).toFixed(1)}%`;
     app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
       el("div", {}, el("div", { class: "title" }, o.name || `Official #${o.id}`),
-        el("div", { class: "muted mono" }, `${o.scored_actions}/${o.total_actions} actions scored · coverage ${(o.coverage * 100).toFixed(0)}%`)),
+        el("div", { class: "muted mono" }, meta)),
       el("div", { style: "text-align:right" },
         o.composite !== null ? el("span", { class: "badge scored" }, scoredText)
           : el("span", { class: "badge insufficient_evidence" }, scoredText))));

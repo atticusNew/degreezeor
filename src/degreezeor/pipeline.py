@@ -1961,6 +1961,91 @@ def ingest_state_policies(session: Session, keys: list[str] | None = None) -> li
     return results
 
 
+def ingest_member_bills(
+    session: Session, congress: int, *, new_limit: int = 1000, max_pages: int = 30, page_size: int = 250,
+) -> int:
+    """Record the bills members SPONSORED in a Congress as categorized, unscored 'recorded'
+    actions, so an official's full record of WHAT THEY ACTED ON (by topic) is visible even
+    when nothing can be scored. This is the activity/record layer, distinct from the scored
+    outcome layer; it never produces a composite.
+
+    Idempotent + incremental: skips bills already stored and inserts up to ``new_limit`` new
+    ones per call (bounding per-bill detail fetches). The list is newest-updated first, so
+    recent activity is ingested first; repeated cron runs fill in the rest. Sponsors are
+    resolved to officials with their real names (so this also repairs vote-derived stubs)."""
+    from degreezeor.core.reference import ensure_party_term, ensure_us_federal
+    from degreezeor.ingestion.adapters.congress import congress_adapter
+
+    ensure_source(session, name=congress_adapter.name, tier=congress_adapter.tier,
+                  base_url=congress_adapter.base_url)
+    src_id = session.execute(
+        select(DataSource.id).where(DataSource.name == congress_adapter.name)
+    ).scalar_one()
+    jur = ensure_us_federal(session)
+    inserted = 0
+    for page in range(max_pages):
+        if inserted >= new_limit:
+            break
+        lf = congress_adapter.fetch_bill_list(congress, limit=page_size, offset=page * page_size)
+        items = json.loads(lf.content).get("bills", [])
+        if not items:
+            break
+        for it in items:
+            if inserted >= new_limit:
+                break
+            btype = (it.get("type") or "").lower()
+            num = it.get("number")
+            if not btype or num is None:
+                continue
+            native = f"bill/{congress}/{btype}/{num}"
+            if session.execute(
+                select(Action.id).where(Action.native_identifier == native)
+            ).scalar_one_or_none():
+                continue  # already recorded (idempotent)
+            try:
+                df = congress_adapter.fetch_bill(congress, btype, int(num))
+            except Exception:  # noqa: BLE001 - one bad bill must not abort the batch
+                continue
+            bill = json.loads(df.content).get("bill", {})
+            sponsors = bill.get("sponsors") or []
+            if not sponsors or not sponsors[0].get("bioguideId"):
+                continue
+            land(session, df)
+            sp = sponsors[0]
+            bio = sp["bioguideId"]
+            name = " ".join(x for x in [sp.get("firstName"), sp.get("lastName")] if x).strip() \
+                or sp.get("fullName") or bio
+            official = session.execute(
+                select(Official).where(Official.bioguide_id == bio)
+            ).scalar_one_or_none()
+            if official is None:
+                official = Official(full_name=name, bioguide_id=bio)
+                session.add(official)
+                session.flush()
+            elif official.full_name and (
+                len(official.full_name.split()) <= 1 or "(" in official.full_name or "[" in official.full_name
+            ):
+                official.full_name = name  # upgrade a vote-derived stub to a real name
+            if sp.get("party"):
+                ensure_party_term(session, official, sp["party"])
+            intro = bill.get("introducedDate")
+            action = Action(
+                type="bill", title=bill.get("title") or native,
+                action_date=date.fromisoformat(intro) if intro else None,
+                jurisdiction_id=jur.id, source_id=src_id, source_url=df.source_url,
+                native_identifier=native, content_hash=df.content_hash,
+                domain=(bill.get("policyArea") or {}).get("name"),
+            )
+            session.add(action)
+            session.flush()
+            session.add(Bill(action_id=action.id, congress=congress,
+                             bill_number=f"{btype.upper()}{num}", sponsor_official_id=official.id,
+                             status="introduced"))
+            inserted += 1
+        session.flush()
+    return inserted
+
+
 def refresh_all(
     session: Session, *, budget_fiscal_year: int = 2024, congress: int = 117,
     law_limit: int = 25, eo_limit: int = 15,
@@ -1993,6 +2078,17 @@ def refresh_all(
     counts["laws"] = len(batch_score_laws(session, congress, limit=law_limit))
     counts["executive_orders"] = len(batch_score_executive_orders(session, limit=eo_limit))
     counts["regulations"] = len(batch_score_regulations(session, limit=eo_limit))
+
+    # Activity/record layer: the bills members SPONSORED, by topic (unscored). Recency-first,
+    # capped per run so the per-key request budget is respected; repeated runs fill in the rest.
+    member_bills = 0
+    for c in (119, 118, 117, 116):
+        cap = 1000 if c >= 118 else 500
+        try:
+            member_bills += ingest_member_bills(session, c, new_limit=cap)
+        except Exception as exc:  # noqa: BLE001 - bill ingestion is best-effort, never fatal
+            log.warning("member-bill ingestion for congress %s skipped: %s", c, exc)
+    counts["member_bills"] = member_bills
     # Best-effort name enrichment (bounded by Congress.gov throughput).
     try:
         from degreezeor.ingestion.loader import enrich_official_names

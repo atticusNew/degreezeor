@@ -72,6 +72,10 @@ class CongressGovAdapter(SourceAdapter):
         return self._get(f"law/{congress}", f"law/{congress}",
                          params={"limit": limit, "offset": offset})
 
+    def fetch_bill_list(self, congress: int, limit: int = 250, offset: int = 0) -> RawFetch:
+        return self._get(f"bill/{congress}", f"bill/{congress}",
+                         params={"limit": limit, "offset": offset})
+
     def fetch_bill_actions(self, congress: int, bill_type: str, bill_number: int) -> RawFetch:
         return self._get(
             f"bill/{congress}/{bill_type}/{bill_number}/actions",

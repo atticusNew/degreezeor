@@ -355,8 +355,13 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
         return None
     contributions, details = _official_contributions(session, official_id)
     r = rollup(contributions)
+    party = session.execute(
+        select(Party.abbrev).join(OfficeTerm, OfficeTerm.party_id == Party.id)
+        .where(OfficeTerm.official_id == official_id).order_by(OfficeTerm.id.desc()).limit(1)
+    ).scalar_one_or_none()
     return {
-        "official": {"id": official.id, "name": official.full_name, "bioguide_id": official.bioguide_id},
+        "official": {"id": official.id, "name": official.full_name,
+                     "bioguide_id": official.bioguide_id, "party": party},
         "rollup": {
             "total_actions": r.total_actions,
             "scored_actions": r.scored_actions,

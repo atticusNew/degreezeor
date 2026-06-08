@@ -101,6 +101,29 @@ button { background: var(--accent); color: #06101f; border: none; border-radius:
 button:hover { filter: brightness(1.1); }
 button:disabled { opacity: .6; cursor: default; }
 
+/* Headline block (official/result drill-down: big name + big composite first). */
+.headline { background: linear-gradient(180deg, var(--panel), var(--panel2)); border: 1px solid var(--line);
+  border-radius: 14px; padding: 22px 24px; margin: 8px 0 14px; }
+.headline .name { font-size: 26px; font-weight: 700; margin: 0; }
+.headline .submeta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.headline .big { display: flex; align-items: baseline; gap: 12px; margin: 14px 0 6px; flex-wrap: wrap; }
+.headline .bignum { font-size: 48px; font-weight: 800; line-height: 1; }
+.headline .bignum.scored { color: var(--good); }
+.headline .bignum.none { color: var(--gate); font-size: 26px; font-weight: 700; }
+.headline .ofmax { color: var(--muted); font-size: 16px; }
+.headline .plain { color: var(--text); font-size: 14px; margin: 6px 0 0; max-width: 720px; line-height: 1.5; }
+.headline .chips { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.headline .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+.headline .chip b { color: var(--text); }
+
+/* Modal / drill-down overlay. */
+.modal-back { position: fixed; inset: 0; background: rgba(3,7,14,.72); display: flex; align-items: flex-start;
+  justify-content: center; padding: 40px 16px; z-index: 100; overflow-y: auto; }
+.modal { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; max-width: 720px; width: 100%;
+  padding: 22px 24px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.modal .x { float: right; cursor: pointer; color: var(--muted); font-size: 20px; line-height: 1; border: none; background: none; }
+.modal h3 { margin-top: 0; }
+
 /* Search/filter panel: labels on the left, inputs/choices on the right. */
 .filters { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 10px 0 14px; }
 .filters .frow { display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: center; padding: 6px 0; }

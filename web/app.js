@@ -164,6 +164,18 @@ async function disputesCard(euId) {
   return card;
 }
 
+// Lightweight modal overlay for drill-down detail (no framework). Pass a title + body node.
+function openModal(title, body) {
+  const close = () => back.remove();
+  const x = el("button", { class: "x", "aria-label": "close", onclick: close }, "✕");
+  const modal = el("div", { class: "modal", onclick: (e) => e.stopPropagation() },
+    x, el("h3", {}, title), body);
+  const back = el("div", { class: "modal-back", onclick: close }, modal);
+  back.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  document.body.appendChild(back);
+  back.tabIndex = -1; back.focus();
+}
+
 function spinner(msg = "Loading…") {
   return el("div", { class: "spin-wrap" },
     el("div", { class: "spinner" }),
@@ -511,25 +523,49 @@ async function renderOfficialDetail(id) {
   const card = await getJSON(`/api/officials/${id}`);
   app.innerHTML = "";
   app.appendChild(el("a", { class: "back", href: "#/officials" }, "← all officials"));
-  app.appendChild(el("h2", { style: "margin:6px 0" }, card.official.name));
-  if (card.official.bioguide_id) app.appendChild(el("div", { class: "muted mono" }, `Bioguide ${card.official.bioguide_id}`));
 
   const r = card.rollup;
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Roll-up (attribution-weighted, with coverage)"),
-    el("div", { class: "kpi" },
-      el("div", { class: "item" }, el("div", { class: "n" }, r.composite !== null ? fmt(r.composite, 1) : "—"), el("div", { class: "l" }, "composite", tip("composite"))),
-      el("div", { class: "item" }, el("div", { class: "n" }, r.confidence !== null ? (r.confidence * 100).toFixed(0) + "%" : "—"), el("div", { class: "l" }, "confidence", tip("confidence"))),
-      el("div", { class: "item" }, el("div", { class: "n" }, `${r.scored_actions}/${r.total_actions}`), el("div", { class: "l" }, "scored / total")),
-      el("div", { class: "item" }, el("div", { class: "n" }, (r.coverage * 100).toFixed(0) + "%"), el("div", { class: "l" }, "coverage", tip("coverage"))),
-    ),
-    r.composite === null ? el("div", { class: "gate-banner gated", style: "margin-top:10px" },
-      "INSUFFICIENT EVIDENCE — none of this official's attributable actions cleared the confidence gate. This is not a low score.",
-      tip("insufficient")) : null,
-    el("p", { class: "muted", style: "font-size:12px" }, r.note)));
+  const o = card.official;
+  const scored = r.composite !== null;
+  const pct = (x) => (x === null || x === undefined ? "—" : (x * 100).toFixed(0) + "%");
+  const plain = scored
+    ? `Of the ${r.scored_actions} of ${o.name}'s ${r.total_actions} attributable action(s) we could ` +
+      `credibly score, their own stated objectives were met to ${fmt(r.composite, 1)} out of 100 ` +
+      `(confidence-weighted). This reflects only scoreable actions — not a good/bad rating.`
+    : `None of ${o.name}'s ${r.total_actions} attributable action(s) could be causally isolated yet, ` +
+      `so we report no score. That's "insufficient evidence" — not a low or bad score.`;
+
+  // Headline: name + big composite + plain-language summary + secondary chips.
+  app.appendChild(el("div", { class: "headline" },
+    el("p", { class: "name" }, o.name),
+    el("div", { class: "submeta" },
+      [o.party ? `Party ${o.party}` : null, o.bioguide_id ? `Bioguide ${o.bioguide_id}` : null].filter(Boolean).join(" · ") || "—"),
+    el("div", { class: "big" },
+      scored
+        ? el("span", { class: "bignum scored" }, fmt(r.composite, 1))
+        : el("span", { class: "bignum none" }, "Insufficient evidence"),
+      scored ? el("span", { class: "ofmax" }, "/ 100 composite") : null,
+      tip("composite")),
+    el("p", { class: "plain" }, plain),
+    el("div", { class: "chips" },
+      el("span", { class: "chip" }, "coverage ", el("b", {}, pct(r.coverage)), tip("coverage")),
+      el("span", { class: "chip" }, "confidence ", el("b", {}, r.confidence !== null ? pct(r.confidence) : "—"), tip("confidence")),
+      el("span", { class: "chip" }, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`))),
+    el("div", { style: "margin-top:12px" },
+      el("a", { href: "#", onclick: (e) => {
+        e.preventDefault();
+        openModal("How this is calculated", el("div", {},
+          el("p", { class: "narrative" }, TIPS.composite),
+          el("p", { style: "font-size:13px" }, el("b", {}, "Attribution. "), TIPS.attribution),
+          el("p", { style: "font-size:13px" }, el("b", {}, "Coverage. "), TIPS.coverage),
+          el("p", { style: "font-size:13px" }, el("b", {}, "Insufficient evidence. "), TIPS.insufficient),
+          el("p", { class: "muted", style: "font-size:12px" }, r.note)));
+      } }, "How is this calculated? →"))));
 
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Attributable actions"),
+    el("h3", {}, "Their attributable actions"),
+    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+      "Every action this official is credited on. Click any row to open its full, source-anchored scorecard (outcome vs. baseline, attribution, confidence, sources)."),
     el("table", {},
       el("thead", {}, el("tr", {}, el("th", {}, "action"), el("th", {}, "role"),
         el("th", { class: "right" }, "attribution", tip("attribution")), el("th", {}, "status"),

@@ -519,6 +519,36 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         signer_name="Ralph Northam", signer_party="D",
         metric_kind="energy",
     ),
+    "NM-2019-SB489": StatePolicySpec(
+        key="NM-2019-SB489",
+        title="New Mexico 2019 Energy Transition Act (SB 489)",
+        state_fips="35",
+        state_name="New Mexico",
+        donor_fips=["48", "40", "04", "49", "56"],  # TX OK AZ UT WY
+        source_url="https://www.nmlegis.gov/Legislation/Legislation?chamber=S&legType=B&legNo=489&year=19",
+        objective_text=(
+            "Transition to carbon-free electricity (50% renewable by 2030, 100% carbon-free by "
+            "2045) and cut power-sector emissions (Energy Transition Act)."
+        ),
+        enacted_year=2019, enacted_month=3, lag_window_months=36,
+        signer_name="Michelle Lujan Grisham", signer_party="D",
+        metric_kind="energy",
+    ),
+    "CO-2019-HB1261": StatePolicySpec(
+        key="CO-2019-HB1261",
+        title="Colorado 2019 Climate Action Plan (HB 19-1261)",
+        state_fips="08",
+        state_name="Colorado",
+        donor_fips=["48", "40", "49", "56", "20"],  # TX OK UT WY KS
+        source_url="https://leg.colorado.gov/bills/hb19-1261",
+        objective_text=(
+            "Cut statewide greenhouse gas emissions (at least 26% by 2025, 50% by 2030, 90% by "
+            "2050 vs. 2005) (Climate Action Plan to Reduce Pollution)."
+        ),
+        enacted_year=2019, enacted_month=5, lag_window_months=36,
+        signer_name="Jared Polis", signer_party="D",
+        metric_kind="energy",
+    ),
     "WA-2019-CETA": StatePolicySpec(
         key="WA-2019-CETA",
         title="Washington Clean Energy Transformation Act (SB 5116)",

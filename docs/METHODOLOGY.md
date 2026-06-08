@@ -83,6 +83,11 @@ confidence. A bootstrap (deterministic seed) yields a 95% CI on the delta.
 `attribution = f(formal_authority, pivotality, implementation_control)`, reported as an interval,
 **always** leaving a large explicit `unattributable_residual` (`Σ humans + residual = 1`,
 human total capped at 0.70). Vote pivotality ≈ `1/(margin+1)` — high only for razor-thin votes.
+For an enacted law, the final-passage roll-call of **both chambers** (House clerk XML + Senate
+LIS XML, both Tier-0) is ingested, and each chamber's winning-side members receive decisive-vote
+attribution scaled by **that chamber's own margin**. (Senate records key on `lis_member_id`; the
+`unitedstates/congress-legislators` dataset bridges it to Bioguide — used strictly for identifier
+resolution, never as a scored quantity.)
 
 ## 7. Confidence gate (prevents false precision)
 
@@ -172,7 +177,8 @@ sign disagreement across baselines, or confidence below the publish threshold.
 ## Roadmap
 
 - **Phase 1 (shipped):** US Congress, enacted economic/fiscal laws; Congress.gov + CBO links +
-  BLS; pre-trend/flat baselines; sponsor/signer/decisive-vote attribution; confidence gate; API + UI.
+  BLS; pre-trend/flat baselines; sponsor/signer/decisive-vote attribution (House + Senate roll-calls);
+  confidence gate; API + UI.
 - **Phase 2 (in progress):** **difference-in-differences & synthetic control shipped** (with
   tiered pooling and state-policy scoring on official BLS state series — e.g. the Kansas 2012 tax
   cuts demo, which clears the gate and yields a real composite). **Executive orders shipped**

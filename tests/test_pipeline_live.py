@@ -56,7 +56,10 @@ def _fresh_session():
 
 
 def test_arra_scores_and_is_reproducible() -> None:
+    from sqlalchemy import select
+
     from degreezeor.core import audit
+    from degreezeor.core.models import AttributionWeight, Vote
     from degreezeor.pipeline import score_law
 
     s1 = _fresh_session()
@@ -65,6 +68,17 @@ def test_arra_scores_and_is_reproducible() -> None:
         s1.commit()
         ok, broken = audit.verify_chain(s1)
         assert ok and broken is None
+        # BOTH chambers' final-passage roll-calls are ingested (House + Senate),
+        # and winning-side voters in each chamber receive decisive-vote attribution.
+        chambers = set(s1.execute(select(Vote.chamber).where(Vote.action_id == r1.action_id)).scalars())
+        assert {"house", "senate"} <= chambers
+        decisive = s1.execute(
+            select(AttributionWeight).where(
+                AttributionWeight.eu_id == r1.eu_id, AttributionWeight.role == "decisive_vote"
+            )
+        ).scalars().all()
+        # ARRA: 246 House + 60 Senate winning-side votes.
+        assert len(decisive) == 246 + 60
     finally:
         s1.close()
 

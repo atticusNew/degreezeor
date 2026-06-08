@@ -380,7 +380,8 @@ async function renderAuditStatus() {
   if (!node) return;
   try {
     const a = await getJSON("/api/audit/verify");
-    node.textContent = a.audit_chain_ok ? "✓ Audit chain verified" : "✕ Audit chain broken";
+    node.textContent = a.audit_chain_ok ? "✓ Audit verified" : "✕ Audit broken";
+    node.title = a.audit_chain_ok ? "Append-only audit hash chain verified" : "Audit hash chain broken";
     node.className = "audit-badge " + (a.audit_chain_ok ? "ok" : "bad");
   } catch (e) {
     node.textContent = "";
@@ -1679,8 +1680,15 @@ function toast(msg) {
   setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 2200);
 }
 
+function shareUrlForCurrentPage() {
+  // Per-official pages get a crawler-readable share URL so link previews are per-official.
+  const off = (location.hash || "").match(/#\/official\/(\d+)/);
+  if (off) return new URL("/share/official/" + off[1], location.origin).href;
+  return location.href;
+}
+
 async function shareCurrentPage() {
-  const url = location.href;
+  const url = shareUrlForCurrentPage();
   const title = document.title || "DegreeZero";
   const text = "DegreeZero \u2014 what your officials did, and whether it worked.";
   try {

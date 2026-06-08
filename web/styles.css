@@ -54,7 +54,7 @@ header.top nav a:hover { color: var(--text); background: var(--panel2); text-dec
 header.top nav a.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-border); }
 .hsearch { margin-left: auto; flex: 0 1 240px; min-width: 0; padding: 7px 12px; font-size: 13px; background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 999px; }
 .hsearch:focus { outline: none; border-color: var(--accent-border); }
-.audit-badge { flex: 0 0 auto; white-space: nowrap; font-size: 12px; font-family: ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.audit-badge { flex: 0 0 auto; white-space: nowrap; font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .audit-badge.ok { color: var(--good); border-color: rgba(46,204,113,.4); background: rgba(46,204,113,.08); }
 .audit-badge.bad { color: var(--bad); border-color: rgba(231,76,60,.5); background: rgba(231,76,60,.1); }
 .share-btn { flex: 0 0 auto; white-space: nowrap; font-size: 12px; cursor: pointer; padding: 6px 13px; border-radius: 999px;
@@ -342,7 +342,7 @@ button:disabled { opacity: .55; cursor: default; }
   /* Brand left, audit pill top-right on the first row; nav fills its own row below as a
      single clean row of evenly-sized pills (no wrap, no broken overflow scroll). */
   .hsearch { display: none; }
-  header.top .share-btn { margin-left: auto; }
+  header.top .audit-badge { margin-left: auto; }
   header.top nav { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: nowrap; gap: 3px; }
   header.top nav a { flex: 1 1 0; min-width: 0; text-align: center; padding: 6px 2px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .container { padding: 16px 14px 64px; }

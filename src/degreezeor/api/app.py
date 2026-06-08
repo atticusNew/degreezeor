@@ -64,11 +64,12 @@ def get_evaluation_unit(eu_id: int) -> dict:
 def list_officials(
     q: str | None = None, scored_only: bool = False,
     min_involvement: float = 0.0, party: str | None = None, action_type: str | None = None,
+    category: str | None = None,
 ) -> list[dict]:
     with session_scope() as s:
         return presentation.list_officials(
             s, q=q, scored_only=scored_only, min_involvement=min_involvement,
-            party=party, action_type=action_type)
+            party=party, action_type=action_type, category=category)
 
 
 @app.get("/api/officials/{official_id}")
@@ -194,6 +195,13 @@ def stats() -> dict:
 def sources() -> list[dict]:
     with session_scope() as s:
         return presentation.build_sources(s)
+
+
+@app.get("/api/categories")
+def categories() -> dict:
+    """Objective category catalog (derived from action/metric domain) + per-category counts."""
+    with session_scope() as s:
+        return presentation.build_categories(s)
 
 
 @app.get("/api/integrity/party-symmetry")

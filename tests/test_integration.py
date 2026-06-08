@@ -121,3 +121,26 @@ def test_full_stack_composes(session) -> None:
         assert card["narrative"]
         assert len(card["components"]) >= 1
         assert any(a["role"] == "signer" for a in card["attribution"])
+        # Objective category is derived from the legal-survival metric domain ("Law").
+        assert card["action"]["category"] == "public_safety"
+        assert card["action"]["category_label"] == "Public safety"
+        assert "descriptive_context" in card
+
+    # 6) Category taxonomy composes: catalog counts + per-official breakdown + list_units.
+    cats = presentation.build_categories(session)
+    by_key = {c["key"]: c for c in cats["categories"]}
+    assert by_key["public_safety"]["total_actions"] == 2
+    assert by_key["public_safety"]["scored_actions"] == 2
+
+    units = presentation.list_units(session)
+    assert units and all(u["category"] == "public_safety" for u in units)
+
+    off = presentation.list_officials(session, scored_only=True)[0]
+    detail = presentation.build_official(session, off["id"])
+    assert "by_category" in detail
+    assert any(b["category"] == "public_safety" for b in detail["by_category"])
+    assert "public_safety" in (off["categories"])
+
+    # Category filter narrows / widens the officials list correctly.
+    assert presentation.list_officials(session, category="public_safety", scored_only=True)
+    assert presentation.list_officials(session, category="health", scored_only=True) == []

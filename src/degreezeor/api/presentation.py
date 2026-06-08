@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from degreezeor.categories import category_for, category_label, category_sort_key
 from degreezeor.config import settings
 from degreezeor.core.models import (
     Action,
@@ -177,6 +178,21 @@ def build_scorecard(session: Session, eu_id: int) -> dict[str, Any] | None:
     )
     mv = session.get(MethodologyVersion, run.methodology_version_id) if run else None
 
+    # Descriptive peer-group context (symmetric, non-ranking): how this scored result
+    # sits next to the typical scored result for its action type and its category.
+    cat_key = category_for(action.domain, action.type, metric.domain if metric else None)
+    descriptive_context: list[str] = []
+    if score is not None and not score.gated and score.composite is not None:
+        ref = _scored_reference(session)
+        comp = float(score.composite)
+        type_labels = {"law": "laws", "eo": "executive orders", "regulation": "regulations",
+                       "budget": "budget execution"}
+        ctx_type = _describe_relative(comp, ref["by_type"].get(action.type),
+                                      type_labels.get(action.type, action.type + "s"))
+        ctx_cat = _describe_relative(comp, ref["by_category"].get(cat_key),
+                                     f"the {category_label(cat_key).lower()} category")
+        descriptive_context = [c for c in (ctx_type, ctx_cat) if c]
+
     def official_name(oid: int | None) -> str | None:
         if oid is None:
             return None
@@ -231,6 +247,9 @@ def build_scorecard(session: Session, eu_id: int) -> dict[str, Any] | None:
             "type": action.type,
             "title": action.title,
             "domain": action.domain,
+            "category": category_for(action.domain, action.type, metric.domain if metric else None),
+            "category_label": category_label(
+                category_for(action.domain, action.type, metric.domain if metric else None)),
             "public_law_number": law.public_law_number if law else None,
             "enacted_date": law.enacted_date.isoformat() if law and law.enacted_date else None,
             "source_url": action.source_url,
@@ -295,6 +314,7 @@ def build_scorecard(session: Session, eu_id: int) -> dict[str, Any] | None:
             for land in landings
         ],
         "narrative": _narrative(action, metric, outcome, eu, score),
+        "descriptive_context": descriptive_context,
         "what_would_change_the_score": _what_would_change(outcome, score),
     }
 
@@ -316,6 +336,9 @@ def _official_contributions(session: Session, official_id: int):
     action_ids = {e.action_id for e in eu_map.values()}
     action_map = {a.id: a for a in session.execute(
         select(Action).where(Action.id.in_(action_ids))).scalars()} if action_ids else {}
+    metric_ids = {e.metric_id for e in eu_map.values() if e.metric_id}
+    metric_domain = {m.id: m.domain for m in session.execute(
+        select(Metric).where(Metric.id.in_(metric_ids))).scalars()} if metric_ids else {}
     run_map = _latest_run_map(session, eu_ids)
     score_map = _scores_by_run(session, [r.id for r in run_map.values()])
     contributions = []
@@ -335,10 +358,17 @@ def _official_contributions(session: Session, official_id: int):
             eu_id=aw.eu_id, attribution=aw.attribution,
             composite=composite, confidence=score.confidence if score else None, gated=gated,
         ))
+        cat = category_for(
+            action.domain if action else None,
+            action.type if action else None,
+            metric_domain.get(eu.metric_id) if eu else None,
+        )
         details.append({
             "eu_id": aw.eu_id,
             "action_title": action.title if action else None,
             "action_type": action.type if action else None,
+            "category": cat,
+            "category_label": category_label(cat),
             "role": aw.role,
             "attribution": _num(aw.attribution),
             "status": eu.status if eu else None,
@@ -356,6 +386,26 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
         return None
     contributions, details = _official_contributions(session, official_id)
     r = rollup(contributions)
+
+    # Per-category breakdown: group the official's contributions by objective category
+    # and roll each group up the same way (composite + coverage). Descriptive only.
+    eu_cat = {d["eu_id"]: d["category"] for d in details}
+    by_cat: dict[str, list] = defaultdict(list)
+    for c in contributions:
+        by_cat[eu_cat.get(c.eu_id, "other")].append(c)
+    categories = []
+    for key, items in by_cat.items():
+        cr = rollup(items)
+        categories.append({
+            "category": key,
+            "category_label": category_label(key),
+            "total_actions": cr.total_actions,
+            "scored_actions": cr.scored_actions,
+            "coverage": _num(cr.coverage),
+            "composite": _num(cr.composite),
+            "confidence": _num(cr.confidence),
+        })
+    categories.sort(key=lambda x: category_sort_key(x["category"]))
     party = session.execute(
         select(Party.abbrev).join(OfficeTerm, OfficeTerm.party_id == Party.id)
         .where(OfficeTerm.official_id == official_id).order_by(OfficeTerm.id.desc()).limit(1)
@@ -375,6 +425,7 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
                 "(insufficient evidence), never a low score."
             ),
         },
+        "by_category": categories,
         "actions": details,
     }
 
@@ -382,6 +433,7 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
 def list_officials(
     session: Session, q: str | None = None, scored_only: bool = False,
     min_involvement: float = 0.0, party: str | None = None, action_type: str | None = None,
+    category: str | None = None,
 ) -> list[dict[str, Any]]:
     """Attribution-weighted roll-up for every official. Bulk-loaded (a handful of queries
     total) so it scales to the full House+Senate roster without per-official N+1 latency.
@@ -402,12 +454,18 @@ def list_officials(
     eu_ids = {aw.eu_id for aw in aw_rows}
     run_map = _latest_run_map(session, eu_ids)                       # ~1 query
     score_map = _scores_by_run(session, [r.id for r in run_map.values()])  # 1 query
-    # 1 query: action type per EU (for the "by action type" filter).
-    eu_type = dict(session.execute(
-        select(EvaluationUnit.id, Action.type)
-        .join(Action, Action.id == EvaluationUnit.action_id)
-        .where(EvaluationUnit.id.in_(eu_ids))
-    ).all()) if eu_ids else {}
+    # 1 query: action type + objective category per EU (for the type / category filters).
+    eu_type: dict[int, str] = {}
+    eu_cat: dict[int, str] = {}
+    if eu_ids:
+        for eid, atype, adomain, mdomain in session.execute(
+            select(EvaluationUnit.id, Action.type, Action.domain, Metric.domain)
+            .join(Action, Action.id == EvaluationUnit.action_id)
+            .join(Metric, Metric.id == EvaluationUnit.metric_id, isouter=True)
+            .where(EvaluationUnit.id.in_(eu_ids))
+        ).all():
+            eu_type[eid] = atype
+            eu_cat[eid] = category_for(adomain, atype, mdomain)
 
     by_off: dict[int, list[AttributionWeight]] = defaultdict(list)
     for aw in aw_rows:
@@ -433,10 +491,13 @@ def list_officials(
         seen: set[int] = set()
         involvement = 0.0
         atypes: set[str] = set()
+        cats: set[str] = set()
         for aw in aws:
             involvement = max(involvement, float(aw.attribution))
             if eu_type.get(aw.eu_id):
                 atypes.add(eu_type[aw.eu_id])
+            if eu_cat.get(aw.eu_id):
+                cats.add(eu_cat[aw.eu_id])
             if aw.eu_id in seen:
                 continue
             seen.add(aw.eu_id)
@@ -459,6 +520,7 @@ def list_officials(
             "coverage": _num(r.coverage),
             "composite": _num(r.composite),
             "confidence": _num(r.confidence),
+            "categories": sorted(cats, key=category_sort_key),
             "_action_types": sorted(atypes),
         })
     if q:
@@ -468,6 +530,8 @@ def list_officials(
         out = [o for o in out if (o["party"] or "").lower() == party.lower()]
     if action_type:
         out = [o for o in out if action_type in o["_action_types"]]
+    if category:
+        out = [o for o in out if category in o["categories"]]
     for o in out:
         o.pop("_action_types", None)  # internal filter field; not part of the public shape
     if scored_only:
@@ -553,6 +617,96 @@ def build_sources(session: Session) -> list[dict[str, Any]]:
              "base_url": d.base_url, "license": d.license} for d in rows]
 
 
+def _mean_std(values: list[float]) -> tuple[float, float]:
+    n = len(values)
+    if n == 0:
+        return 0.0, 0.0
+    mean = sum(values) / n
+    if n < 2:
+        return mean, 0.0
+    var = sum((v - mean) ** 2 for v in values) / (n - 1)
+    return mean, var ** 0.5
+
+
+# Minimum scored sample before a descriptive "typical result" comparison is shown.
+_CONTEXT_MIN_SAMPLE = 3
+
+
+def _scored_reference(session: Session) -> dict[str, dict[str, dict[str, Any]]]:
+    """Aggregate scored composites grouped by action type and by category, so an
+    individual action can be described relative to the typical scored result for its
+    peer group. Descriptive only: this never changes any score and is symmetric."""
+    units = list_units(session)
+    by_type: dict[str, list[float]] = defaultdict(list)
+    by_cat: dict[str, list[float]] = defaultdict(list)
+    for u in units:
+        if u["status"] == "scored" and u["composite"] is not None:
+            by_type[u["type"]].append(u["composite"])
+            by_cat[u["category"]].append(u["composite"])
+
+    def summarize(groups: dict[str, list[float]]) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for key, vals in groups.items():
+            mean, std = _mean_std(vals)
+            out[key] = {"n": len(vals), "mean": round(mean, 2), "std": round(std, 2)}
+        return out
+
+    return {"by_type": summarize(by_type), "by_category": summarize(by_cat)}
+
+
+def _describe_relative(composite: float, ref: dict[str, Any] | None, group_label: str) -> str | None:
+    """Neutral, descriptive sentence placing a composite next to its peer group's mean.
+
+    Uses a half-standard-deviation band so small differences read as "near typical".
+    Returns None when the sample is too small to be meaningful (honest abstention)."""
+    if not ref or ref["n"] < _CONTEXT_MIN_SAMPLE:
+        return None
+    mean = ref["mean"]
+    band = max(ref["std"] * 0.5, 1.0)
+    if composite >= mean + band:
+        rel = "above"
+    elif composite <= mean - band:
+        rel = "below"
+    else:
+        rel = "near"
+    return (
+        f"This result ({composite:.1f}) is {rel} the typical scored result for {group_label} "
+        f"({mean:.1f} across {ref['n']} scored). This is descriptive context, not a ranking."
+    )
+
+
+def build_categories(session: Session) -> dict[str, Any]:
+    """Public category catalog with objective counts per category, for grouping/filtering."""
+    from degreezeor.categories import category_catalog
+
+    units = list_units(session)
+    counts: dict[str, dict[str, Any]] = {}
+    for u in units:
+        c = counts.setdefault(u["category"], {"total": 0, "scored": 0, "composites": []})
+        c["total"] += 1
+        if u["status"] == "scored" and u["composite"] is not None:
+            c["scored"] += 1
+            c["composites"].append(u["composite"])
+    out = []
+    for entry in category_catalog():
+        c = counts.get(entry["key"], {"total": 0, "scored": 0, "composites": []})
+        mean, _ = _mean_std(c["composites"])
+        out.append({
+            **entry,
+            "total_actions": c["total"],
+            "scored_actions": c["scored"],
+            "mean_composite": round(mean, 2) if c["composites"] else None,
+        })
+    return {
+        "categories": out,
+        "note": (
+            "Categories are derived deterministically from each action's official subject "
+            "domain and the metric it was measured against. They group actions by topic; "
+            "they are not a value judgment and play no part in scoring."
+        ),
+    }
+
+
 def list_units(session: Session) -> list[dict[str, Any]]:
     rows = session.execute(
         select(EvaluationUnit, Action).join(Action, Action.id == EvaluationUnit.action_id)
@@ -564,15 +718,23 @@ def list_units(session: Session) -> list[dict[str, Any]]:
     law_ids = {action.id for _, action in rows}
     law_map = {law.action_id: law.public_law_number
                for law in session.execute(select(Law).where(Law.action_id.in_(law_ids))).scalars()} if law_ids else {}
+    # Bulk-load metric domains (1 query) for objective category derivation.
+    metric_ids = {eu.metric_id for eu, _ in rows if eu.metric_id}
+    metric_domain = {m.id: m.domain
+                     for m in session.execute(select(Metric).where(Metric.id.in_(metric_ids))).scalars()} if metric_ids else {}
     out = []
     for eu, action in rows:
         run = run_map.get(eu.id)
         score = score_map.get(run.id) if run else None
+        cat = category_for(action.domain, action.type, metric_domain.get(eu.metric_id))
         out.append({
             "id": eu.id,
             "title": action.title,
+            "type": action.type,
             "public_law": law_map.get(action.id),
             "status": eu.status,
+            "category": cat,
+            "category_label": category_label(cat),
             "composite": _num(score.composite) if score else None,
             "confidence": _num(score.confidence) if score else None,
         })

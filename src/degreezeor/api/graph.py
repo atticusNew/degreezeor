@@ -51,33 +51,46 @@ def build_graph(
         select(AttributionWeight).where(AttributionWeight.is_residual.is_(False))
     ).scalars().all()
 
+    # Bulk-load every entity once (avoids per-attribution N+1 — the old path did 4+
+    # session.get() calls for each of hundreds of vote edges, even sub-threshold ones).
+    eu_ids = {aw.eu_id for aw in attributions}
+    eu_map = {e.id: e for e in session.execute(
+        select(EvaluationUnit).where(EvaluationUnit.id.in_(eu_ids))).scalars()} if eu_ids else {}
+    action_ids = {e.action_id for e in eu_map.values()}
+    action_map = {a.id: a for a in session.execute(
+        select(Action).where(Action.id.in_(action_ids))).scalars()} if action_ids else {}
+    official_ids = {aw.official_id for aw in attributions if aw.official_id}
+    official_map = {o.id: o for o in session.execute(
+        select(Official).where(Official.id.in_(official_ids))).scalars()} if official_ids else {}
+    jur_map = {j.id: j for j in session.execute(select(Jurisdiction)).scalars()}
+    metric_map = {m.id: m for m in session.execute(select(Metric)).scalars()}
+
     # If focusing on one official, find their action set first.
     focus_action_ids: set[int] | None = None
     if official_id is not None:
-        focus_action_ids = set()
-        for aw in attributions:
-            if aw.official_id == official_id:
-                eu = session.get(EvaluationUnit, aw.eu_id)
-                if eu:
-                    focus_action_ids.add(eu.action_id)
+        focus_action_ids = {
+            eu_map[aw.eu_id].action_id
+            for aw in attributions
+            if aw.official_id == official_id and aw.eu_id in eu_map
+        }
 
     seen_action_metric: set[tuple[int, int]] = set()
     seen_action_jur: set[tuple[int, int]] = set()
     for aw in attributions:
-        eu = session.get(EvaluationUnit, aw.eu_id)
+        # Drop sub-threshold (e.g. non-decisive vote) edges FIRST, before any work.
+        if aw.official_id is None or float(aw.attribution) < min_weight:
+            continue
+        eu = eu_map.get(aw.eu_id)
         if eu is None:
             continue
-        action = session.get(Action, eu.action_id)
+        action = action_map.get(eu.action_id)
         if action is None:
             continue
         if focus_action_ids is not None and action.id not in focus_action_ids:
             continue
-
-        official = session.get(Official, aw.official_id) if aw.official_id else None
+        official = official_map.get(aw.official_id)
         if official is None:
             continue
-        if float(aw.attribution) < min_weight:
-            continue  # drop sub-threshold (e.g. non-decisive vote) edges for readability
         oid = f"official:{official.id}"
         aid = f"action:{action.id}"
         add_node(oid, "official", official.full_name, ref_id=official.id)
@@ -91,7 +104,7 @@ def build_graph(
         # action -> jurisdiction (once per action)
         if action.jurisdiction_id and (action.id, action.jurisdiction_id) not in seen_action_jur:
             seen_action_jur.add((action.id, action.jurisdiction_id))
-            jur = session.get(Jurisdiction, action.jurisdiction_id)
+            jur = jur_map.get(action.jurisdiction_id)
             if jur:
                 jid = f"jurisdiction:{jur.id}"
                 add_node(jid, "jurisdiction", jur.name)
@@ -100,7 +113,7 @@ def build_graph(
         # action -> metric (via its evaluation unit)
         if eu.metric_id and (action.id, eu.metric_id) not in seen_action_metric:
             seen_action_metric.add((action.id, eu.metric_id))
-            metric = session.get(Metric, eu.metric_id)
+            metric = metric_map.get(eu.metric_id)
             if metric:
                 mid = f"metric:{metric.id}"
                 add_node(mid, "metric", metric.name)

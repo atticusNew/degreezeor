@@ -10,9 +10,10 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from degreezeor.config import settings
@@ -43,6 +44,30 @@ def _latest_run(session: Session, eu_id: int) -> ScoreRun | None:
     return session.execute(
         select(ScoreRun).where(ScoreRun.eu_id == eu_id).order_by(ScoreRun.id.desc()).limit(1)
     ).scalar_one_or_none()
+
+
+def _latest_run_map(session: Session, eu_ids: set[int]) -> dict[int, ScoreRun]:
+    """Bulk: latest ScoreRun per evaluation unit in ~1 query (avoids per-EU N+1)."""
+    if not eu_ids:
+        return {}
+    subq = (
+        select(ScoreRun.eu_id, func.max(ScoreRun.id).label("mx"))
+        .where(ScoreRun.eu_id.in_(eu_ids))
+        .group_by(ScoreRun.eu_id)
+        .subquery()
+    )
+    runs = session.execute(
+        select(ScoreRun).join(subq, ScoreRun.id == subq.c.mx)
+    ).scalars().all()
+    return {r.eu_id: r for r in runs}
+
+
+def _scores_by_run(session: Session, run_ids: list[int]) -> dict[int, EUScore]:
+    """Bulk: EUScore keyed by score_run_id in 1 query."""
+    if not run_ids:
+        return {}
+    rows = session.execute(select(EUScore).where(EUScore.score_run_id.in_(run_ids))).scalars().all()
+    return {s.score_run_id: s for s in rows}
 
 
 def _narrative(action: Action, metric: Metric | None, outcome: OutcomeResult | None,
@@ -281,6 +306,15 @@ def _official_contributions(session: Session, official_id: int):
             AttributionWeight.is_residual.is_(False),
         )
     ).scalars().all()
+    eu_ids = {aw.eu_id for aw in rows}
+    # Bulk-load EUs, actions, latest runs + scores (avoids per-action N+1).
+    eu_map = {e.id: e for e in session.execute(
+        select(EvaluationUnit).where(EvaluationUnit.id.in_(eu_ids))).scalars()} if eu_ids else {}
+    action_ids = {e.action_id for e in eu_map.values()}
+    action_map = {a.id: a for a in session.execute(
+        select(Action).where(Action.id.in_(action_ids))).scalars()} if action_ids else {}
+    run_map = _latest_run_map(session, eu_ids)
+    score_map = _scores_by_run(session, [r.id for r in run_map.values()])
     contributions = []
     details = []
     seen: set[int] = set()
@@ -288,13 +322,10 @@ def _official_contributions(session: Session, official_id: int):
         if aw.eu_id in seen:
             continue
         seen.add(aw.eu_id)
-        eu = session.get(EvaluationUnit, aw.eu_id)
-        action = session.get(Action, eu.action_id) if eu else None
-        run = _latest_run(session, aw.eu_id)
-        score = (
-            session.execute(select(EUScore).where(EUScore.score_run_id == run.id)).scalar_one_or_none()
-            if run else None
-        )
+        eu = eu_map.get(aw.eu_id)
+        action = action_map.get(eu.action_id) if eu else None
+        run = run_map.get(aw.eu_id)
+        score = score_map.get(run.id) if run else None
         composite = score.composite if score else None
         gated = bool(score.gated) if score else True
         contributions.append(ActionContribution(
@@ -343,22 +374,50 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
 def list_officials(
     session: Session, q: str | None = None, scored_only: bool = False
 ) -> list[dict[str, Any]]:
-    from degreezeor.scoring.rollup import rollup
+    """Attribution-weighted roll-up for every official. Bulk-loaded (a handful of queries
+    total) so it scales to the full House+Senate roster without per-official N+1 latency."""
+    from degreezeor.scoring.rollup import ActionContribution, rollup
 
-    ids = session.execute(
-        select(AttributionWeight.official_id).where(
+    # 1 query: all non-residual attribution edges.
+    aw_rows = session.execute(
+        select(AttributionWeight).where(
             AttributionWeight.official_id.is_not(None),
             AttributionWeight.is_residual.is_(False),
-        ).distinct()
+        )
     ).scalars().all()
+    eu_ids = {aw.eu_id for aw in aw_rows}
+    run_map = _latest_run_map(session, eu_ids)                       # ~1 query
+    score_map = _scores_by_run(session, [r.id for r in run_map.values()])  # 1 query
+
+    by_off: dict[int, list[AttributionWeight]] = defaultdict(list)
+    for aw in aw_rows:
+        by_off[aw.official_id].append(aw)
+    # 1 query: official names.
+    name_map = {
+        o.id: o.full_name
+        for o in session.execute(select(Official).where(Official.id.in_(by_off.keys()))).scalars()
+    }
+
     out = []
-    for oid in ids:
-        official = session.get(Official, oid)
-        contributions, _ = _official_contributions(session, oid)
+    for oid, aws in by_off.items():
+        contributions = []
+        seen: set[int] = set()
+        for aw in aws:
+            if aw.eu_id in seen:
+                continue
+            seen.add(aw.eu_id)
+            run = run_map.get(aw.eu_id)
+            score = score_map.get(run.id) if run else None
+            contributions.append(ActionContribution(
+                eu_id=aw.eu_id, attribution=aw.attribution,
+                composite=score.composite if score else None,
+                confidence=score.confidence if score else None,
+                gated=bool(score.gated) if score else True,
+            ))
         r = rollup(contributions)
         out.append({
             "id": oid,
-            "name": official.full_name if official else None,
+            "name": name_map.get(oid),
             "total_actions": r.total_actions,
             "scored_actions": r.scored_actions,
             "coverage": _num(r.coverage),
@@ -421,17 +480,21 @@ def list_units(session: Session) -> list[dict[str, Any]]:
     rows = session.execute(
         select(EvaluationUnit, Action).join(Action, Action.id == EvaluationUnit.action_id)
     ).all()
+    eu_ids = {eu.id for eu, _ in rows}
+    run_map = _latest_run_map(session, eu_ids)
+    score_map = _scores_by_run(session, [r.id for r in run_map.values()])
+    # Bulk-load public-law numbers (1 query) instead of two session.get per row.
+    law_ids = {action.id for _, action in rows}
+    law_map = {law.action_id: law.public_law_number
+               for law in session.execute(select(Law).where(Law.action_id.in_(law_ids))).scalars()} if law_ids else {}
     out = []
     for eu, action in rows:
-        run = _latest_run(session, eu.id)
-        score = (
-            session.execute(select(EUScore).where(EUScore.score_run_id == run.id)).scalar_one_or_none()
-            if run else None
-        )
+        run = run_map.get(eu.id)
+        score = score_map.get(run.id) if run else None
         out.append({
             "id": eu.id,
             "title": action.title,
-            "public_law": (session.get(Law, action.id).public_law_number if session.get(Law, action.id) else None),
+            "public_law": law_map.get(action.id),
             "status": eu.status,
             "composite": _num(score.composite) if score else None,
             "confidence": _num(score.confidence) if score else None,

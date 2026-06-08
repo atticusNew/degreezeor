@@ -183,8 +183,11 @@ sign disagreement across baselines, or confidence below the publish threshold.
   tiered pooling and state-policy scoring on official BLS state series — e.g. the Kansas 2012 tax
   cuts demo, which clears the gate and yields a real composite). **Executive orders shipped**
   (Federal Register Tier-0 ingestion; the signing president carries high unilateral executive
-  authority vs. shared law-signing). Remaining: major regulations (Regulations.gov / eCFR); more
-  domains (energy, health, education); dispute/appeal workflow; relationship graph.
+  authority vs. shared law-signing). **Final agency rules (regulations) shipped** (Federal Register
+  Tier-0; attributed to the administration in office on the rule's effective date). **Senate
+  roll-calls shipped** (both chambers' passage voters credited, per-chamber pivotality). **Budget
+  execution** scored for every toptier agency (reliable, commensurable by construction). Remaining:
+  more domains (energy, health, education); deeper regulatory outcome metrics.
 - **Phase 3:** state/local government; distributional & cost lenses; user value-weight profiles;
   reproducible notebooks; third-party audits.
 - **Ultimate:** all levels of government, real-time ingestion, full causal ensemble, audit program.

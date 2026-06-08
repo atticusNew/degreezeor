@@ -26,6 +26,9 @@ header.top {
   display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
   background: linear-gradient(180deg, #0e1420, #0b0f17);
 }
+header.top .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); }
+header.top .brand:hover { text-decoration: none; }
+header.top .logo { width: 28px; height: 28px; border-radius: 6px; display: block; }
 header.top h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
 header.top .tag { color: var(--muted); font-size: 13px; }
 .container { max-width: 1080px; margin: 0 auto; padding: 24px 28px 80px; }

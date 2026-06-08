@@ -273,44 +273,13 @@ async function renderLanding() {
 
   const hero = el("div", { class: "hero" },
     el("img", { class: "mark", src: "/logo.png", alt: "DegreeZero" }),
-    el("h1", {}, "DegreeZero"),
-    el("div", { class: "sub" },
-      "Did a public action meet the goal it set for itself? We measure the result against each " +
-      "policy's own stated objective, with sources you can check."),
+    el("div", { class: "sub" }, "See what your officials actually did, and whether it worked."),
     el("div", { class: "hero-search" }, search, el("button", { onclick: go }, "Search")),
     el("div", { class: "ctas" },
       el("a", { class: "cta ghost", href: "#/officials" }, "Browse officials"),
       el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"),
       el("a", { class: "cta ghost", href: "#/about" }, "How it works")));
   app.appendChild(hero);
-
-  // Compact one-line credibility stats (best-effort).
-  try {
-    const s = await getJSON("/api/stats");
-    const stat = (n, l) => el("span", { class: "s" }, el("b", {}, String(n)), " " + l);
-    hero.appendChild(el("div", { class: "statline" },
-      stat(s.scored, "actions scored"), el("span", { class: "dot" }, "·"),
-      stat(s.officials, "officials"), el("span", { class: "dot" }, "·"),
-      stat(s.sources, "official sources"),
-      s.last_updated ? el("span", { class: "muted", style: "margin-left:8px" }, "updated " + s.last_updated.slice(0, 10)) : null));
-  } catch (e) { /* stats are best-effort */ }
-
-  // Topic quick-links into actions (best-effort).
-  try {
-    const cats = (await getJSON("/api/categories")).categories.filter((c) => c.key !== "other" && c.total_actions);
-    if (cats.length) {
-      const row = el("div", { class: "chipbar", style: "justify-content:center;margin-top:14px" });
-      for (const c of cats) row.appendChild(el("a", { class: "fchip", href: "#/actions?category=" + c.key }, c.label));
-      hero.appendChild(row);
-    }
-  } catch (e) { /* best-effort */ }
-
-  // One compact line on how it works (depth lives in About).
-  hero.appendChild(el("div", { class: "how", style: "margin-top:16px" },
-    el("b", {}, "How it works: "),
-    "a policy sets a goal, we measure the result against official data and a defensible baseline, ",
-    "then show a 0 to 100 score with sources, or ", el("span", { class: "muted" }, "\u201Cinsufficient evidence\u201D"),
-    " when we cannot tell. ", el("a", { href: "#/about" }, "More")));
 }
 
 async function renderSources() {
@@ -861,6 +830,7 @@ async function officialChallengeSection(card) {
   const scored = (card.actions || []).filter((a) => a.composite !== null);
   if (!scored.length) return null;
   const sel = selectEl(scored.map((a) => [String(a.eu_id), a.action_title || ("Action " + a.eu_id)]), String(scored[0].eu_id));
+  sel.className = "full-select";
   const holder = el("div", {});
   async function load() { holder.innerHTML = ""; holder.appendChild(spinner("Loading…")); const c = await disputesCard(Number(sel.value)); holder.innerHTML = ""; holder.appendChild(c); }
   sel.addEventListener("change", load);

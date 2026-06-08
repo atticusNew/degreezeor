@@ -191,3 +191,40 @@ def test_activity_layer_sponsored_and_cosponsored(session) -> None:
 
     srec = presentation.build_official(session, sponsor.id)["record"]
     assert srec["sponsored_total"] == 1
+
+
+def test_voting_record_surface(session) -> None:
+    """A member's recorded roll-call votes surface by topic + position, feed the activity
+    timeline, and never become a score. Attribution-only votes (roll_call NULL) are excluded."""
+    from degreezeor.core.models import Official, Vote, VotePosition
+
+    member = Official(full_name="Vee Voter", bioguide_id="V000001")
+    session.add(member)
+    session.flush()
+
+    v1 = Vote(chamber="house", question="https://clerk.house.gov/evs/2025/roll010.xml",
+              vote_date=date(2025, 2, 1), result="Passed", congress=119, roll_call=10,
+              bill_number="HR1", category="jobs_economy", yea=220, nay=210)
+    v2 = Vote(chamber="house", question="https://clerk.house.gov/evs/2025/roll011.xml",
+              vote_date=date(2025, 3, 1), result="Failed", congress=119, roll_call=11,
+              bill_number="HR2", category="health", yea=200, nay=230)
+    # Attribution-only vote (no roll_call) must NOT count toward the voting record.
+    v3 = Vote(chamber="house", question="legacy-passage-url", vote_date=date(2019, 1, 1))
+    session.add_all([v1, v2, v3])
+    session.flush()
+    session.add_all([
+        VotePosition(vote_id=v1.id, official_id=member.id, position="yea"),
+        VotePosition(vote_id=v2.id, official_id=member.id, position="nay"),
+        VotePosition(vote_id=v3.id, official_id=member.id, position="yea"),
+    ])
+    session.flush()
+
+    card = presentation.build_official(session, member.id)
+    votes = card["votes"]
+    assert votes["total"] == 2  # v3 excluded (roll_call is NULL)
+    assert votes["by_position"] == {"yea": 1, "nay": 1}
+    cats = {c["category"]: c for c in votes["by_category"]}
+    assert cats["jobs_economy"]["yea"] == 1 and cats["health"]["nay"] == 1
+    # Votes feed the activity timeline (recent years, not only scored actions).
+    years = {d["year"] for d in card["activity"]["by_year"]}
+    assert {2025} <= years

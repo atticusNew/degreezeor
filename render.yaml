@@ -64,15 +64,16 @@ services:
     schedule: "0 7 * * *"                            # 07:00 UTC daily
     buildCommand: "pip install -e ."
     startCommand: "degreezeor migrate && degreezeor refresh"
-    disk:
-      name: ingest-data
-      mountPath: /var/data
-      sizeGB: 2
+    # NOTE: Render cron jobs do NOT support persistent disks. The cron job's
+    # cache/landing is therefore ephemeral (cold start each run) — that is fine
+    # because Postgres is the durable system of record; the disk only ever held
+    # replayable HTTP cache / raw landing files. DZ_DATA_DIR points at the
+    # container's writable /tmp so ingestion has scratch space.
     envVars:
       - key: DZ_DATABASE_URL
         fromDatabase: { name: degreezeor-db, property: connectionString }
       - key: DZ_DATA_DIR
-        value: /var/data
+        value: /tmp/data
       - key: DZ_CONGRESS_API_KEY
         sync: false
       - key: DZ_BLS_API_KEY

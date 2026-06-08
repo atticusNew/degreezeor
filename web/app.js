@@ -276,12 +276,13 @@ async function renderLanding() {
 
 async function renderSources() {
   const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
+  const rows = await getJSON("/api/sources");
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Sources"));
   app.appendChild(el("p", { class: "muted" },
     "Every source that feeds a score, with its provenance tier. Tier 0 is the action record, " +
     "Tier 1 is official statistics, Tier 2 is official analysis, Tier 3 is a verified mirror."));
-  const rows = await getJSON("/api/sources");
   app.appendChild(el("div", { class: "card" },
     el("table", {},
       el("thead", {}, el("tr", {}, el("th", {}, "source"), el("th", {}, "tier"), el("th", {}, "endpoint"))),
@@ -387,16 +388,16 @@ function actionRow(u) {
 
 async function renderList() {
   const app = $("#app");
-  app.innerHTML = "";
+  app.innerHTML = ""; app.appendChild(spinner());
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  let cats = [];
+  try { cats = (await getJSON("/api/categories")).categories; } catch (e) { /* best-effort */ }
+  const units = await getJSON("/api/evaluation-units");
+  app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Actions"));
   app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
     "Public actions, each measured against the goal it set for itself. Filter by topic or result, "
     + "or open any action for the full breakdown."));
-
-  let cats = [];
-  try { cats = (await getJSON("/api/categories")).categories; } catch (e) { /* best-effort */ }
-  const units = await getJSON("/api/evaluation-units");
   const order = cats.map((c) => c.key);
   const labelOf = (k) => (cats.find((c) => c.key === k) || {}).label || k;
   const present = new Set(units.map((u) => u.category));
@@ -694,7 +695,7 @@ async function renderOfficials() {
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Officials"));
   app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
-    "Search a name, jump by letter, or filter by topic. Open anyone for their record."));
+    "Search a name or jump by letter. Open anyone for their record."));
 
   if (!index.length) {
     app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
@@ -716,7 +717,6 @@ async function renderOfficials() {
     q: (params.get("q") || "").toLowerCase(),
     letter: "",
     scoredOnly: params.get("scored_only") === "1",
-    cat: params.get("category") || "",
   };
 
   // --- Controls ---
@@ -728,9 +728,6 @@ async function renderOfficials() {
   const letters = ["All", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("")];
   const azBar = el("div", { class: "azbar" });
 
-  let catCats = [];
-  try { catCats = (await getJSON("/api/categories")).categories; } catch (e) { /* best-effort */ }
-  const catSel = selectEl([["", "All categories"], ...catCats.map((c) => [c.key, c.label])], state.cat);
   const scoredOnly = el("input", { type: "checkbox" });
   scoredOnly.checked = state.scoredOnly;
 
@@ -744,28 +741,22 @@ async function renderOfficials() {
     return new RegExp("[A-Z]").test(c) ? c : "#";
   };
 
-  // Topic / scored filters run server-side (reliable regardless of the index payload);
-  // name + letter then narrow that set client-side. Cached per filter combination.
+  // The "scored only" filter runs server-side (reliable); name + letter narrow client-side.
   let serverCache = { key: null, rows: null };
   async function sourceRows() {
-    if (!state.cat && !state.scoredOnly) return index;
-    const key = `${state.cat}|${state.scoredOnly}`;
-    if (serverCache.key === key) return serverCache.rows;
-    const qs = new URLSearchParams();
-    if (state.cat) qs.set("category", state.cat);
-    if (state.scoredOnly) qs.set("scored_only", "true");
-    qs.set("min_involvement", "0.005");
-    const rows = await getJSON("/api/officials?" + qs.toString());
-    serverCache = { key, rows };
+    if (!state.scoredOnly) return index;
+    if (serverCache.key === "scored") return serverCache.rows;
+    const rows = await getJSON("/api/officials?scored_only=true&min_involvement=0.005");
+    serverCache = { key: "scored", rows };
     return rows;
   }
 
   async function renderList() {
-    const browsing = !state.q && !state.letter && !state.cat && !state.scoredOnly;
+    const browsing = !state.q && !state.letter && !state.scoredOnly;
     if (browsing) {
       listEl.innerHTML = ""; countEl.textContent = "";
       listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
-        el("p", {}, "Search a name, jump by letter, or filter by topic to see officials."),
+        el("p", {}, "Search a name, or jump by letter, to see officials."),
         el("p", { style: "font-size:13px" }, "There are ", el("b", {}, String(index.length)), " officials in the directory.")));
       return;
     }
@@ -828,13 +819,21 @@ async function renderOfficials() {
     });
     azBar.appendChild(b);
   }
-  catSel.addEventListener("change", () => { state.cat = catSel.value; renderList(); });
   scoredOnly.addEventListener("change", () => { state.scoredOnly = scoredOnly.checked; renderList(); });
+  // Keyboard: type to focus the search from anywhere on the page.
+  azBar.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const btns = [...azBar.children];
+    const i = btns.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    const next = e.key === "ArrowRight" ? Math.min(i + 1, btns.length - 1) : Math.max(i - 1, 0);
+    btns[next].focus();
+  });
 
   app.appendChild(searchWrap);
   app.appendChild(azBar);
   app.appendChild(el("div", { class: "off-filters" },
-    el("label", {}, "Topic ", catSel),
     el("label", { class: "chk" }, scoredOnly, " scored only")));
   app.appendChild(countEl);
   app.appendChild(listEl);
@@ -1103,8 +1102,9 @@ async function renderGraph() {
 
 async function renderCoverage() {
   const app = $("#app");
-  app.innerHTML = "";
+  app.innerHTML = ""; app.appendChild(spinner());
   const c = await getJSON("/api/coverage");
+  app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Coverage"));
   app.appendChild(el("p", { class: "muted" },
     "Every action considered, including those we could not score. \u201CInsufficient evidence\u201D is " +
@@ -1198,10 +1198,10 @@ async function renderAbout() {
 
 async function renderMethodology() {
   const app = $("#app");
-  app.innerHTML = "";
+  app.innerHTML = ""; app.appendChild(spinner());
   let m = {};
   try { m = await getJSON("/api/methodology"); } catch (e) { /* fall back to static copy */ }
-
+  app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Methodology"));
   app.appendChild(el("p", { class: "muted", style: "margin:2px 0 6px" },
     "The technical detail behind the numbers. For a plain-language overview, see ",
@@ -1258,13 +1258,14 @@ async function renderMethodology() {
 
 async function renderIntegrity() {
   const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
+  const r = await getJSON("/api/integrity/party-symmetry");
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Integrity"));
   app.appendChild(el("p", { class: "muted" },
     "Scoring is provably party-blind (the formula never reads party). This page reads party for " +
     "audit only, to watch the distribution of scored outcomes. A flagged gap prompts a human review " +
     "of metric and baseline choices. It never triggers an automated correction or changes any score."));
-  const r = await getJSON("/api/integrity/party-symmetry");
 
   const banner = el("div", { class: "gate-banner " + (r.review_required ? "gated" : "scored") },
     r.review_required

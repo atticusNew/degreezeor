@@ -163,6 +163,19 @@ class ExecutiveOrder(Base):
     fr_doc_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
+class BillCosponsor(Base):
+    """Activity/record layer: a member who cosponsored a bill (what they backed).
+    Unscored; never feeds the scored composite."""
+
+    __tablename__ = "bill_cosponsors"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    action_id: Mapped[int] = mapped_column(ForeignKey("actions.id"), index=True)
+    official_id: Mapped[int] = mapped_column(ForeignKey("officials.id"), index=True)
+    __table_args__ = (
+        UniqueConstraint("action_id", "official_id", name="uq_bill_cosponsor"),
+    )
+
+
 class Vote(Base):
     __tablename__ = "votes"
     id: Mapped[int] = mapped_column(primary_key=True)

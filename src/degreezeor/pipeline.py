@@ -305,6 +305,21 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         enacted_year=2014, enacted_month=5, lag_window_months=48,
         sponsor_name="Will Kraus", sponsor_party="R",
     ),
+    "MI-2011-HB4361": StatePolicySpec(
+        key="MI-2011-HB4361",
+        title="Michigan 2011 business tax overhaul (HB 4361, PA 38)",
+        state_fips="26",
+        state_name="Michigan",
+        # Midwest states without a comparable 2011 business/income-tax overhaul.
+        donor_fips=["17", "27", "42", "19", "21"],  # IL MN PA IA KY
+        source_url="https://www.legislature.mi.gov/Bills/Bill?ObjectName=2011-HB-4361",
+        objective_text=(
+            "Replace the Michigan Business Tax with a simpler, lower 6% corporate income tax to "
+            "improve the business climate and create jobs."
+        ),
+        enacted_year=2011, enacted_month=5, lag_window_months=48,
+        signer_name="Rick Snyder", signer_party="R",
+    ),
     # --- Minimum-wage increases (metric_kind="wage"): the policy's own stated goal is to
     # raise workers' wages, measured against the official state average-hourly-earnings
     # series via synthetic control. Same neutral question, a different objective metric.
@@ -357,6 +372,21 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         sponsor_name="Cory McCray", sponsor_party="D",
         metric_kind="wage",
     ),
+    "NJ-2019-A15": StatePolicySpec(
+        key="NJ-2019-A15",
+        title="New Jersey 2019 minimum wage increase (A15)",
+        state_fips="34",
+        state_name="New Jersey",
+        # Regional states without a comparable minimum-wage increase in the window.
+        donor_fips=["42", "37", "48", "13", "39"],  # PA NC TX GA OH
+        source_url="https://www.njleg.state.nj.us/bill-search/2018/A15",
+        objective_text=(
+            "Raise the state minimum wage to $15 per hour to lift pay for low-wage workers."
+        ),
+        enacted_year=2019, enacted_month=2, lag_window_months=48,
+        signer_name="Phil Murphy", signer_party="D",
+        metric_kind="wage",
+    ),
     # --- Poverty and income (metric_kind="poverty"): scored on the Census SAIPE state
     # poverty rate, where a fall is toward the policy's own stated anti-poverty goal. ---
     "CA-2015-SB80": StatePolicySpec(
@@ -391,6 +421,38 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         ),
         enacted_year=2015, enacted_month=10, lag_window_months=48,
         signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="energy",
+    ),
+    "VA-2020-VCEA": StatePolicySpec(
+        key="VA-2020-VCEA",
+        title="Virginia Clean Economy Act (HB 1526)",
+        state_fips="51",
+        state_name="Virginia",
+        # Large states without a comparable 100% clean-energy / emissions mandate.
+        donor_fips=["48", "12", "13", "37", "47"],  # TX FL GA NC TN
+        source_url="https://lis.virginia.gov/cgi-bin/legp604.exe?201+sum+HB1526",
+        objective_text=(
+            "End carbon dioxide emissions from electricity and require 100% clean energy "
+            "(Virginia Clean Economy Act)."
+        ),
+        enacted_year=2020, enacted_month=4, lag_window_months=24,
+        signer_name="Ralph Northam", signer_party="D",
+        metric_kind="energy",
+    ),
+    "WA-2019-CETA": StatePolicySpec(
+        key="WA-2019-CETA",
+        title="Washington Clean Energy Transformation Act (SB 5116)",
+        state_fips="53",
+        state_name="Washington",
+        # Western/other states without a comparable 100% clean-electricity mandate.
+        donor_fips=["16", "30", "49", "56", "48"],  # ID MT UT WY TX
+        source_url="https://app.leg.wa.gov/billsummary?BillNumber=5116&Year=2019",
+        objective_text=(
+            "Transition to a greenhouse-gas-free electricity supply by 2045 and cut power-sector "
+            "emissions (Clean Energy Transformation Act)."
+        ),
+        enacted_year=2019, enacted_month=5, lag_window_months=36,
+        signer_name="Jay Inslee", signer_party="D",
         metric_kind="energy",
     ),
     # --- Health (metric_kind="uninsured"): scored on the Census SAHIE state uninsured rate,

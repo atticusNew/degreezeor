@@ -200,7 +200,10 @@ sign disagreement across baselines, or confidence below the publish threshold.
   (Census SAIPE; e.g. the California EITC), **state health coverage** (Census SAHIE uninsured rate;
   e.g. California's ACA Medicaid expansion, which clears the gate), and **state emissions** (EIA
   state CO2; e.g. California SB 350) — each measured against the policy's own stated goal with the
-  pre-registered sign (more jobs/wages/income, or less poverty/uninsured/CO2). **Executive orders shipped**
+  pre-registered sign (more jobs/wages/income, or less poverty/uninsured/CO2). The curated set spans
+  the most populous states first and both parties (for example Michigan 2011 business tax, New Jersey
+  2019 minimum wage, Virginia 2020 and Washington 2019 clean-energy laws), with the gate deciding
+  which clear vs. abstain. **Executive orders shipped**
   (Federal Register Tier-0 ingestion; the signing president carries high unilateral executive
   authority vs. shared law-signing). **Final agency rules (regulations) shipped** (Federal Register
   Tier-0; attributed to the administration in office on the rule's effective date). **Senate

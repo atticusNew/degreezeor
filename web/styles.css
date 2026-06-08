@@ -143,6 +143,8 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
 button { background: var(--accent); color: #06101f; border: none; border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
 button:hover { filter: brightness(1.1); }
 button:disabled { opacity: .6; cursor: default; }
+.linkbtn { background: transparent; color: var(--accent); border: 1px solid var(--line); margin-top: 8px; }
+.linkbtn:hover { border-color: var(--accent-border); filter: none; }
 
 /* Headline block (official/result drill-down: big name + big composite first). */
 .headline { background: linear-gradient(180deg, var(--panel), var(--panel2)); border: 1px solid var(--line);

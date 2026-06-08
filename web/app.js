@@ -779,6 +779,31 @@ async function renderOfficials() {
   renderList();
 }
 
+function howMeasuredModal(note) {
+  openModal("How this is measured", el("div", {},
+    el("p", { class: "narrative" }, TIPS.composite),
+    el("div", { class: "eq" }, "official composite = sum(share_i x action_composite_i) / sum(share_i)\n   over the official's scored actions"),
+    el("div", { class: "eq" }, "action composite = confidence x achievement\n   achievement = how fully the action's stated goal was met (0 to 100)"),
+    el("p", { style: "font-size:13px" }, el("b", {}, "Attribution (share of credit). "), TIPS.attribution),
+    el("p", { style: "font-size:13px" }, el("b", {}, "Coverage. "), TIPS.coverage),
+    el("p", { style: "font-size:13px" }, el("b", {}, "Confidence. "), TIPS.confidence),
+    el("p", { style: "font-size:13px" }, el("b", {}, "Insufficient evidence. "), TIPS.insufficient),
+    el("p", { class: "muted", style: "font-size:12px" }, note || "")));
+}
+
+function officialActionRow(a) {
+  const meta = [a.category_label, a.date ? a.date.slice(0, 4) : null, a.role && a.role.replaceAll("_", " ")]
+    .filter(Boolean).join(" · ");
+  return el("div", { class: "list-item", onclick: () => { location.hash = `#/eu/${a.eu_id}`; } },
+    el("div", {},
+      el("div", { class: "title" }, a.action_title || `Action ${a.eu_id}`),
+      el("div", { class: "muted mono" }, meta)),
+    el("div", { style: "text-align:right" },
+      a.composite !== null
+        ? el("span", { class: "badge scored" }, "composite " + fmt(a.composite, 1))
+        : statusBadge(a.status || "pending")));
+}
+
 async function renderOfficialDetail(id) {
   const app = $("#app");
   app.innerHTML = ""; app.appendChild(spinner());
@@ -788,23 +813,23 @@ async function renderOfficialDetail(id) {
 
   const r = card.rollup;
   const o = card.official;
+  const act = card.activity || {};
   const scored = r.composite !== null;
   const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(0) + "%");
   const who = formatNameNatural(o.name);
   const plain = scored
-    ? `Across the ${r.scored_actions} of ${who}'s ${r.total_actions} attributable action(s) we could ` +
-      `score, the goals those actions set were met to ${fmt(r.composite, 1)} out of 100, weighted by confidence. ` +
-      `This reflects only the actions we could score.`
-    : `None of ${who}'s ${r.total_actions} attributable action(s) could be isolated yet, so we ` +
-      `report no score. We mark this "insufficient evidence" rather than guess.`;
+    ? `On the ${r.scored_actions} of ${r.total_actions} actions we could measure, ${who}'s actions met their own ` +
+      `stated goals to ${fmt(r.composite, 1)} out of 100 on average (weighted by our confidence).`
+    : `We could not yet isolate the effect of any of ${who}'s ${r.total_actions} attributable action(s), so we ` +
+      `report insufficient evidence rather than guess.`;
+  const period = act.first_year
+    ? (act.first_year === act.last_year ? `${act.first_year}` : `${act.first_year}\u2013${act.last_year}`)
+    : null;
 
-  // Headline: name + big composite + plain-language summary + secondary chips.
-  // Party is intentionally not shown; office (where known) and the record are.
+  // Headline: name + office + one big neutral number + one plain sentence + how-measured link.
   app.appendChild(el("div", { class: "headline" },
-    el("p", { class: "name" }, formatNameNatural(o.name)),
-    el("div", { class: "submeta" },
-      [o.position, o.bioguide_id ? `Bioguide ${o.bioguide_id}` : "Official record"]
-        .filter(Boolean).join(" · ")),
+    el("p", { class: "name" }, who),
+    el("div", { class: "submeta" }, o.position || "Official record"),
     el("div", { class: "big" },
       scored
         ? el("span", { class: "bignum scored" }, fmt(r.composite, 1))
@@ -814,59 +839,58 @@ async function renderOfficialDetail(id) {
     el("p", { class: "plain" }, plain),
     el("div", { class: "chips" },
       el("span", { class: "chip" }, "coverage ", el("b", {}, pct(r.coverage)), tip("coverage")),
-      el("span", { class: "chip" }, "confidence ", el("b", {}, r.confidence !== null ? pct(r.confidence) : "n/a"), tip("confidence")),
-      el("span", { class: "chip" }, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`))),
+      el("span", { class: "chip" }, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`)),
+      period ? el("span", { class: "chip" }, "active ", el("b", {}, period)) : null,
+      card.most_active_category ? el("span", { class: "chip" }, "most active in ", el("b", {}, card.most_active_category)) : null),
     el("div", { style: "margin-top:12px" },
-      el("a", { href: "#", onclick: (e) => {
-        e.preventDefault();
-        openModal("How this is calculated", el("div", {},
-          el("p", { class: "narrative" }, TIPS.composite),
-          el("div", { class: "eq" }, "official composite = sum(share_i x action_composite_i) / sum(share_i)\n   over the official's scored actions"),
-          el("div", { class: "eq" }, "action composite = confidence x achievement\n   achievement = how fully the action's stated goal was met (0 to 100)"),
-          el("p", { style: "font-size:13px" }, el("b", {}, "Attribution (share of credit). "), TIPS.attribution),
-          el("div", { class: "eq" }, "share = authority x pivotality,  normalized so\n   sum(people) + unattributable residual = 1"),
-          el("p", { style: "font-size:13px" }, el("b", {}, "Coverage. "), TIPS.coverage),
-          el("div", { class: "eq" }, "coverage = scored actions / total attributable actions"),
-          el("p", { style: "font-size:13px" }, el("b", {}, "Confidence. "), TIPS.confidence),
-          el("div", { class: "eq" }, "confidence = design x data x attribution x model x sensitivity"),
-          el("p", { style: "font-size:13px" }, el("b", {}, "Insufficient evidence. "), TIPS.insufficient),
-          el("p", { class: "muted", style: "font-size:12px" }, r.note)));
-      } }, "How is this calculated? →"))));
+      el("a", { href: "#", onclick: (e) => { e.preventDefault(); howMeasuredModal(r.note); } }, "How is this measured? →"))));
 
-  // Record by category: the same measure split by topic (descriptive, never a ranking).
-  if (card.by_category && card.by_category.length >= 2) {
+  // Record by category: compact mauve bars (the meaningful, neutral breakdown).
+  if (card.by_category && card.by_category.length) {
+    const bars = card.by_category.map((b) => {
+      const has = b.composite !== null;
+      const w = has ? Math.max(0, Math.min(100, Number(b.composite))) : 0;
+      return el("div", { class: "bar-wrap" },
+        el("div", { class: "comp-name" }, b.category_label,
+          el("small", {}, `${b.scored_actions}/${b.total_actions} scored` +
+            (b.coverage !== null ? ` · coverage ${(b.coverage * 100).toFixed(0)}%` : ""))),
+        el("div", { class: "bar" }, has ? el("span", { style: `width:${w}%` }) : null),
+        el("div", { class: "right mono" }, has ? fmt(b.composite, 1) : "n/a"));
+    });
     app.appendChild(el("div", { class: "card" },
       el("h3", {}, "Record by category"),
-      el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
-        "The same measure, split by topic. Descriptive only, not a ranking."),
-      el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "category"), el("th", { class: "right" }, "scored"),
-          el("th", { class: "right" }, "coverage"), el("th", { class: "right" }, "composite"))),
-        el("tbody", {}, ...card.by_category.map((b) =>
-          el("tr", {},
-            el("td", {}, b.category_label),
-            el("td", { class: "right mono" }, `${b.scored_actions}/${b.total_actions}`),
-            el("td", { class: "right mono" }, b.coverage !== null ? (b.coverage * 100).toFixed(0) + "%" : "n/a"),
-            el("td", { class: "right mono", style: b.composite !== null ? "color:var(--score)" : "" },
-              b.composite !== null ? fmt(b.composite, 1) : "insufficient")))))));
+      el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" }, "The same measure, split by topic. Descriptive, not a ranking."),
+      ...bars));
   }
 
+  // Their actions: a clean, clickable list. Scored first; long lists collapse.
+  const actions = (card.actions || []).slice().sort((a, b) => {
+    const as = a.composite !== null ? 1 : 0, bs = b.composite !== null ? 1 : 0;
+    if (as !== bs) return bs - as;
+    if (b.attribution !== a.attribution) return b.attribution - a.attribution;
+    return (b.date || "").localeCompare(a.date || "");
+  });
+  const listWrap = el("div", {});
+  const CAP = 15;
+  const head = actions.slice(0, CAP);
+  for (const a of head) listWrap.appendChild(officialActionRow(a));
+  if (actions.length > CAP) {
+    const rest = el("div", {});
+    for (const a of actions.slice(CAP)) rest.appendChild(officialActionRow(a));
+    rest.style.display = "none";
+    const btn = el("button", { class: "linkbtn", onclick: () => {
+      const open = rest.style.display === "none";
+      rest.style.display = open ? "block" : "none";
+      btn.textContent = open ? "Show fewer" : `Show all ${actions.length} actions`;
+    } }, `Show all ${actions.length} actions`);
+    listWrap.appendChild(rest);
+    listWrap.appendChild(btn);
+  }
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Their attributable actions"),
+    el("h3", {}, "Their actions"),
     el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
-      "Every action this official is credited on. Click any row to open its full, source-anchored scorecard (outcome vs. baseline, attribution, confidence, sources)."),
-    el("table", {},
-      el("thead", {}, el("tr", {}, el("th", {}, "action"), el("th", {}, "category"), el("th", {}, "role"),
-        el("th", { class: "right" }, "attribution", tip("attribution")), el("th", {}, "status"),
-        el("th", { class: "right" }, "composite", tip("composite")))),
-      el("tbody", {}, ...card.actions.map((a) =>
-        el("tr", {},
-          el("td", {}, el("a", { href: `#/eu/${a.eu_id}` }, a.action_title || `EU ${a.eu_id}`)),
-          el("td", { class: "muted", style: "font-size:12px" }, a.category_label || ""),
-          el("td", {}, a.role),
-          el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
-          el("td", {}, statusBadge(a.status || "pending")),
-          el("td", { class: "right mono" }, a.composite !== null ? fmt(a.composite, 1) : "n/a")))))));
+      "Actions this official is credited on. Open any for the full source-anchored scorecard."),
+    listWrap));
 }
 
 // Neutral categorical hues for node types (no party blue, no judgment red/green).

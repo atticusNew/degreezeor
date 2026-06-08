@@ -142,6 +142,14 @@ def test_full_stack_composes(session) -> None:
     assert "by_category" in detail
     assert any(b["category"] == "public_safety" for b in detail["by_category"])
     assert "public_safety" in (off["categories"])
+    # Voter-first fields: activity summary, most-active category, and per-action dates.
+    assert "activity" in detail and detail["activity"]["count"] >= 1
+    assert detail["most_active_category"] == "Public safety"
+    assert all("date" in a for a in detail["actions"])
+
+    # Lightweight directory index powers the typeahead/A-Z browse.
+    idx = presentation.officials_index(session)
+    assert idx and all({"id", "name", "position", "scored_actions", "total_actions"} <= set(o) for o in idx)
 
     # Category filter narrows / widens the officials list correctly.
     assert presentation.list_officials(session, category="public_safety", scored_only=True)

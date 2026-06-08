@@ -391,6 +391,8 @@ def _official_contributions(session: Session, official_id: int):
     action_ids = {e.action_id for e in eu_map.values()}
     action_map = {a.id: a for a in session.execute(
         select(Action).where(Action.id.in_(action_ids))).scalars()} if action_ids else {}
+    law_date_map = {law.action_id: law.enacted_date for law in session.execute(
+        select(Law).where(Law.action_id.in_(action_ids))).scalars()} if action_ids else {}
     metric_ids = {e.metric_id for e in eu_map.values() if e.metric_id}
     metric_domain = {m.id: m.domain for m in session.execute(
         select(Metric).where(Metric.id.in_(metric_ids))).scalars()} if metric_ids else {}
@@ -418,12 +420,14 @@ def _official_contributions(session: Session, official_id: int):
             action.type if action else None,
             metric_domain.get(eu.metric_id) if eu else None,
         )
+        adate = (law_date_map.get(action.id) if action else None) or (action.action_date if action else None)
         details.append({
             "eu_id": aw.eu_id,
             "action_title": action.title if action else None,
             "action_type": action.type if action else None,
             "category": cat,
             "category_label": category_label(cat),
+            "date": adate.isoformat() if adate else None,
             "role": aw.role,
             "attribution": _num(aw.attribution),
             "status": eu.status if eu else None,
@@ -461,6 +465,18 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
             "confidence": _num(cr.confidence),
         })
     categories.sort(key=lambda x: category_sort_key(x["category"]))
+
+    # Activity summary (when / how often they act) from dated actions. Empirical, neutral.
+    years = sorted(int(d["date"][:4]) for d in details if d.get("date"))
+    activity = {
+        "count": len(details),
+        "dated_count": len(years),
+        "first_year": years[0] if years else None,
+        "last_year": years[-1] if years else None,
+    }
+    # Most-active category by number of attributable actions (descriptive only).
+    most_active = max(categories, key=lambda c: c["total_actions"], default=None)
+    most_active_category = most_active["category_label"] if most_active else None
     party = session.execute(
         select(Party.abbrev).join(OfficeTerm, OfficeTerm.party_id == Party.id)
         .where(OfficeTerm.official_id == official_id).order_by(OfficeTerm.id.desc()).limit(1)
@@ -483,6 +499,8 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
             ),
         },
         "by_category": categories,
+        "activity": activity,
+        "most_active_category": most_active_category,
         "actions": details,
     }
 

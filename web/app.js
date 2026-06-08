@@ -245,39 +245,53 @@ function spinner(msg = "Loading…") {
 async function renderLanding() {
   const app = $("#app");
   app.innerHTML = "";
+
+  // Search-forward hero: the primary action is finding an official.
+  const search = el("input", { type: "text", placeholder: "Search an official by name…",
+    autocomplete: "off", "aria-label": "Search officials" });
+  const go = () => { location.hash = "#/officials" + (search.value.trim() ? "?q=" + encodeURIComponent(search.value.trim()) : ""); };
+  search.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+
   const hero = el("div", { class: "hero" },
     el("img", { class: "mark", src: "/logo.png", alt: "DegreeZero" }),
     el("h1", {}, "DegreeZero"),
     el("div", { class: "sub" },
-      "Did a public action meet the goal it set for itself? We measure the outcome against each " +
+      "Did a public action meet the goal it set for itself? We measure the result against each " +
       "policy's own stated objective, with sources you can check."),
+    el("div", { class: "hero-search" }, search, el("button", { onclick: go }, "Search")),
     el("div", { class: "ctas" },
-      el("a", { class: "cta", href: "#/officials" }, "Explore officials"),
+      el("a", { class: "cta ghost", href: "#/officials" }, "Browse officials"),
       el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"),
       el("a", { class: "cta ghost", href: "#/about" }, "How it works")));
   app.appendChild(hero);
 
-  // Real credibility stats (skipped quietly if the API is still waking up).
+  // Compact one-line credibility stats (best-effort).
   try {
     const s = await getJSON("/api/stats");
-    hero.appendChild(el("div", { class: "statbar" },
-      el("div", { class: "s" }, el("div", { class: "n" }, String(s.scored)), el("div", { class: "l" }, "actions scored")),
-      el("div", { class: "s" }, el("div", { class: "n" }, String(s.officials)), el("div", { class: "l" }, "officials tracked")),
-      el("div", { class: "s" }, el("div", { class: "n" }, String(s.sources)), el("div", { class: "l" }, "official sources")),
-      el("div", { class: "s" }, el("div", { class: "n" }, String(s.actions_considered)), el("div", { class: "l" }, "actions considered"))));
-    if (s.last_updated) {
-      hero.appendChild(el("div", { class: "freshness" }, "Data last updated " + s.last_updated.slice(0, 10)));
-    }
+    const stat = (n, l) => el("span", { class: "s" }, el("b", {}, String(n)), " " + l);
+    hero.appendChild(el("div", { class: "statline" },
+      stat(s.scored, "actions scored"), el("span", { class: "dot" }, "·"),
+      stat(s.officials, "officials"), el("span", { class: "dot" }, "·"),
+      stat(s.sources, "official sources"),
+      s.last_updated ? el("span", { class: "muted", style: "margin-left:8px" }, "updated " + s.last_updated.slice(0, 10)) : null));
   } catch (e) { /* stats are best-effort */ }
 
-  // Three-step gist.
-  hero.appendChild(el("div", { class: "steps" },
-    el("div", { class: "step" }, el("span", { class: "num" }, "1"), el("b", {}, "A policy sets a goal"),
-      el("p", {}, "We take the objective the law, order, or budget stated for itself.")),
-    el("div", { class: "step" }, el("span", { class: "num" }, "2"), el("b", {}, "We measure the result"),
-      el("p", {}, "Official data versus a defensible baseline, with the credit shared by causal role.")),
-    el("div", { class: "step" }, el("span", { class: "num" }, "3"), el("b", {}, "We score it, or abstain"),
-      el("p", {}, "A 0 to 100 score with confidence and sources, or \u201Cinsufficient evidence\u201D when we cannot tell."))));
+  // Topic quick-links into actions (best-effort).
+  try {
+    const cats = (await getJSON("/api/categories")).categories.filter((c) => c.key !== "other" && c.total_actions);
+    if (cats.length) {
+      const row = el("div", { class: "chipbar", style: "justify-content:center;margin-top:14px" });
+      for (const c of cats) row.appendChild(el("a", { class: "fchip", href: "#/actions?category=" + c.key }, c.label));
+      hero.appendChild(row);
+    }
+  } catch (e) { /* best-effort */ }
+
+  // One compact line on how it works (depth lives in About).
+  hero.appendChild(el("div", { class: "how", style: "margin-top:16px" },
+    el("b", {}, "How it works: "),
+    "a policy sets a goal, we measure the result against official data and a defensible baseline, ",
+    "then show a 0 to 100 score with sources, or ", el("span", { class: "muted" }, "\u201Cinsufficient evidence\u201D"),
+    " when we cannot tell. ", el("a", { href: "#/about" }, "More")));
 }
 
 async function renderSources() {

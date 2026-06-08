@@ -159,17 +159,17 @@ button:disabled { opacity: .6; cursor: default; }
 .headline .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; }
 .headline .chip b { color: var(--text); }
 
-/* Landing credibility stats + 3-step explainer. */
-.statbar { display: flex; gap: 26px; justify-content: center; flex-wrap: wrap; margin: 20px 0 4px; }
-.statbar .s { text-align: center; }
-.statbar .s .n { font-size: 26px; font-weight: 800; }
-.statbar .s .l { color: var(--muted); font-size: 12px; }
-.steps { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin: 28px auto 0; max-width: 860px; }
-.step { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; width: 240px; text-align: left; }
-.step .num { display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; margin-bottom: 8px; }
-.step b { display: block; }
-.step p { color: var(--muted); font-size: 13px; margin: 4px 0 0; line-height: 1.45; }
-.freshness { color: var(--muted); font-size: 12px; text-align: center; margin-top: 10px; }
+/* Landing: search-forward hero, compact stat line, one-line explainer. */
+.hero-search { display: flex; gap: 8px; max-width: 520px; margin: 8px auto 14px; }
+.hero-search input { flex: 1 1 auto; min-width: 0; padding: 12px 14px; font-size: 16px; background: var(--panel2);
+  border: 1px solid var(--line); color: var(--text); border-radius: 10px; }
+.hero-search input:focus { outline: none; border-color: var(--accent-border); }
+.hero-search button { flex: 0 0 auto; padding: 0 18px; border-radius: 10px; }
+.statline { color: var(--muted); font-size: 13px; margin: 6px 0 2px; }
+.statline .s b { color: var(--text); font-weight: 700; }
+.statline .dot { margin: 0 8px; opacity: .5; }
+.how { color: var(--muted); font-size: 13px; max-width: 640px; margin-left: auto; margin-right: auto; line-height: 1.5; }
+.how b { color: var(--text); }
 
 /* Modal / drill-down overlay. */
 .modal-back { position: fixed; inset: 0; background: rgba(3,7,14,.72); display: flex; align-items: flex-start;
@@ -272,4 +272,10 @@ button:disabled { opacity: .6; cursor: default; }
   /* Footer category links wrap to two per row instead of cramming into one. */
   .foot-cats { flex-wrap: wrap; }
   .foot-cats a { flex: 1 1 40%; }
+  /* Tighter landing hero on small screens. */
+  .hero { padding: 24px 6px 18px; }
+  .hero img.mark { width: 72px; height: 72px; }
+  .hero h1 { font-size: 26px; }
+  .hero .sub { font-size: 14px; margin: 6px auto 16px; }
+  .statline .dot { margin: 0 5px; }
 }

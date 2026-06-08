@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from degreezeor.core.hashing import sha256_hex
@@ -41,6 +41,7 @@ class SenateVote:
     present: int
     not_voting: int
     positions: list[SenateMemberVote]
+    vote_date: date | None = None
 
     @property
     def margin(self) -> int:
@@ -59,6 +60,17 @@ _POS = {"yea": "yea", "guilty": "yea", "nay": "nay", "not guilty": "nay",
 def _int_or_none(s: str) -> int | None:
     s = (s or "").strip()
     return int(s) if s.isdigit() else None
+
+
+def _parse_senate_date(raw: str) -> date | None:
+    """Parse the Senate ``vote_date`` (e.g. 'January 9, 2025,  02:54 PM') into a date."""
+    parts = [p.strip() for p in (raw or "").split(",")]
+    if len(parts) < 2:
+        return None
+    try:
+        return datetime.strptime(f"{parts[0]} {parts[1]}", "%B %d %Y").date()
+    except (ValueError, TypeError):
+        return None
 
 
 def parse_senate_vote(xml_bytes: bytes) -> SenateVote:
@@ -95,6 +107,7 @@ def parse_senate_vote(xml_bytes: bytes) -> SenateVote:
         vote_number=_int_or_none(_txt(".//vote_number")),
         yea=yea, nay=nay, present=present, not_voting=counts["nv"],
         positions=positions,
+        vote_date=_parse_senate_date(_txt(".//vote_date")),
     )
 
 

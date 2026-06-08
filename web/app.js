@@ -278,7 +278,7 @@ async function renderLanding() {
   app.innerHTML = "";
   app.appendChild(el("div", { class: "hero" },
     el("img", { class: "mark", src: "/logo.png", alt: "DegreeZero" }),
-    el("div", { class: "sub" }, "What your officials did, and whether it worked. Measured against each action's own goal, with sources."),
+    el("div", { class: "sub" }, "Nonpartisan. Data-driven. Open source."),
     el("div", { class: "ctas" },
       el("a", { class: "cta", href: "#/officials" }, "Find an official"),
       el("a", { class: "cta ghost", href: "#/compare" }, "Compare two"),
@@ -348,7 +348,8 @@ async function renderContact() {
   if (email) {
     card.appendChild(el("h3", {}, "Corrections & questions"));
     card.appendChild(el("p", { style: "margin:0 0 10px" },
-      "Spotted something that looks off, or have a question about the method?"));
+      "Spotted something that looks off, or have a question about the method? Email ",
+      el("a", { href: "mailto:" + email + "?subject=" + encodeURIComponent("DegreeZero feedback") }, email), "."));
     card.appendChild(el("a", { class: "cta", href: "mailto:" + email + "?subject=" + encodeURIComponent("DegreeZero feedback") }, "Email us"));
   } else {
     card.appendChild(el("h3", {}, "How to check or challenge a number"));
@@ -391,6 +392,15 @@ async function renderAuditStatus() {
 
 function statusBadge(status) {
   return el("span", { class: "badge " + status }, status.replaceAll("_", " "));
+}
+
+const ACTION_TYPE_LABELS = {
+  eo: "Executive order", law: "Law", budget: "Budget", regulation: "Regulation",
+  bill: "Bill", vote: "Vote", court: "Court ruling",
+};
+function actionTypeLabel(t) {
+  if (!t) return "Action";
+  return ACTION_TYPE_LABELS[t] || (t.charAt(0).toUpperCase() + t.slice(1));
 }
 
 function actionStatus(u) {
@@ -948,6 +958,25 @@ function officialActionRow(a) {
         : statusBadge(a.status || "pending")));
 }
 
+function card_executive(card) {
+  const e = card.executive || {};
+  if (!e.total) return null;
+  const who = formatNameNatural(card.official.name);
+  const out = el("div", { class: "card" },
+    el("h3", {}, "Executive actions"),
+    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+      `Executive orders ${who} signed (${e.total}). The record of what they acted on, not a score.`));
+  if ((e.recent || []).length) {
+    out.appendChild(el("div", { class: "group-h" }, "Recent"));
+    for (const a of e.recent) out.appendChild(el("div", { class: "list-item" },
+      el("div", { class: "li-main" },
+        el("div", { class: "title" }, a.title || ("Executive Order " + (a.eo_number || ""))),
+        el("div", { class: "muted mono" }, [a.eo_number ? ("EO " + a.eo_number) : null, a.date ? a.date.slice(0, 10) : null].filter(Boolean).join(" \u00b7 "))),
+      el("div", { class: "li-side" }, a.source_url ? el("a", { href: a.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+  }
+  return out;
+}
+
 const VOTE_LABEL = { yea: "Yea", nay: "Nay", present: "Present", nv: "No vote" };
 
 function card_votes(card) {
@@ -1041,6 +1070,7 @@ async function renderOfficialDetail(id) {
   const act = card.activity || {};
   const scored = r.composite !== null;
   const rec = card.record || { sponsored_total: 0, by_category: [], recent: [] };
+  const exe = card.executive || { total: 0, recent: [] };
   const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(0) + "%");
   const who = formatNameNatural(o.name);
   setTitle(who);
@@ -1053,7 +1083,10 @@ async function renderOfficialDetail(id) {
         : ((rec.sponsored_total > 0 || rec.cosponsored_total > 0)
             ? `${who} has sponsored ${rec.sponsored_total} and cosponsored ${rec.cosponsored_total} bill(s). ` +
               `None has an isolatable, scoreable outcome yet, so we show the record of what they acted on, by topic, below.`
-            : `No record for ${who} yet.`));
+            : (exe.total > 0
+                ? `${who} has signed ${exe.total} executive order(s). Most can't be isolated to a single ` +
+                  `measured outcome, so we show the record of what they acted on below.`
+                : `No record for ${who} yet.`)));
   const period = act.first_year
     ? (act.first_year === act.last_year ? `${act.first_year}` : `${act.first_year}\u2013${act.last_year}`)
     : null;
@@ -1074,6 +1107,7 @@ async function renderOfficialDetail(id) {
       r.total_actions > 0 ? el("span", { class: "chip" }, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`)) : null,
       rec.sponsored_total ? el("span", { class: "chip" }, "sponsored ", el("b", {}, String(rec.sponsored_total))) : null,
       rec.cosponsored_total ? el("span", { class: "chip" }, "cosponsored ", el("b", {}, String(rec.cosponsored_total))) : null,
+      exe.total ? el("span", { class: "chip" }, "executive orders ", el("b", {}, String(exe.total))) : null,
       period ? el("span", { class: "chip" }, "active ", el("b", {}, period)) : null,
       card.most_active_category ? el("span", { class: "chip" }, "most active in ", el("b", {}, card.most_active_category)) : null),
     scored ? el("div", { style: "margin-top:12px" },
@@ -1112,6 +1146,10 @@ async function renderOfficialDetail(id) {
   // How they voted: the recorded (roll-call) voting record, by topic (unscored).
   const vt = card_votes(card);
   if (vt) app.appendChild(vt);
+
+  // Executive actions: orders a president signed (unscored breadth).
+  const ex = card_executive(card);
+  if (ex) app.appendChild(ex);
 
   // Activity over time (when / how often they act).
   const actCard = activityCard(card.activity || {});
@@ -1387,7 +1425,7 @@ async function renderCoverage() {
   const rows = Object.entries(c.by_action_type).map(([atype, statuses]) => {
     const tot = Object.values(statuses).reduce((a, b) => a + b, 0);
     return el("tr", {},
-      el("td", {}, atype),
+      el("td", {}, actionTypeLabel(atype)),
       el("td", { class: "right mono" }, String(statuses.scored || 0)),
       el("td", { class: "right mono" }, String(statuses.insufficient_evidence || 0)),
       el("td", { class: "right mono" }, String(tot - (statuses.scored || 0) - (statuses.insufficient_evidence || 0))),

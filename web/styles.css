@@ -36,6 +36,10 @@ body {
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+/* Never let media or long unbroken tokens force the layout wider than the screen. */
+img, svg, video { max-width: 100%; }
+.list-item .li-main { min-width: 0; }
+.list-item .title { overflow-wrap: anywhere; }
 header.top {
   padding: 14px 24px;
   border-bottom: 1px solid var(--line);
@@ -83,6 +87,8 @@ a.cta:hover { text-decoration: none; filter: brightness(1.08); }
   flex-direction: column; gap: 14px; color: var(--muted); font-size: 13px; flex: 0 0 auto; }
 .foot a { color: var(--muted); }
 .foot a:hover { color: var(--accent); }
+.foot-copy { width: 100%; text-align: center; font-size: 12px; color: var(--muted); opacity: .8;
+  border-top: 1px solid var(--line); padding-top: 12px; }
 .foot-meta { display: flex; gap: 14px 20px; flex-wrap: wrap; align-items: center; justify-content: center;
   width: 100%; border-top: 1px solid var(--line); padding-top: 14px; }
 .foot-meta a { font-size: 12px; font-weight: 600; }
@@ -336,6 +342,11 @@ button:disabled { opacity: .55; cursor: default; }
 
 /* --- Mobile / narrow viewport (<=640px). Scoped so desktop layout is unchanged. --- */
 @media (max-width: 640px) {
+  /* Hard guard: the app fits the screen at any width (wide sections scroll within their
+     own container; tooltips are pinned/fixed below, so this never clips them). */
+  html, body { overflow-x: hidden; max-width: 100%; }
+  .chips { gap: 6px; }
+  .headline .big { flex-wrap: wrap; }
   body { font-size: 14px; }
   header.top { padding: 12px 14px; gap: 8px; }
   header.top .tag { font-size: 12px; flex-basis: 100%; }

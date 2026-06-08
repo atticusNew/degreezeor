@@ -188,6 +188,9 @@ def methodology() -> dict:
             "Confidence gate: low confidence => 'insufficient evidence', never a low score.",
             "Always a large explicit unattributable residual.",
             "Reproducible, pinned score runs; append-only hash-chained audit log.",
+            "Integrity-at-scale monitoring: party-level distribution of scored outcomes is "
+            "published and systematic gaps are flagged for human review (never auto-corrected). "
+            "See /api/integrity/party-symmetry.",
         ],
         "components_factual": ["outcome", "evidence", "attribution", "alignment", "dataquality", "durability"],
         "components_value_laden_off_by_default": ["cost", "distribution"],

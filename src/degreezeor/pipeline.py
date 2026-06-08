@@ -8,6 +8,7 @@ Order is significant for neutrality:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -2057,20 +2058,29 @@ def refresh_all(
     """
     counts: dict[str, int] = {}
 
-    # Commit after each stage so partial progress is DURABLE and VISIBLE during a long run,
-    # and a late failure (or a Render cron time limit) never discards earlier work. Each
-    # per-item scorer is already isolated in a savepoint; this commits the outer transaction.
-    def _stage(name: str, fn) -> None:
-        try:
-            counts[name] = fn()
-        except Exception as exc:  # noqa: BLE001 - a stage failure must not abort the whole run
-            log.warning("refresh stage %s failed: %s", name, exc)
-            counts[name] = counts.get(name, 0)
+    def _safe_rollback() -> None:
+        # Reset a session left broken by a dropped/recycled DB connection (e.g. a free-tier
+        # AdminShutdown), so the next stage can start a fresh transaction instead of cascading.
+        with contextlib.suppress(Exception):
+            session.rollback()
+
+    def _safe_commit(name: str) -> None:
         try:
             session.commit()
         except Exception as exc:  # noqa: BLE001
-            log.warning("commit after stage %s failed: %s", name, exc)
-            session.rollback()
+            log.warning("commit after %s failed: %s", name, exc)
+            _safe_rollback()
+
+    # Commit after each stage so partial progress is DURABLE and VISIBLE during a long run,
+    # and a dropped connection / late failure / cron time limit never discards earlier work.
+    def _stage(name: str, fn) -> None:
+        try:
+            counts[name] = fn()
+            _safe_commit(name)
+        except Exception as exc:  # noqa: BLE001 - a stage failure must not abort the whole run
+            log.warning("refresh stage %s failed: %s", name, exc)
+            counts.setdefault(name, 0)
+            _safe_rollback()
 
     _stage("defc_delivery", lambda: len(ingest_defc_delivery(session)))
 
@@ -2079,8 +2089,12 @@ def refresh_all(
     def _budget() -> int:
         be = 0
         for fy in (budget_fiscal_year, budget_fiscal_year - 1, budget_fiscal_year - 2):
-            be += len(ingest_budget_execution(session, fy, all_agencies=True))
-            session.commit()  # commit per fiscal year (this stage is the largest)
+            try:
+                be += len(ingest_budget_execution(session, fy, all_agencies=True))
+                _safe_commit(f"budget FY{fy}")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("budget execution FY%s skipped: %s", fy, exc)
+                _safe_rollback()
         return be
     _stage("budget_execution", _budget)
 
@@ -2105,9 +2119,10 @@ def refresh_all(
             cap = 1000 if c >= 118 else 500
             try:
                 total += ingest_member_bills(session, c, new_limit=cap)
+                _safe_commit(f"member bills {c}")
             except Exception as exc:  # noqa: BLE001 - never fatal
                 log.warning("member-bill ingestion for congress %s skipped: %s", c, exc)
-            session.commit()  # commit per congress so bills appear as they load
+                _safe_rollback()
         return total
     _stage("member_bills", _member_bills)
 
@@ -2117,10 +2132,15 @@ def refresh_all(
         return enrich_official_names(session)
     _stage("names_enriched", _enrich)
 
-    # Self-validate: the nightly pass must leave the append-only audit chain intact.
-    # A break here means history was altered out-of-band — surfaced loudly, never hidden.
-    session.flush()
-    chain_ok, broken_id = audit.verify_chain(session)
+    # Self-validate: the nightly pass must leave the append-only audit chain intact. Guarded so a
+    # dropped connection at the very end reports unknown rather than crashing the whole command.
+    _safe_rollback()
+    try:
+        chain_ok, broken_id = audit.verify_chain(session)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("audit chain verification skipped (session/connection issue): %s", exc)
+        counts["audit_chain_ok"] = 0
+        return counts
     counts["audit_chain_ok"] = 1 if chain_ok else 0
     if not chain_ok:
         log.error("AUDIT CHAIN BROKEN after refresh (first broken record id=%s)", broken_id)

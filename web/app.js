@@ -403,59 +403,103 @@ function statusBadge(status) {
   return el("span", { class: "badge " + status }, status.replaceAll("_", " "));
 }
 
+function actionStatus(u) {
+  if (u.composite !== null && u.status === "scored") return "scored";
+  if (u.status === "insufficient_evidence") return "insufficient";
+  return "non";
+}
+
 function actionRow(u) {
+  const st = actionStatus(u);
+  const right = st === "scored"
+    ? el("span", { class: "badge scored" }, "composite " + fmt(u.composite, 1))
+    : (st === "insufficient"
+        ? el("span", { class: "badge insufficient_evidence" }, "insufficient evidence")
+        : el("span", { class: "badge non_scoreable" }, "not scoreable"));
+  const sub = [u.category_label, u.public_law ? "PL " + u.public_law : null].filter(Boolean).join(" · ");
   return el("div", { class: "list-item", onclick: () => { location.hash = `#/eu/${u.id}`; } },
-    el("div", {},
+    el("div", { class: "li-main" },
       el("div", { class: "title" }, u.title),
-      el("div", { class: "muted mono" }, (u.public_law ? `Public Law ${u.public_law}` : `Action #${u.id}`))),
-    el("div", { style: "text-align:right" },
-      statusBadge(u.status),
-      el("div", { class: "muted", style: "margin-top:6px;font-size:12px" },
-        `confidence ${u.confidence === null ? "n/a" : (u.confidence * 100).toFixed(1) + "%"}`,
-        u.composite !== null ? ` · composite ${fmt(u.composite, 1)}` : " · composite suppressed")));
+      el("div", { class: "muted mono" }, sub)),
+    el("div", { class: "li-side" }, right));
 }
 
 async function renderList() {
   const app = $("#app");
   app.innerHTML = "";
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
-  const active = params.get("category") || "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Actions"));
-  app.appendChild(el("p", { class: "muted" },
-    "Public actions scored against the goal each set for itself. Pick a category, or open any action " +
-    "for the full breakdown and sources."));
+  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
+    "Public actions, each measured against the goal it set for itself. Filter by topic or result, "
+    + "or open any action for the full breakdown."));
 
   let cats = [];
   try { cats = (await getJSON("/api/categories")).categories; } catch (e) { /* best-effort */ }
   const units = await getJSON("/api/evaluation-units");
   const order = cats.map((c) => c.key);
   const labelOf = (k) => (cats.find((c) => c.key === k) || {}).label || k;
-
-  // Category chip filter (only categories that actually have actions).
   const present = new Set(units.map((u) => u.category));
-  const chipBar = el("div", { class: "chipbar" });
-  const chip = (key, label) => el("a", {
-    class: "fchip" + ((active === key || (!active && key === "")) ? " active" : ""),
-    href: "#/actions" + (key ? "?category=" + key : ""),
-  }, label);
-  chipBar.appendChild(chip("", "All"));
-  for (const c of cats) if (present.has(c.key)) chipBar.appendChild(chip(c.key, c.label));
-  app.appendChild(chipBar);
 
-  const shown = active ? units.filter((u) => u.category === active) : units;
-  if (!shown.length) {
-    app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
-      el("p", {}, "No actions in this category yet."))); return;
+  const state = { cat: params.get("category") || "", status: params.get("status") || "" };
+
+  const catBar = el("div", { class: "chipbar" });
+  const statusBar = el("div", { class: "chipbar" });
+  const listEl = el("div", {});
+
+  function chip(bar, val, label, count, key) {
+    const active = state[key] === val;
+    const c = el("button", { type: "button", class: "fchip" + (active ? " active" : "") },
+      label, count !== null ? el("span", { class: "chip-n" }, String(count)) : null);
+    c.addEventListener("click", () => {
+      state[key] = state[key] === val ? "" : val;
+      for (const ch of bar.children) ch.classList.remove("active");
+      if (state[key] === val) c.classList.add("active");
+      else bar.firstChild.classList.add("active");  // re-activate "All"
+      render();
+    });
+    return c;
   }
-  // Group by category, in catalog order.
-  const byCat = new Map();
-  for (const u of shown) { if (!byCat.has(u.category)) byCat.set(u.category, []); byCat.get(u.category).push(u); }
-  const groups = [...byCat.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
-  for (const [key, list] of groups) {
-    app.appendChild(el("h3", { class: "group-h" }, labelOf(key),
-      el("span", { class: "muted", style: "font-weight:400;margin-left:8px" }, String(list.length))));
-    for (const u of list) app.appendChild(actionRow(u));
+
+  // Status filter (counts computed once).
+  const counts = { scored: 0, insufficient: 0, non: 0 };
+  for (const u of units) counts[actionStatus(u)]++;
+  statusBar.appendChild(chip(statusBar, "", "All results", units.length, "status"));
+  statusBar.appendChild(chip(statusBar, "scored", "Scored", counts.scored, "status"));
+  statusBar.appendChild(chip(statusBar, "insufficient", "Insufficient evidence", counts.insufficient, "status"));
+  statusBar.appendChild(chip(statusBar, "non", "Not scoreable", counts.non, "status"));
+
+  // Category filter (only categories present).
+  catBar.appendChild(chip(catBar, "", "All topics", null, "cat"));
+  for (const c of cats) if (present.has(c.key)) catBar.appendChild(chip(catBar, c.key, c.label, null, "cat"));
+
+  function render() {
+    listEl.innerHTML = "";
+    let rows = units;
+    if (state.cat) rows = rows.filter((u) => u.category === state.cat);
+    if (state.status) rows = rows.filter((u) => actionStatus(u) === state.status);
+    if (!rows.length) {
+      listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+        el("p", {}, "No actions match these filters."))); return;
+    }
+    // Group by category in catalog order; scored first within each group.
+    const byCat = new Map();
+    for (const u of rows) { if (!byCat.has(u.category)) byCat.set(u.category, []); byCat.get(u.category).push(u); }
+    const groups = [...byCat.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+    const rank = { scored: 0, insufficient: 1, non: 2 };
+    for (const [key, list] of groups) {
+      list.sort((a, b) => rank[actionStatus(a)] - rank[actionStatus(b)] || (b.composite ?? -1) - (a.composite ?? -1));
+      listEl.appendChild(el("h3", { class: "group-h" }, labelOf(key),
+        el("span", { class: "muted", style: "font-weight:400;margin-left:8px" }, String(list.length))));
+      for (const u of list) listEl.appendChild(actionRow(u));
+    }
   }
+
+  app.appendChild(el("div", { class: "filter-label" }, "Result"));
+  app.appendChild(statusBar);
+  app.appendChild(el("div", { class: "filter-label" }, "Topic"));
+  app.appendChild(catBar);
+  app.appendChild(listEl);
+  render();
 }
 
 function componentBar(c) {
@@ -549,9 +593,10 @@ async function renderDetail(id) {
     [card.action.type, card.action.public_law_number ? "Public Law " + card.action.public_law_number : null,
      card.action.enacted_date ? "enacted " + card.action.enacted_date : null]
       .filter(Boolean).join(" · ")));
-  app.appendChild(el("div", { style: "margin:10px 0" }, statusBadge(card.evaluation_unit.status),
+  app.appendChild(el("div", { class: "meta-chips" },
+    statusBadge(card.evaluation_unit.status),
     card.action.category_label
-      ? el("a", { class: "pill", href: "#/actions?category=" + card.action.category, style: "margin-left:8px" },
+      ? el("a", { class: "badge cat-chip", href: "#/actions?category=" + card.action.category },
           card.action.category_label)
       : null));
 
@@ -643,6 +688,17 @@ async function renderDetail(id) {
   app.appendChild(details);
 }
 
+// Forgiving name match: full substring, all query tokens present, or the surname (last
+// token) present, so "Nancy Pelosi" still finds a row stored only as "Pelosi".
+function matchOfficial(blob, q) {
+  if (!q) return true;
+  if (blob.includes(q)) return true;
+  const toks = q.split(" ").filter((t) => t.length >= 2);
+  if (!toks.length) return false;
+  if (toks.every((t) => blob.includes(t))) return true;
+  return blob.includes(toks[toks.length - 1]);
+}
+
 function officialRow(o) {
   const titleRow = el("div", { class: "title" }, formatName(o.name));
   if (o.position) titleRow.appendChild(el("span", { class: "pill", style: "margin-left:8px" }, o.position));
@@ -669,7 +725,8 @@ async function renderOfficials() {
 
   if (!index.length) {
     app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
-      el("p", {}, "The directory is unavailable right now. The server may be waking up; retry in a moment.")));
+      el("p", {}, "The directory could not load. The server may be waking up."),
+      el("button", { onclick: () => renderOfficials() }, "Retry")));
     return;
   }
 
@@ -709,7 +766,7 @@ async function renderOfficials() {
 
   function matches() {
     let rows = index;
-    if (state.q) rows = rows.filter((o) => o._blob.includes(state.q));
+    if (state.q) rows = rows.filter((o) => matchOfficial(o._blob, state.q));
     if (state.letter && state.letter !== "All") rows = rows.filter((o) => o._initial === state.letter);
     if (state.cat) rows = rows.filter((o) => (o.categories || []).includes(state.cat));
     if (state.scoredOnly) rows = rows.filter((o) => o.scored_actions > 0);
@@ -736,7 +793,7 @@ async function renderOfficials() {
   function renderDrop() {
     drop.innerHTML = "";
     if (!state.q) { drop.style.display = "none"; return; }
-    const top = index.filter((o) => o._blob.includes(state.q)).slice(0, 8);
+    const top = index.filter((o) => matchOfficial(o._blob, state.q)).slice(0, 8);
     if (!top.length) { drop.style.display = "none"; return; }
     drop.style.display = "block";
     for (const o of top) {

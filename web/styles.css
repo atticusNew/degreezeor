@@ -63,13 +63,23 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
 .foot-cats a:hover { border-color: var(--accent-border); color: var(--text); text-decoration: none; }
 .foot-meta { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; justify-content: center; }
 
-/* Category chip filter + grouped section headers (Actions view). */
-.chipbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
-.fchip { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel);
-  color: var(--muted); font-size: 13px; font-weight: 600; }
+/* Category/status chip filters + grouped section headers (Actions view). */
+.chipbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
+.fchip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 13px;
+  font-weight: 600; cursor: pointer; }
 .fchip:hover { color: var(--text); border-color: var(--accent-border); text-decoration: none; }
 .fchip.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-border); }
-.group-h { margin: 22px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); }
+.fchip .chip-n { font-size: 11px; font-weight: 700; color: var(--text); background: var(--panel2);
+  border-radius: 999px; padding: 1px 7px; min-width: 18px; text-align: center; }
+.fchip.active .chip-n { color: var(--accent); }
+.filter-label { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--warn); font-weight: 700; margin: 12px 0 2px; }
+.group-h { margin: 20px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .7px; color: var(--warn); font-weight: 700; }
+.list-item .li-main { min-width: 0; flex: 1 1 auto; }
+.list-item .li-side { flex: 0 0 auto; }
+.badge.non_scoreable { background: rgba(147,164,186,.12); color: var(--muted); border-color: var(--line); }
+.meta-chips { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0 4px; }
+.cat-chip { color: var(--accent); border-color: var(--accent-border); }
 
 /* Collapsible detail sections (action scorecard depth). */
 .disc { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; }

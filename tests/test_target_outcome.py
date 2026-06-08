@@ -39,7 +39,7 @@ def test_confounded_realized_uses_weak_design_method() -> None:
 def test_guardrail_direct_clears_but_confounded_is_gated() -> None:
     # Same delivery; only attributability differs -> confidence diverges across the gate.
     common = dict(ci_low=-50, ci_high=-42, model_dependence=0, data_tier=1,
-                  data_completeness=1.0, attribution_widths=[0.15])
+                  data_completeness=1.0, attribution_widths=[(1.0, 0.15)])
     direct = compute_confidence(best_method="declared_target_direct", **common)
     confounded = compute_confidence(best_method="declared_target_confounded", **common)
     assert float(direct.confidence) >= 0.60   # directly attributable => scoreable

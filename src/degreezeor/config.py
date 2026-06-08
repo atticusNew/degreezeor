@@ -56,7 +56,10 @@ class Settings(BaseSettings):
     deterministic_seed: int = 20240607
     # Active methodology version (semver); historical scores remain re-derivable.
     # 0.4.0: Senate final-passage roll-call added as a decisive-vote attribution channel
-    # (per-chamber pivotality), so a law's Senate voters are credited alongside the House.
+    # (per-chamber pivotality), so a law's Senate voters are credited alongside the House;
+    # delivery-scored laws also credit their passage voters. c_attrib now uses an
+    # attribution-WEIGHTED mean interval width so attaching a large roll-call (many
+    # negligible-share voters) cannot spuriously inflate confidence.
     methodology_version: str = "0.4.0"
 
     # --- Network ---

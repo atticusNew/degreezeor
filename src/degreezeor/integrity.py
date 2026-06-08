@@ -41,6 +41,10 @@ from degreezeor.core.numeric import D, q_score
 DEFAULT_COMPOSITE_GAP_THRESHOLD = D("15")  # points on the 0..100 composite
 DEFAULT_SHARE_GAP_THRESHOLD = D("0.25")  # difference in scored-share (0..1)
 DEFAULT_MIN_SCORED = 2  # require at least this many scored EUs per party to compare composites
+# Require a meaningful sample of attributed EUs before judging a party's scored-SHARE; a
+# party represented by a single legislator on one law (e.g. a former senator in a fringe
+# caucus label) is noise, not a systematic coverage gap.
+DEFAULT_MIN_ATTRIBUTED = 5
 
 
 @dataclass
@@ -118,6 +122,7 @@ def party_symmetry_report(
     composite_gap_threshold: Decimal = DEFAULT_COMPOSITE_GAP_THRESHOLD,
     scored_share_gap_threshold: Decimal = DEFAULT_SHARE_GAP_THRESHOLD,
     min_scored: int = DEFAULT_MIN_SCORED,
+    min_attributed: int = DEFAULT_MIN_ATTRIBUTED,
 ) -> PartySymmetryReport:
     """Compute the party-level distribution of scored outcomes (PLAN.md §9.12).
 
@@ -216,8 +221,9 @@ def party_symmetry_report(
                 f"systematically favour one party's policy types — do NOT adjust scores."
             )
 
-    # Scored-share gap: across parties with any attributed EUs.
-    shares = [p.scored_share for p in parties if p.attributed_eus > 0]
+    # Scored-share gap: only across parties with a meaningful sample of attributed EUs,
+    # so a single legislator in a fringe caucus label can't trigger a false review flag.
+    shares = [p.scored_share for p in parties if p.attributed_eus >= min_attributed]
     if len(shares) >= 2:
         report.scored_share_gap = q_score(max(shares) - min(shares))
         if report.scored_share_gap > scored_share_gap_threshold:

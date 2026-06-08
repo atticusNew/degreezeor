@@ -171,9 +171,30 @@ def test_scored_share_gap_is_flagged(session) -> None:
     _scored_eu(session, mv, official_id=r_off, attribution=0.2, composite=None,
                confidence=0.3, gated=True)
 
-    report = party_symmetry_report(session)
+    # min_attributed=1 so this tiny fixture exercises the gap logic directly.
+    report = party_symmetry_report(session, min_attributed=1)
     assert report.scored_share_gap == 1
     assert report.review_required is True
+
+
+def test_tiny_party_samples_excluded_from_share_gap_by_default(session) -> None:
+    """A party represented by a single legislator on one (gated) law must NOT trigger a
+    systematic-coverage review flag — that is noise, not a pattern (regression guard)."""
+    mv = _mv(session)
+    dem = _party(session, "D", "Democratic")
+    fringe = _party(session, "ID", "Independent Democrat")
+    d_off = _official(session, "Dee", dem)
+    f_off = _official(session, "Lone", fringe)
+    # D has a scored law; the fringe label has a single gated attribution (1 EU).
+    _scored_eu(session, mv, official_id=d_off, attribution=0.2, composite=60.0,
+               confidence=0.7, gated=False)
+    _scored_eu(session, mv, official_id=f_off, attribution=0.2, composite=None,
+               confidence=0.3, gated=True)
+
+    report = party_symmetry_report(session)  # default min_attributed
+    # Neither party meets the default min_attributed, so no share gap is computed/flagged.
+    assert report.scored_share_gap is None
+    assert report.review_required is False
 
 
 def test_officials_without_party_are_excluded(session) -> None:

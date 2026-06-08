@@ -305,7 +305,12 @@ def _finalize(
     session.flush()
 
     residual = next((a.attribution for a in attributions if a.is_residual), D(0))
-    human_widths = [D(a.attr_ci_high) - D(a.attr_ci_low) for a in attributions if not a.is_residual]
+    # (attribution_share, ci_width) per human contributor — weighted in c_attrib so a
+    # large roll-call of negligible-share voters can't spuriously inflate confidence.
+    human_widths = [
+        (D(a.attribution), D(a.attr_ci_high) - D(a.attr_ci_low))
+        for a in attributions if not a.is_residual
+    ]
 
     # Sensitivity of the result to the evaluation-horizon choice feeds confidence (§9.10):
     # a direction that flips across defensible lags is fragile.

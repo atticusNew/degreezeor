@@ -78,7 +78,7 @@ def compute_confidence(
     model_dependence: object,
     data_tier: int,
     data_completeness: object,
-    attribution_widths: list[object],
+    attribution_widths: list[tuple[object, object]],
     sensitivity_sign_stable: bool | None = None,
     definitive: bool = False,
 ) -> ConfidenceBreakdown:
@@ -90,8 +90,18 @@ def compute_confidence(
     tier_factor = {0: D("0.95"), 1: D("0.95"), 2: D("0.85"), 3: D("0.60")}.get(data_tier, D("0.5"))
     c_data = clamp01(tier_factor * D(data_completeness))
 
+    # Attribution certainty = 1 − the (attribution-weighted) mean width of the human
+    # attribution intervals. Weighting by each actor's attribution share is essential:
+    # otherwise attaching a large roll-call (hundreds of voters, each with a NEGLIGIBLE
+    # share but a narrow interval) would collapse the mean width and spuriously inflate
+    # confidence — even though attaching a vote record changes *who is credited*, not how
+    # certain we are of the outcome. With weighting, only meaningful contributors move it.
     if attribution_widths:
-        avg_width = sum((D(w) for w in attribution_widths), D(0)) / D(len(attribution_widths))
+        total_w = sum((D(share) for share, _ in attribution_widths), D(0))
+        if total_w > 0:
+            avg_width = sum((D(share) * D(w) for share, w in attribution_widths), D(0)) / total_w
+        else:  # all-zero shares: fall back to an unweighted mean
+            avg_width = sum((D(w) for _, w in attribution_widths), D(0)) / D(len(attribution_widths))
         c_attrib = clamp01(D(1) - avg_width)
     else:
         c_attrib = D("0.5")

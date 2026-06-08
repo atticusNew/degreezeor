@@ -19,8 +19,10 @@ read-only) so the UI is always quick and the heavy work runs on a schedule.
    - `DZ_CONGRESS_API_KEY` (Congress.gov / api.data.gov)
    - `DZ_BLS_API_KEY` (BLS registered tier)
    - `DZ_COURTLISTENER_TOKEN` (optional; raises CourtListener limits)
-   `DZ_DATABASE_URL` is wired automatically from the managed DB; `DZ_DATA_DIR` points at a
-   persistent disk for the replay cache / immutable landing.
+   `DZ_DATABASE_URL` is wired automatically from the managed DB. `DZ_DATA_DIR` points at a
+   persistent disk on the **API** web service (replay cache / immutable landing). The **cron**
+   job uses ephemeral `/tmp/data` — Render does not allow disks on cron jobs, and Postgres is the
+   durable system of record, so the cron only needs scratch space.
 4. First deploy runs `degreezeor migrate` (schema) automatically. Trigger the cron once
    (Render → cron job → "Run now") to populate the first dataset, or run `degreezeor refresh`
    from a one-off shell.
@@ -44,10 +46,12 @@ read-only) so the UI is always quick and the heavy work runs on a schedule.
 ## Operational notes
 - **Migrations:** schema changes are versioned in `alembic/versions/`. Generate new ones with
   `alembic revision --autogenerate -m "..."`; deploys apply them via `degreezeor migrate`.
-- **Durable cache/landing:** `DZ_DATA_DIR` (a Render disk) holds the URL replay cache + immutable
-  raw landings, so re-runs are fast/offline and provenance survives redeploys. For multi-instance
-  setups, move `RawLanding` to object storage (S3) — `storage_path` + `content_hash` already
-  support it.
+- **Durable cache/landing:** on the **API** web service, `DZ_DATA_DIR` (a Render disk) holds the URL
+  replay cache + immutable raw landings, so re-runs are fast/offline and provenance survives
+  redeploys. The **cron** job cannot mount a disk (Render restriction) so its `DZ_DATA_DIR` is the
+  ephemeral `/tmp/data`; this is safe because the cron writes its durable results to Postgres. For a
+  shared, durable cache across both, move `RawLanding`/`http_cache` to object storage (S3) —
+  `storage_path` + `content_hash` already support it.
 - **Secrets:** only via env vars (never committed). The local `.env` is git-ignored.
 - **Scaling:** the API is stateless/read-only — scale horizontally. Postgres has indexes on the hot
   paths (`evaluation_units.action_id/status`, `attribution_weights.eu_id/official_id`, score-run FKs).

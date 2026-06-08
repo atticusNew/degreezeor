@@ -1493,11 +1493,13 @@ def refresh_all(
     """
     counts: dict[str, int] = {}
     counts["defc_delivery"] = len(ingest_defc_delivery(session))
-    # All toptier agencies: execution rate is reliable + commensurable by construction,
-    # so this is the platform's broadest source of high-integrity verifiable scores.
-    counts["budget_execution"] = len(
-        ingest_budget_execution(session, budget_fiscal_year, all_agencies=True)
-    )
+    # All toptier agencies, across the last few fiscal years: execution rate is reliable and
+    # commensurable by construction (obligated/outlayed <= resources), so this is the platform's
+    # broadest source of high-integrity verifiable scores. Each agency-year is a distinct action.
+    be = 0
+    for fy in (budget_fiscal_year, budget_fiscal_year - 1, budget_fiscal_year - 2):
+        be += len(ingest_budget_execution(session, fy, all_agencies=True))
+    counts["budget_execution"] = be
     counts["state_policies"] = len(ingest_state_policies(session))
     counts["court_survival"] = sum(
         1 for spec in COURT_SURVIVAL_SPECS.values()

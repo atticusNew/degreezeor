@@ -23,6 +23,7 @@ from degreezeor.core.models import (
     AttributionWeight,
     Baseline,
     Bill,
+    BillCosponsor,
     ConfidenceInterval,
     DataSource,
     EUScore,
@@ -404,7 +405,23 @@ def official_activity(session: Session, official_id: int) -> dict[str, Any]:
         ({"category": k, "category_label": category_label(k), "count": v} for k, v in by_cat.items()),
         key=lambda c: (-c["count"], category_sort_key(c["category"])),
     )
-    return {"sponsored_total": len(rows), "by_category": cats, "recent": items[:10]}
+    # Cosponsored bills: what else they backed (also unscored breadth).
+    co_by_cat: dict[str, int] = defaultdict(int)
+    co_total = 0
+    for (domain,) in session.execute(
+        select(Action.domain).join(BillCosponsor, BillCosponsor.action_id == Action.id)
+        .where(BillCosponsor.official_id == official_id, Action.type == "bill")
+    ).all():
+        co_by_cat[category_for(domain, "bill")] += 1
+        co_total += 1
+    co_cats = sorted(
+        ({"category": k, "category_label": category_label(k), "count": v} for k, v in co_by_cat.items()),
+        key=lambda c: (-c["count"], category_sort_key(c["category"])),
+    )
+    return {
+        "sponsored_total": len(rows), "by_category": cats, "recent": items[:10],
+        "cosponsored_total": co_total, "cosponsored_by_category": co_cats,
+    }
 
 
 def _official_contributions(session: Session, official_id: int):
@@ -684,6 +701,7 @@ def officials_index(session: Session) -> list[dict[str, Any]]:
     # Sponsored-bill record per official (the activity layer), so members who only
     # sponsored bills still appear in the directory and carry their topic categories.
     sponsored: dict[int, int] = defaultdict(int)
+    cosponsored: dict[int, int] = defaultdict(int)
     bill_cats: dict[int, set[str]] = defaultdict(set)
     for oid, domain in session.execute(
         select(Bill.sponsor_official_id, Action.domain)
@@ -692,8 +710,15 @@ def officials_index(session: Session) -> list[dict[str, Any]]:
     ).all():
         sponsored[oid] += 1
         bill_cats[oid].add(category_for(domain, "bill"))
+    for oid, domain in session.execute(
+        select(BillCosponsor.official_id, Action.domain)
+        .join(Action, Action.id == BillCosponsor.action_id)
+        .where(Action.type == "bill")
+    ).all():
+        cosponsored[oid] += 1
+        bill_cats[oid].add(category_for(domain, "bill"))
 
-    all_ids = set(by_off.keys()) | set(sponsored.keys())
+    all_ids = set(by_off.keys()) | set(sponsored.keys()) | set(cosponsored.keys())
     name_map = {o.id: o.full_name for o in session.execute(
         select(Official).where(Official.id.in_(all_ids))).scalars()}
     position_map = _positions_for(session, all_ids)
@@ -722,11 +747,12 @@ def officials_index(session: Session) -> list[dict[str, Any]]:
             "total_actions": len(seen),
             "scored_actions": scored,
             "sponsored": sponsored.get(oid, 0),
+            "cosponsored": cosponsored.get(oid, 0),
             "involvement": round(involvement, 4),
             "categories": sorted(cats, key=category_sort_key),
         })
-    # Most active first: scored, then bills sponsored, then attributable actions, then name.
-    out.sort(key=lambda x: (-x["scored_actions"], -x["sponsored"], -x["total_actions"], x["name"] or ""))
+    # Most active first: scored, then bills sponsored, then cosponsored, then name.
+    out.sort(key=lambda x: (-x["scored_actions"], -x["sponsored"], -x["cosponsored"], x["name"] or ""))
     return out
 
 

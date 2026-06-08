@@ -739,12 +739,14 @@ function officialRow(o) {
   if (o.position) titleRow.appendChild(el("span", { class: "pill", style: "margin-left:8px" }, o.position));
   const parts = [];
   if (o.scored_actions > 0) parts.push(`${o.scored_actions} scored`);
-  if (o.sponsored) parts.push(`${o.sponsored} bills sponsored`);
+  if (o.sponsored) parts.push(`${o.sponsored} sponsored`);
+  if (o.cosponsored) parts.push(`${o.cosponsored} cosponsored`);
   if (!parts.length) parts.push(`${o.total_actions} action(s)`);
+  const acted = (o.sponsored || 0) + (o.cosponsored || 0);
   const badge = o.scored_actions > 0
     ? el("span", { class: "badge scored" }, `${o.scored_actions} scored`)
-    : (o.sponsored
-        ? el("span", { class: "badge non_scoreable" }, `${o.sponsored} bills`)
+    : (acted
+        ? el("span", { class: "badge non_scoreable" }, `${acted} bills`)
         : el("span", { class: "badge insufficient_evidence" }, "no record yet"));
   return el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
     el("div", {}, titleRow, el("div", { class: "muted mono" }, parts.join(" · "))),
@@ -994,9 +996,9 @@ async function renderOfficialDetail(id) {
     : (r.total_actions > 0
         ? `We could not yet isolate the effect of any of ${who}'s ${r.total_actions} measurable action(s), so we ` +
           `report insufficient evidence rather than guess. Their record of what they acted on is below.`
-        : (rec.sponsored_total > 0
-            ? `${who} has sponsored ${rec.sponsored_total} bill(s). None has an isolatable, scoreable outcome yet, ` +
-              `so we show the record of what they acted on, by topic, below.`
+        : ((rec.sponsored_total > 0 || rec.cosponsored_total > 0)
+            ? `${who} has sponsored ${rec.sponsored_total} and cosponsored ${rec.cosponsored_total} bill(s). ` +
+              `None has an isolatable, scoreable outcome yet, so we show the record of what they acted on, by topic, below.`
             : `No record for ${who} yet.`));
   const period = act.first_year
     ? (act.first_year === act.last_year ? `${act.first_year}` : `${act.first_year}\u2013${act.last_year}`)
@@ -1016,30 +1018,41 @@ async function renderOfficialDetail(id) {
     el("div", { class: "chips" },
       r.total_actions > 0 ? el("span", { class: "chip" }, "coverage ", el("b", {}, pct(r.coverage)), tip("coverage")) : null,
       r.total_actions > 0 ? el("span", { class: "chip" }, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`)) : null,
-      rec.sponsored_total ? el("span", { class: "chip" }, "bills sponsored ", el("b", {}, String(rec.sponsored_total))) : null,
+      rec.sponsored_total ? el("span", { class: "chip" }, "sponsored ", el("b", {}, String(rec.sponsored_total))) : null,
+      rec.cosponsored_total ? el("span", { class: "chip" }, "cosponsored ", el("b", {}, String(rec.cosponsored_total))) : null,
       period ? el("span", { class: "chip" }, "active ", el("b", {}, period)) : null,
       card.most_active_category ? el("span", { class: "chip" }, "most active in ", el("b", {}, card.most_active_category)) : null),
     scored ? el("div", { style: "margin-top:12px" },
       el("a", { href: "#", onclick: (e) => { e.preventDefault(); howMeasuredModal(r.note); } }, "How is this measured? →")) : null));
 
-  // What they've acted on: the record of bills sponsored, by topic (unscored breadth).
-  if (rec.sponsored_total) {
-    const maxc = Math.max(...rec.by_category.map((c) => c.count), 1);
-    const bars = rec.by_category.map((c) => el("div", { class: "bar-wrap" },
-      el("div", { class: "comp-name" }, c.category_label),
-      el("div", { class: "bar" }, el("span", { style: `width:${Math.round((c.count / maxc) * 100)}%` })),
-      el("div", { class: "right mono" }, String(c.count))));
-    const recent = rec.recent.map((b) => el("div", { class: "list-item" },
-      el("div", { class: "li-main" }, el("div", { class: "title" }, b.title),
-        el("div", { class: "muted mono" }, [b.category_label, b.bill_number, b.date ? b.date.slice(0, 10) : null].filter(Boolean).join(" · "))),
-      el("div", { class: "li-side" }, b.source_url ? el("a", { href: b.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
-    app.appendChild(el("div", { class: "card" },
+  // What they've acted on: the record of bills sponsored + cosponsored, by topic (unscored).
+  if (rec.sponsored_total || rec.cosponsored_total) {
+    const card = el("div", { class: "card" },
       el("h3", {}, "What they've acted on"),
       el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
-        `Bills ${who} sponsored, grouped by topic. This is the record of what they acted on, not a score.`),
-      ...bars,
-      el("div", { class: "group-h", style: "margin-top:14px" }, "Recent"),
-      ...recent));
+        `Bills ${who} sponsored or cosponsored, by topic. The record of what they acted on, not a score.`));
+    if (rec.by_category.length) {
+      const maxc = Math.max(...rec.by_category.map((c) => c.count), 1);
+      card.appendChild(el("div", { class: "group-h" }, `Sponsored (${rec.sponsored_total})`));
+      for (const c of rec.by_category) card.appendChild(el("div", { class: "bar-wrap" },
+        el("div", { class: "comp-name" }, c.category_label),
+        el("div", { class: "bar" }, el("span", { style: `width:${Math.round((c.count / maxc) * 100)}%` })),
+        el("div", { class: "right mono" }, String(c.count))));
+    }
+    if (rec.cosponsored_total) {
+      card.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, `Cosponsored (${rec.cosponsored_total})`));
+      const chips = el("div", { class: "chips" });
+      for (const c of (rec.cosponsored_by_category || [])) chips.appendChild(el("span", { class: "chip" }, c.category_label, " ", el("b", {}, String(c.count))));
+      card.appendChild(chips);
+    }
+    if (rec.recent.length) {
+      card.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, "Recent sponsored"));
+      for (const b of rec.recent) card.appendChild(el("div", { class: "list-item" },
+        el("div", { class: "li-main" }, el("div", { class: "title" }, b.title),
+          el("div", { class: "muted mono" }, [b.category_label, b.bill_number, b.date ? b.date.slice(0, 10) : null].filter(Boolean).join(" · "))),
+        el("div", { class: "li-side" }, b.source_url ? el("a", { href: b.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+    }
+    app.appendChild(card);
   }
 
   // Activity over time (when / how often they act).

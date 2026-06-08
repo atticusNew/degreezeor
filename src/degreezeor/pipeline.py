@@ -2056,45 +2056,66 @@ def refresh_all(
     creating duplicates. Returns a per-stage count of evaluation units produced.
     """
     counts: dict[str, int] = {}
-    counts["defc_delivery"] = len(ingest_defc_delivery(session))
+
+    # Commit after each stage so partial progress is DURABLE and VISIBLE during a long run,
+    # and a late failure (or a Render cron time limit) never discards earlier work. Each
+    # per-item scorer is already isolated in a savepoint; this commits the outer transaction.
+    def _stage(name: str, fn) -> None:
+        try:
+            counts[name] = fn()
+        except Exception as exc:  # noqa: BLE001 - a stage failure must not abort the whole run
+            log.warning("refresh stage %s failed: %s", name, exc)
+            counts[name] = counts.get(name, 0)
+        try:
+            session.commit()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("commit after stage %s failed: %s", name, exc)
+            session.rollback()
+
+    _stage("defc_delivery", lambda: len(ingest_defc_delivery(session)))
+
     # All toptier agencies, across the last few fiscal years: execution rate is reliable and
-    # commensurable by construction (obligated/outlayed <= resources), so this is the platform's
-    # broadest source of high-integrity verifiable scores. Each agency-year is a distinct action.
-    be = 0
-    for fy in (budget_fiscal_year, budget_fiscal_year - 1, budget_fiscal_year - 2):
-        be += len(ingest_budget_execution(session, fy, all_agencies=True))
-    counts["budget_execution"] = be
-    counts["state_policies"] = len(ingest_state_policies(session))
-    counts["court_survival"] = sum(
+    # commensurable by construction (obligated/outlayed <= resources). Each agency-year is distinct.
+    def _budget() -> int:
+        be = 0
+        for fy in (budget_fiscal_year, budget_fiscal_year - 1, budget_fiscal_year - 2):
+            be += len(ingest_budget_execution(session, fy, all_agencies=True))
+            session.commit()  # commit per fiscal year (this stage is the largest)
+        return be
+    _stage("budget_execution", _budget)
+
+    _stage("state_policies", lambda: len(ingest_state_policies(session)))
+    _stage("court_survival", lambda: sum(
         1 for spec in COURT_SURVIVAL_SPECS.values()
         if _isolated(session, lambda spec=spec: score_court_survival(session, spec),
-                     label=f"court survival {spec.key}")
-    )
-    counts["curated_targets"] = sum(
+                     label=f"court survival {spec.key}")))
+    _stage("curated_targets", lambda: sum(
         1 for key in ("CARES-DELIVERY", "IIJA-DELIVERY", "UKRAINE-2022-DELIVERY")
         if _isolated(session, lambda key=key: score_target(session, TARGET_SPECS[key]),
-                     label=f"curated target {key}")
-    )
-    counts["laws"] = len(batch_score_laws(session, congress, limit=law_limit))
-    counts["executive_orders"] = len(batch_score_executive_orders(session, limit=eo_limit))
-    counts["regulations"] = len(batch_score_regulations(session, limit=eo_limit))
+                     label=f"curated target {key}")))
+    _stage("laws", lambda: len(batch_score_laws(session, congress, limit=law_limit)))
+    _stage("executive_orders", lambda: len(batch_score_executive_orders(session, limit=eo_limit)))
+    _stage("regulations", lambda: len(batch_score_regulations(session, limit=eo_limit)))
 
     # Activity/record layer: the bills members SPONSORED, by topic (unscored). Recency-first,
     # capped per run so the per-key request budget is respected; repeated runs fill in the rest.
-    member_bills = 0
-    for c in (119, 118, 117, 116):
-        cap = 1000 if c >= 118 else 500
-        try:
-            member_bills += ingest_member_bills(session, c, new_limit=cap)
-        except Exception as exc:  # noqa: BLE001 - bill ingestion is best-effort, never fatal
-            log.warning("member-bill ingestion for congress %s skipped: %s", c, exc)
-    counts["member_bills"] = member_bills
+    def _member_bills() -> int:
+        total = 0
+        for c in (119, 118, 117, 116):
+            cap = 1000 if c >= 118 else 500
+            try:
+                total += ingest_member_bills(session, c, new_limit=cap)
+            except Exception as exc:  # noqa: BLE001 - never fatal
+                log.warning("member-bill ingestion for congress %s skipped: %s", c, exc)
+            session.commit()  # commit per congress so bills appear as they load
+        return total
+    _stage("member_bills", _member_bills)
+
     # Best-effort name enrichment (bounded by Congress.gov throughput).
-    try:
+    def _enrich() -> int:
         from degreezeor.ingestion.loader import enrich_official_names
-        counts["names_enriched"] = enrich_official_names(session)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("name enrichment skipped: %s", exc)
+        return enrich_official_names(session)
+    _stage("names_enriched", _enrich)
 
     # Self-validate: the nightly pass must leave the append-only audit chain intact.
     # A break here means history was altered out-of-band — surfaced loudly, never hidden.

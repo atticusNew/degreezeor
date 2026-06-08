@@ -887,6 +887,12 @@ def build_categories(session: Session) -> dict[str, Any]:
         if u["status"] == "scored" and u["composite"] is not None:
             c["scored"] += 1
             c["composites"].append(u["composite"])
+    # Recorded (activity) counts: bills members sponsored, by topic (unscored breadth).
+    recorded: dict[str, int] = defaultdict(int)
+    for (domain,) in session.execute(
+        select(Action.domain).where(Action.type == "bill")
+    ).all():
+        recorded[category_for(domain, "bill")] += 1
     out = []
     for entry in category_catalog():
         c = counts.get(entry["key"], {"total": 0, "scored": 0, "composites": []})
@@ -895,6 +901,7 @@ def build_categories(session: Session) -> dict[str, Any]:
             **entry,
             "total_actions": c["total"],
             "scored_actions": c["scored"],
+            "recorded": recorded.get(entry["key"], 0),
             "mean_composite": round(mean, 2) if c["composites"] else None,
         })
     return {

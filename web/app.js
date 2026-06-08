@@ -356,7 +356,8 @@ async function renderFooterCategories() {
   const node = $("#foot-cats");
   if (!node || node.childElementCount) return;  // populate once
   try {
-    const cats = (await getJSON("/api/categories")).categories.filter((c) => c.key !== "other");
+    const cats = (await getJSON("/api/categories")).categories.filter(
+      (c) => c.key !== "other" && (c.total_actions || 0) > 0);
     for (const c of cats) node.appendChild(el("a", { href: "#/actions?category=" + c.key }, c.label));
   } catch (e) { /* best-effort; footer category links are non-essential */ }
 }

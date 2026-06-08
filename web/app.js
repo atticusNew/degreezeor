@@ -1101,49 +1101,71 @@ async function renderCoverage() {
 async function renderAbout() {
   const app = $("#app");
   app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "About DegreeZero"));
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "What it does"),
+    el("p", { class: "narrative" },
+      "DegreeZero looks at what officials actually did, the laws they passed, the orders they " +
+      "signed, the budgets they ran, and asks one simple thing. Did the action do what it said it " +
+      "would do?")));
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "How it works, in plain terms"),
+    el("p", {},
+      "Every action sets its own goal. A jobs bill says it will create jobs. A tax cut says it " +
+      "will grow the economy. A clean energy law says it will cut emissions. We take that stated " +
+      "goal, find the official government number that tracks it, and look at what happened after, " +
+      "compared to what was likely to happen anyway."),
+    el("p", {},
+      "Then we share the credit honestly. Most outcomes have many causes, so we only give a small, " +
+      "clearly labeled share to any one person and leave most of it unassigned."),
+    el("p", {},
+      "When the data cannot tell a clear story, we say so. We mark it insufficient evidence instead " +
+      "of guessing. That is not a bad grade. It just means we will not pretend to know.")));
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "What you will not find here"),
+    el("p", {},
+      "No left or right rating. No opinion. No single good or bad score for a person. Just what " +
+      "they worked on, how it turned out, and a link to the source behind every number. The same " +
+      "question is asked of every official, the same way."),
+    el("p", { class: "muted", style: "font-size:13px" },
+      "Want the math behind the numbers? Read the ",
+      el("a", { href: "#/methodology" }, "methodology"), ".")));
+}
+
+async function renderMethodology() {
+  const app = $("#app");
+  app.innerHTML = "";
   let m = {};
   try { m = await getJSON("/api/methodology"); } catch (e) { /* fall back to static copy */ }
 
-  app.appendChild(el("h2", { style: "margin:6px 0" }, "What this is, and what it is not"));
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Methodology"));
+  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 6px" },
+    "The technical detail behind the numbers. For a plain-language overview, see ",
+    el("a", { href: "#/about" }, "About"), "."));
 
-  // The neutral framing, in plain language (the credibility spine of the platform).
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "The one question it answers"),
+    el("h3", {}, "The question, precisely"),
     el("p", { class: "narrative" },
       "For each public action, DegreeZero asks one factual question: did the measurable outcome " +
       "tied to the action's own stated objective move, relative to a defensible baseline, and how " +
       "much of that movement is credibly attributable to this official, with what confidence? " +
       "Every number links back to an official government source."),
-    el("p", { class: "muted", style: "font-size:13px" },
-      "The yardstick is the policy's own stated goal (statutory purpose, official summary, or its " +
-      "own committed target). That makes the question party-symmetric: a jobs bill and a tax cut " +
-      "are each asked the same neutral thing.")));
-
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "What it deliberately avoids"),
-    el("ul", { style: "line-height:1.7" },
-      el("li", {}, el("b", {}, "No default \u201Cgood or bad\u201D number. "),
-        "A single composite would require a hidden value function (weighing liberty, equality, " +
-        "growth, and so on), which is an ideology. The default output is a decomposed, " +
-        "source-linked vector; a composite is opt-in, value-laden, and shown only with a watermark."),
-      el("li", {}, el("b", {}, "Not an ideology scorer, fact-checker, or pundit. "),
-        "No left/right axis, no editorial labels, only numbers, intervals, and sources."),
-      el("li", {}, el("b", {}, "\u201CInsufficient evidence\u201D is never a low score. "),
-        "When a defensible baseline cannot separate the policy from other forces, the composite is " +
-        "withheld and the action is marked insufficient evidence, which is honest abstention."))));
+    el("div", { class: "eq" }, "composite = confidence x achievement of the stated goal"),
+    el("div", { class: "eq" }, "official composite = attribution-weighted mean over their scored actions")));
 
   if (m.philosophy) {
     app.appendChild(el("div", { class: "card" },
       el("h3", {}, "Scoring philosophy"),
       el("p", { class: "narrative" }, m.philosophy)));
   }
-
   if (Array.isArray(m.bias_controls) && m.bias_controls.length) {
     app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "How bias is minimized (adversarial neutrality)"),
+      el("h3", {}, "How bias is minimized"),
       el("ul", { style: "line-height:1.7" }, ...m.bias_controls.map((b) => el("li", {}, b)))));
   }
-
   const factual = m.components_factual || [];
   const valueLaden = m.components_value_laden_off_by_default || [];
   if (factual.length || valueLaden.length) {
@@ -1151,7 +1173,7 @@ async function renderAbout() {
       el("h3", {}, "Factual vs. value-laden components"),
       el("p", { class: "muted", style: "font-size:13px" },
         "Factual components are combined by default; value-laden lenses are off unless you turn " +
-        "them on (and any non-neutral weighting is watermarked)."),
+        "them on, and any non-neutral weighting is watermarked."),
       el("div", { class: "row" }, el("span", { class: "k" }, "factual (default)"),
         el("span", { class: "v mono" }, factual.join(", ") || "none")),
       el("div", { class: "row" }, el("span", { class: "k" }, "value-laden (opt-in)"),
@@ -1161,19 +1183,16 @@ async function renderAbout() {
             el("span", { class: "v mono" }, `${(m.confidence_publish_threshold * 100).toFixed(0)}%, below this the composite is withheld`))
         : null));
   }
-
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "The three things that can never be fully empirical"),
     el("p", { class: "muted", style: "font-size:13px" },
-      "These residues are labeled, never hidden: (1) which metric operationalizes the objective, " +
-      "(2) which counterfactual baseline is right, (3) how to assign causal credit among many " +
-      "actors. We shrink them (pre-registration, baseline ensembles, attribution intervals, and a " +
-      "large unattributable residual) but never to zero. When a residue dominates, the answer is " +
+      "These residues are labeled, never hidden: which metric operationalizes the objective, which " +
+      "counterfactual baseline is right, and how to assign causal credit among many actors. We " +
+      "shrink them with pre-registration, baseline ensembles, attribution intervals, and a large " +
+      "unattributable residual, but never to zero. When a residue dominates, the answer is " +
       "\u201Cinsufficient evidence\u201D.")));
-
   app.appendChild(el("p", { class: "muted", style: "font-size:12px" },
-    "Every published score is independently reproducible (see the Integrity tab) and the full " +
-    "method is open source."));
+    "Every published score is independently reproducible. See the Integrity page to re-derive them."));
 }
 
 async function renderIntegrity() {
@@ -1274,6 +1293,7 @@ async function route() {
     else if (location.hash.startsWith("#/coverage")) await renderCoverage();
     else if (location.hash.startsWith("#/integrity")) await renderIntegrity();
     else if (location.hash.startsWith("#/about")) await renderAbout();
+    else if (location.hash.startsWith("#/methodology")) await renderMethodology();
     else if (location.hash.startsWith("#/sources")) await renderSources();
     else if (location.hash.startsWith("#/glossary")) await renderGlossary();
     else if (location.hash.startsWith("#/actions")) await renderList();

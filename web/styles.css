@@ -18,6 +18,8 @@
   --bad: #e74c3c;
   --warn: #f1c40f;
   --gate: #b07d2b;
+  /* Soft gold used as a font accent for section separation and labels (not for scores). */
+  --gold: #e0b94e;
 }
 * { box-sizing: border-box; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
@@ -61,7 +63,8 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
 .foot-cats a { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
   font-size: 12px; white-space: nowrap; }
 .foot-cats a:hover { border-color: var(--accent-border); color: var(--text); text-decoration: none; }
-.foot-meta { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; justify-content: center; }
+.foot-meta { display: flex; gap: 28px; flex-wrap: wrap; align-items: center; justify-content: center; margin-top: 4px; }
+.foot-meta a { font-weight: 600; }
 
 /* Category/status chip filters + grouped section headers (Actions view). */
 .chipbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
@@ -73,8 +76,8 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
 .fchip .chip-n { font-size: 11px; font-weight: 700; color: var(--text); background: var(--panel2);
   border-radius: 999px; padding: 1px 7px; min-width: 18px; text-align: center; }
 .fchip.active .chip-n { color: var(--accent); }
-.filter-label { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--warn); font-weight: 700; margin: 12px 0 2px; }
-.group-h { margin: 20px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .7px; color: var(--warn); font-weight: 700; }
+.filter-label { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--gold); font-weight: 700; margin: 12px 0 2px; }
+.group-h { margin: 20px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .7px; color: var(--gold); font-weight: 700; }
 .list-item .li-main { min-width: 0; flex: 1 1 auto; }
 .list-item .li-side { flex: 0 0 auto; }
 .badge.non_scoreable { background: rgba(147,164,186,.12); color: var(--muted); border-color: var(--line); }
@@ -107,7 +110,7 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
   padding: 18px 20px;
   margin: 16px 0;
 }
-.card h3 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+.card h3 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--gold); }
 .row { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px dashed var(--line); }
 .row:last-child { border-bottom: none; }
 .row .k { color: var(--muted); }
@@ -163,11 +166,13 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
 .audit-bad { color: var(--bad); }
 .weights label { display: grid; grid-template-columns: 150px 1fr 44px; gap: 10px; align-items: center; padding: 4px 0; font-size: 13px; }
 .weights input[type=range] { width: 100%; }
-button { background: var(--accent); color: #06101f; border: none; border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
-button:hover { filter: brightness(1.1); }
-button:disabled { opacity: .6; cursor: default; }
-.linkbtn { background: transparent; color: var(--accent); border: 1px solid var(--line); margin-top: 8px; }
-.linkbtn:hover { border-color: var(--accent-border); filter: none; }
+button { background: var(--accent); color: #0b0f17; border: none; border-radius: 8px; padding: 9px 16px;
+  font-weight: 700; font-size: 13px; cursor: pointer; letter-spacing: .2px; transition: filter .15s, transform .05s; }
+button:hover { filter: brightness(1.08); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .55; cursor: default; }
+.linkbtn { background: transparent; color: var(--accent); border: 1px solid var(--accent-border); margin-top: 8px; font-weight: 600; }
+.linkbtn:hover { background: var(--accent-soft); filter: none; }
 
 /* Headline block (official/result drill-down: big name + big composite first). */
 .headline { background: linear-gradient(180deg, var(--panel), var(--panel2)); border: 1px solid var(--line);

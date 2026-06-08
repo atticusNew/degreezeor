@@ -179,7 +179,9 @@ class BillCosponsor(Base):
 class Vote(Base):
     __tablename__ = "votes"
     id: Mapped[int] = mapped_column(primary_key=True)
-    action_id: Mapped[int] = mapped_column(ForeignKey("actions.id"))
+    # Nullable: comprehensive roll-call ingestion records every recorded vote, including
+    # procedural votes and votes on bills not (yet) in our action table.
+    action_id: Mapped[int | None] = mapped_column(ForeignKey("actions.id"), nullable=True)
     chamber: Mapped[str] = mapped_column(String(20))  # house|senate
     question: Mapped[str | None] = mapped_column(Text, nullable=True)
     vote_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -188,13 +190,17 @@ class Vote(Base):
     present: Mapped[int] = mapped_column(Integer, default=0)
     not_voting: Mapped[int] = mapped_column(Integer, default=0)
     result: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    congress: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    roll_call: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bill_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class VotePosition(Base):
     __tablename__ = "vote_positions"
     id: Mapped[int] = mapped_column(primary_key=True)
-    vote_id: Mapped[int] = mapped_column(ForeignKey("votes.id"))
-    official_id: Mapped[int] = mapped_column(ForeignKey("officials.id"))
+    vote_id: Mapped[int] = mapped_column(ForeignKey("votes.id"), index=True)
+    official_id: Mapped[int] = mapped_column(ForeignKey("officials.id"), index=True)
     position: Mapped[str] = mapped_column(String(10))  # yea|nay|present|nv
 
 

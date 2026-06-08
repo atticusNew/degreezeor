@@ -320,6 +320,20 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         enacted_year=2011, enacted_month=5, lag_window_months=48,
         signer_name="Rick Snyder", signer_party="R",
     ),
+    "IA-2018-SF2417": StatePolicySpec(
+        key="IA-2018-SF2417",
+        title="Iowa 2018 income tax cut (SF 2417)",
+        state_fips="19",
+        state_name="Iowa",
+        donor_fips=["27", "17", "31", "46", "21"],  # MN IL NE SD KY
+        source_url="https://www.legis.iowa.gov/legislation/BillBook?ga=87&ba=SF2417",
+        objective_text=(
+            "Cut and simplify individual and corporate income tax rates to grow Iowa's economy "
+            "and create jobs."
+        ),
+        enacted_year=2018, enacted_month=5, lag_window_months=48,
+        signer_name="Kim Reynolds", signer_party="R",
+    ),
     # --- Minimum-wage increases (metric_kind="wage"): the policy's own stated goal is to
     # raise workers' wages, measured against the official state average-hourly-earnings
     # series via synthetic control. Same neutral question, a different objective metric.
@@ -415,6 +429,42 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         ),
         enacted_year=2016, enacted_month=3, lag_window_months=48,
         signer_name="Kate Brown", signer_party="D",
+        metric_kind="wage",
+    ),
+    "MN-2014-HF2091": StatePolicySpec(
+        key="MN-2014-HF2091",
+        title="Minnesota 2014 minimum wage increase (HF 2091)",
+        state_fips="27",
+        state_name="Minnesota",
+        donor_fips=["55", "18", "38", "46", "21"],  # WI IN ND SD KY
+        source_url="https://www.house.mn.gov/bills/billnum.asp?Bill=HF2091&ssn=0&y=2014",
+        objective_text="Raise the state minimum wage (to $9.50 by 2016) to lift pay for low-wage workers.",
+        enacted_year=2014, enacted_month=4, lag_window_months=48,
+        signer_name="Mark Dayton", signer_party="D",
+        metric_kind="wage",
+    ),
+    "NM-2019-SB437": StatePolicySpec(
+        key="NM-2019-SB437",
+        title="New Mexico 2019 minimum wage increase (SB 437)",
+        state_fips="35",
+        state_name="New Mexico",
+        donor_fips=["48", "40", "20", "49", "28"],  # TX OK KS UT MS
+        source_url="https://www.nmlegis.gov/Legislation/Legislation?chamber=S&legType=B&legNo=437&year=19",
+        objective_text="Raise the statewide minimum wage to $12 per hour by 2023 to lift pay for low-wage workers.",
+        enacted_year=2019, enacted_month=4, lag_window_months=36,
+        signer_name="Michelle Lujan Grisham", signer_party="D",
+        metric_kind="wage",
+    ),
+    "NV-2019-AB456": StatePolicySpec(
+        key="NV-2019-AB456",
+        title="Nevada 2019 minimum wage increase (AB 456)",
+        state_fips="32",
+        state_name="Nevada",
+        donor_fips=["49", "16", "48", "40", "30"],  # UT ID TX OK MT
+        source_url="https://www.leg.state.nv.us/App/NELIS/REL/80th2019/Bill/6730/Overview",
+        objective_text="Raise the state minimum wage on an annual schedule (to $12 by 2024) to lift pay for low-wage workers.",
+        enacted_year=2019, enacted_month=6, lag_window_months=36,
+        signer_name="Steve Sisolak", signer_party="D",
         metric_kind="wage",
     ),
     # --- Poverty and income (metric_kind="poverty"): scored on the Census SAIPE state

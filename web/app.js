@@ -282,9 +282,7 @@ async function renderLanding() {
     el("div", { class: "ctas" },
       el("a", { class: "cta", href: "#/officials" }, "Find an official"),
       el("a", { class: "cta ghost", href: "#/compare" }, "Compare two"),
-      el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions")),
-    el("div", { style: "margin-top:12px" },
-      el("a", { class: "muted", style: "font-size:13px", href: "#/about" }, "How it works"))));
+      el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"))));
 }
 
 async function renderSources() {
@@ -338,6 +336,31 @@ async function renderGlossary() {
   }
 }
 
+async function renderContact() {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Contact"));
+  app.appendChild(el("p", { class: "muted" },
+    "DegreeZero is an open, source-anchored project. Every score links to its official sources, " +
+    "and the full method is public \u2014 so any number here can be checked or challenged directly."));
+  const email = (window.DZ_CONTACT_EMAIL || "").trim();
+  const card = el("div", { class: "card" });
+  if (email) {
+    card.appendChild(el("h3", {}, "Corrections & questions"));
+    card.appendChild(el("p", { style: "margin:0 0 10px" },
+      "Spotted something that looks off, or have a question about the method?"));
+    card.appendChild(el("a", { class: "cta", href: "mailto:" + email + "?subject=" + encodeURIComponent("DegreeZero feedback") }, "Email us"));
+  } else {
+    card.appendChild(el("h3", {}, "How to check or challenge a number"));
+    card.appendChild(el("ul", { style: "margin:0;padding-left:18px;line-height:1.7" },
+      el("li", {}, "Open any official or action and follow the ", el("b", {}, "source"), " links to the originating government record."),
+      el("li", {}, "Read the ", el("a", { href: "#/methodology" }, "Methodology"), " for exactly how each score is derived."),
+      el("li", {}, "Use ", el("a", { href: "#/integrity" }, "Integrity"), " to see the audit chain and reproducibility self-check."),
+      el("li", {}, "Every published score is re-derivable bit-for-bit from its pinned inputs.")));
+  }
+  app.appendChild(card);
+}
+
 const NAV = [["#/officials", "Officials"], ["#/compare", "Compare"], ["#/actions", "Actions"],
              ["#/coverage", "Coverage"], ["#/integrity", "Integrity"], ["#/about", "About"]];
 function renderNav() {
@@ -350,16 +373,6 @@ function renderNav() {
     const active = h.startsWith("#" + base) || h.startsWith(href);
     nav.appendChild(el("a", { href, class: active ? "active" : "" }, label));
   }
-}
-
-async function renderFooterCategories() {
-  const node = $("#foot-cats");
-  if (!node || node.childElementCount) return;  // populate once
-  try {
-    const cats = (await getJSON("/api/categories")).categories.filter(
-      (c) => c.key !== "other" && (c.total_actions || 0) > 0);
-    for (const c of cats) node.appendChild(el("a", { href: "#/actions?category=" + c.key }, c.label));
-  } catch (e) { /* best-effort; footer category links are non-essential */ }
 }
 
 async function renderAuditStatus() {
@@ -934,9 +947,10 @@ function officialActionRow(a) {
         : statusBadge(a.status || "pending")));
 }
 
-function activityCard(actions) {
+function activityCard(activity) {
+  const series = (activity && activity.by_year) || [];
   const counts = {};
-  for (const a of actions) if (a.date) { const y = +a.date.slice(0, 4); counts[y] = (counts[y] || 0) + 1; }
+  for (const d of series) counts[d.year] = d.count;
   const ys = Object.keys(counts).map(Number).sort((a, b) => a - b);
   if (ys.length < 2) return null;
   const all = [];
@@ -950,7 +964,7 @@ function activityCard(actions) {
   }
   return el("div", { class: "card" },
     el("h3", {}, "Activity over time"),
-    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" }, "Attributable actions per year (when and how often they act)."),
+    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" }, "Actions per year \u2014 bills sponsored, cosponsored, and scored actions (when and how often they act)."),
     el("div", { class: "spark-wrap" }, spark));
 }
 
@@ -1056,7 +1070,7 @@ async function renderOfficialDetail(id) {
   }
 
   // Activity over time (when / how often they act).
-  const actCard = activityCard(card.actions || []);
+  const actCard = activityCard(card.activity || {});
   if (actCard) app.appendChild(actCard);
 
   // Record by category: compact mauve bars (the meaningful, neutral breakdown).
@@ -1569,6 +1583,7 @@ async function route() {
     else if (location.hash.startsWith("#/methodology")) await renderMethodology();
     else if (location.hash.startsWith("#/sources")) await renderSources();
     else if (location.hash.startsWith("#/glossary")) await renderGlossary();
+    else if (location.hash.startsWith("#/contact")) await renderContact();
     else if (location.hash.startsWith("#/actions")) await renderList();
     else await renderLanding();  // default = welcoming landing/hero
   } catch (e) {
@@ -1600,10 +1615,37 @@ function wireHeaderSearch() {
   });
 }
 
+function toast(msg) {
+  const t = el("div", { class: "toast" }, msg);
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 2200);
+}
+
+async function shareCurrentPage() {
+  const url = location.href;
+  const title = document.title || "DegreeZero";
+  const text = "DegreeZero \u2014 what your officials did, and whether it worked.";
+  try {
+    if (navigator.share) { await navigator.share({ title, text, url }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; /* fall through to copy */ }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Link copied to clipboard");
+  } catch (e) {
+    toast(url);
+  }
+}
+
+function wireShare() {
+  const b = $("#share-btn");
+  if (b) b.addEventListener("click", shareCurrentPage);
+}
+
 window.addEventListener("hashchange", route);
 window.addEventListener("DOMContentLoaded", () => {
   showSplash();
   wireHeaderSearch();
-  renderFooterCategories();  // fire-and-forget; populates the footer category links once
+  wireShare();
   route().finally(hideSplash);
 });

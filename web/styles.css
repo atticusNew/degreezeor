@@ -57,17 +57,26 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
 .audit-badge { flex: 0 0 auto; white-space: nowrap; font-size: 12px; font-family: ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .audit-badge.ok { color: var(--good); border-color: rgba(46,204,113,.4); background: rgba(46,204,113,.08); }
 .audit-badge.bad { color: var(--bad); border-color: rgba(231,76,60,.5); background: rgba(231,76,60,.1); }
+.share-btn { flex: 0 0 auto; white-space: nowrap; font-size: 12px; cursor: pointer; padding: 6px 13px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel2); color: var(--text); font-weight: 600; }
+.share-btn:hover { border-color: var(--accent-border); color: var(--accent); }
+.share-btn:focus-visible { outline: 2px solid var(--accent-border); outline-offset: 2px; }
 
-/* Footer: a row of evenly aligned category links above the open-source/meta links. */
+/* Generic CTA (used outside the hero, e.g. Contact). */
+a.cta { display: inline-block; background: var(--accent); color: #06101f; padding: 9px 15px; border-radius: 8px; font-weight: 600; font-size: 14px; }
+a.cta:hover { text-decoration: none; filter: brightness(1.08); }
+
+/* Transient toast (e.g. "Link copied"). */
+.toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 16px); z-index: 1000;
+  background: var(--panel); color: var(--text); border: 1px solid var(--accent-border); border-radius: 10px;
+  padding: 10px 16px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.35); opacity: 0; transition: opacity .25s, transform .25s; max-width: 90vw; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* Footer: a single clean row of meta/validation links. */
 .foot { border-top: 1px solid var(--line); margin-top: 40px; padding: 18px 24px 40px; display: flex;
   flex-direction: column; gap: 14px; color: var(--muted); font-size: 13px; flex: 0 0 auto; }
 .foot a { color: var(--muted); }
 .foot a:hover { color: var(--accent); }
-.foot-cats { display: flex; flex-wrap: wrap; gap: 7px; width: 100%; justify-content: center; }
-.foot-cats a { padding: 5px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
-  font-size: 12px; white-space: nowrap; }
-.foot-cats a:hover { border-color: var(--accent-border); color: var(--text); text-decoration: none; }
-/* Plain text links, visually separated from the category chips above. */
 .foot-meta { display: flex; gap: 14px 20px; flex-wrap: wrap; align-items: center; justify-content: center;
   width: 100%; border-top: 1px solid var(--line); padding-top: 14px; }
 .foot-meta a { font-size: 12px; font-weight: 600; }
@@ -327,7 +336,7 @@ button:disabled { opacity: .55; cursor: default; }
   /* Brand left, audit pill top-right on the first row; nav fills its own row below as a
      single clean row of evenly-sized pills (no wrap, no broken overflow scroll). */
   .hsearch { display: none; }
-  header.top .audit-badge { margin-left: auto; }
+  header.top .share-btn { margin-left: auto; }
   header.top nav { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: nowrap; gap: 3px; }
   header.top nav a { flex: 1 1 0; min-width: 0; text-align: center; padding: 6px 2px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .container { padding: 16px 14px 64px; }

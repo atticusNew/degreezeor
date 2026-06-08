@@ -3,3 +3,7 @@
 //   window.DZ_API_BASE = "https://degreezeor-api.onrender.com";
 // Default "" = same origin (the API also serves the static UI in single-service/local mode).
 window.DZ_API_BASE = "";
+
+// Optional: a public contact address shown on the Contact page (e.g. "hello@degreezero.org").
+// Leave empty to show source-/methodology-based guidance instead of a mailto link.
+window.DZ_CONTACT_EMAIL = "";

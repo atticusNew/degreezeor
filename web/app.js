@@ -23,6 +23,38 @@ const el = (tag, attrs = {}, ...kids) => {
 };
 const fmt = (x, d = 2) => (x === null || x === undefined ? "n/a" : Number(x).toFixed(d));
 
+// Consistent official name formatting: "Last, First (Party)". Strips honorifics and any
+// embedded "[D-CT-2]" junk; handles single-token names and Jr./Sr./III suffixes. Pass
+// party to append it (use null/"" -> "(Unknown)"); omit party to show just the name.
+function formatName(name, party) {
+  if (!name) return "Unknown";
+  // Use RegExp(string) rather than /literals/ so the static paren-balance guard parses cleanly.
+  let s = String(name)
+    .replace(new RegExp("\\[[^\\]]*\\]", "g"), "")
+    .replace(new RegExp("\\b(Rep|Sen|Gov|President|Senator|Representative|Dr)\\.?\\s+", "gi"), "")
+    .replace(new RegExp("\\s+", "g"), " ").trim();
+  let formatted;
+  if (s.includes(",")) {
+    formatted = s.replace(new RegExp("\\s*,\\s*"), ", ");
+  } else {
+    const parts = s.split(" ");
+    if (parts.length <= 1) {
+      formatted = s;
+    } else {
+      const suffixes = ["Jr.", "Sr.", "Jr", "Sr", "II", "III", "IV"];
+      let last = parts[parts.length - 1];
+      let rest = parts.slice(0, -1);
+      if (suffixes.includes(last) && rest.length >= 2) {
+        last = rest[rest.length - 1] + " " + last;
+        rest = rest.slice(0, -1);
+      }
+      formatted = `${last}, ${rest.join(" ")}`;
+    }
+  }
+  if (party === undefined) return formatted;
+  return `${formatted} (${party || "Unknown"})`;
+}
+
 // Build a <select> from [[value, label], ...] with the given value pre-selected.
 const selectEl = (options, selected = "") => {
   const s = document.createElement("select");
@@ -144,18 +176,27 @@ async function disputesCard(euId) {
   }
 
   const filer = el("input", { type: "text", placeholder: "your name / org", style: "width:100%;margin:4px 0;padding:6px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px" });
-  const claim = el("textarea", { placeholder: "what do you dispute and why?", rows: "2", style: "width:100%;margin:4px 0;padding:6px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px" });
+  const claim = el("textarea", { placeholder: "what do you dispute and why? (5 to 1000 characters)", rows: "2", style: "width:100%;margin:4px 0;padding:6px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px" });
+  // Honeypot: hidden from real users; bots that fill it are rejected server-side.
+  const hp = el("input", { type: "text", name: "website", tabindex: "-1", autocomplete: "off",
+    style: "position:absolute;left:-9999px;width:1px;height:1px;opacity:0", "aria-hidden": "true" });
+  const note = el("div", { class: "muted", style: "font-size:12px;margin-top:4px" });
   const submit = el("button", {
     onclick: async () => {
-      if (!claim.value.trim()) return;
-      await postJSON("/api/disputes", { eu_id: euId, filer: filer.value || "anonymous", claim: claim.value });
-      claim.value = ""; filer.value = "";
-      await refresh();
+      const text = claim.value.trim();
+      if (text.length < 5) { note.textContent = "Please enter at least 5 characters."; return; }
+      try {
+        await postJSON("/api/disputes", { eu_id: euId, filer: filer.value || "anonymous", claim: text, website: hp.value });
+        claim.value = ""; filer.value = ""; note.textContent = "";
+        await refresh();
+      } catch (e) { note.textContent = "Could not file: " + e.message; }
     },
   }, "File challenge");
   card.appendChild(filer);
   card.appendChild(claim);
+  card.appendChild(hp);
   card.appendChild(submit);
+  card.appendChild(note);
   card.appendChild(el("h3", { style: "margin-top:16px" }, "Disputes"));
   card.appendChild(listWrap);
   await refresh();
@@ -398,7 +439,7 @@ async function renderDetail(id) {
         el("tbody", {}, ...card.attribution.map((a) =>
           el("tr", {},
             el("td", {}, a.is_residual ? el("span", { class: "pill" }, a.role.replaceAll("_", " ")) : a.role),
-            el("td", {}, a.official_name || "n/a"),
+            el("td", {}, a.official_name ? formatName(a.official_name) : "n/a"),
             el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
             el("td", { class: "right mono" }, `[${(a.ci_low * 100).toFixed(0)}, ${(a.ci_high * 100).toFixed(0)}]%`)))))));
   }
@@ -522,10 +563,10 @@ async function renderOfficials() {
     const scoredText = o.composite !== null
       ? `composite ${fmt(o.composite, 1)} · confidence ${(o.confidence * 100).toFixed(0)}%`
       : "insufficient evidence";
-    const meta = `${o.party || "Unknown"} · ${o.scored_actions}/${o.total_actions} scored · ` +
+    const meta = `${o.scored_actions}/${o.total_actions} scored · ` +
       `coverage ${(o.coverage * 100).toFixed(0)}% · role share ${(o.involvement * 100).toFixed(1)}%`;
     app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
-      el("div", {}, el("div", { class: "title" }, o.name || `Official #${o.id}`),
+      el("div", {}, el("div", { class: "title" }, formatName(o.name, o.party)),
         el("div", { class: "muted mono" }, meta)),
       el("div", { style: "text-align:right" },
         o.composite !== null ? el("span", { class: "badge scored" }, scoredText)
@@ -553,9 +594,9 @@ async function renderOfficialDetail(id) {
 
   // Headline: name + big composite + plain-language summary + secondary chips.
   app.appendChild(el("div", { class: "headline" },
-    el("p", { class: "name" }, o.name),
+    el("p", { class: "name" }, formatName(o.name, o.party)),
     el("div", { class: "submeta" },
-      ["Party " + (o.party || "Unknown"), o.bioguide_id ? `Bioguide ${o.bioguide_id}` : null].filter(Boolean).join(" · ")),
+      o.bioguide_id ? `Bioguide ${o.bioguide_id}` : "Official record"),
     el("div", { class: "big" },
       scored
         ? el("span", { class: "bignum scored" }, fmt(r.composite, 1))

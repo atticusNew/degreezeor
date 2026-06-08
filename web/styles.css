@@ -21,23 +21,29 @@ body {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 header.top {
-  padding: 18px 28px;
+  padding: 14px 24px;
   border-bottom: 1px solid var(--line);
-  display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   background: linear-gradient(180deg, #0e1420, #0b0f17);
 }
-header.top .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); }
+header.top .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); flex: 0 0 auto; }
 header.top .brand:hover { text-decoration: none; }
-header.top .logo { width: 28px; height: 28px; border-radius: 6px; display: block; }
+header.top .logo { width: 30px; height: 30px; border-radius: 6px; display: block; flex: 0 0 auto; object-fit: contain; }
 header.top h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
 header.top .tag { color: var(--muted); font-size: 13px; }
 header.top nav { display: flex; gap: 6px; flex-wrap: wrap; margin-left: 8px; }
 header.top nav a { color: var(--muted); font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; border: 1px solid transparent; }
 header.top nav a:hover { color: var(--text); background: var(--panel2); text-decoration: none; }
 header.top nav a.active { color: var(--accent); background: rgba(79,156,249,.12); border-color: rgba(79,156,249,.4); }
-.audit-badge { margin-left: auto; font-size: 12px; font-family: ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.audit-badge { margin-left: auto; flex: 0 0 auto; white-space: nowrap; font-size: 12px; font-family: ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .audit-badge.ok { color: var(--good); border-color: rgba(46,204,113,.4); background: rgba(46,204,113,.08); }
 .audit-badge.bad { color: var(--bad); border-color: rgba(231,76,60,.5); background: rgba(231,76,60,.1); }
+
+/* Footer with open-source + navigation links. */
+.foot { border-top: 1px solid var(--line); margin-top: 40px; padding: 18px 24px 40px; display: flex; gap: 18px;
+  flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 13px; }
+.foot a { color: var(--muted); }
+.foot a:hover { color: var(--accent); }
 
 /* Boot splash / title screen shown while the app (and a cold-started server) come up. */
 .splash { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column;
@@ -188,10 +194,10 @@ button:disabled { opacity: .6; cursor: default; }
 /* --- Mobile / narrow viewport (<=640px). Scoped so desktop layout is unchanged. --- */
 @media (max-width: 640px) {
   body { font-size: 14px; }
-  header.top { padding: 14px 16px; gap: 8px; }
+  header.top { padding: 12px 14px; gap: 8px; }
   header.top .tag { font-size: 12px; flex-basis: 100%; }
-  header.top nav { margin-left: 0 !important; flex-basis: 100%; }
-  #audit-status { margin-left: 0 !important; }
+  /* Brand left, audit pill top-right on the first row; nav wraps to its own row below. */
+  header.top nav { order: 3; flex-basis: 100%; margin-left: 0; }
   .container { padding: 16px 14px 64px; }
   .card { padding: 14px 14px; }
   /* Stack key/value rows so long values don't get squeezed. */

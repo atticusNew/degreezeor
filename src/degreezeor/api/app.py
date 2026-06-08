@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -84,15 +84,47 @@ class DisputeIn(BaseModel):
     eu_id: int
     filer: str
     claim: str
+    # Honeypot: a hidden field real users never fill. Bots that fill it are dropped.
+    website: str = ""
+
+
+# Lightweight in-memory per-IP rate limit for the one public write path (disputes), so it
+# can't be flooded. Single-instance deployment, so an in-process window is sufficient.
+_DISPUTE_HITS: dict[str, list[float]] = {}
+_DISPUTE_MAX_PER_HOUR = 5
+
+
+def _rate_limited(ip: str) -> bool:
+    import time
+    now = time.time()
+    hits = [t for t in _DISPUTE_HITS.get(ip, []) if now - t < 3600]
+    if len(hits) >= _DISPUTE_MAX_PER_HOUR:
+        _DISPUTE_HITS[ip] = hits
+        return True
+    hits.append(now)
+    _DISPUTE_HITS[ip] = hits
+    return False
 
 
 @app.post("/api/disputes")
-def create_dispute(payload: DisputeIn) -> dict:
+def create_dispute(payload: DisputeIn, request: Request) -> dict:
     from degreezeor.disputes import file_dispute
+
+    # Spam guards: honeypot, length limits, and a per-IP hourly rate limit. Resolution is
+    # still a deterministic re-run (never editorial), so this only filters obvious abuse.
+    if payload.website.strip():
+        raise HTTPException(status_code=400, detail="rejected")  # bot filled the honeypot
+    claim = payload.claim.strip()
+    filer = (payload.filer or "anonymous").strip()[:80]
+    if not (5 <= len(claim) <= 1000):
+        raise HTTPException(status_code=422, detail="claim must be 5 to 1000 characters")
+    client_ip = request.client.host if request.client else "unknown"
+    if _rate_limited(client_ip):
+        raise HTTPException(status_code=429, detail="too many disputes from this address; try later")
 
     with session_scope() as s:
         try:
-            d = file_dispute(s, eu_id=payload.eu_id, filer=payload.filer, claim=payload.claim)
+            d = file_dispute(s, eu_id=payload.eu_id, filer=filer, claim=claim)
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         return {"id": d.id, "eu_id": d.eu_id, "status": d.status, "filer": d.filer, "claim": d.claim}

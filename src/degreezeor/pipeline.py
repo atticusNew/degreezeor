@@ -1069,6 +1069,22 @@ def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
     )
 
 
+def _isolated(session: Session, fn, *, label: str):
+    """Run a single scorer inside a SAVEPOINT so one item's failure rolls back ONLY that
+    item — keeping the session usable and prior work intact — instead of poisoning the
+    whole refresh pass (a duplicate-key / network error on one unit must not abort the rest)."""
+    sp = session.begin_nested()
+    try:
+        result = fn()
+        sp.commit()  # release the savepoint; the work stays in the outer transaction
+        return result
+    except Exception as exc:  # noqa: BLE001 - isolate per-item failures
+        if sp.is_active:
+            sp.rollback()
+        log.warning("%s failed: %s", label, exc)
+        return None
+
+
 def ingest_defc_delivery(session: Session, limit: int | None = None) -> list[ScoreOutcome]:
     """#1 — batch verifiable 'delivery' scores: for every law with DEFC-tagged spending,
     score realized USAspending outlays vs the funds it committed (directly attributable)."""
@@ -1090,10 +1106,10 @@ def ingest_defc_delivery(session: Session, limit: int | None = None) -> list[Sco
                 f"https://api.usaspending.gov/api/v2/disaster/award/amount/?def_codes={entry['code']}"
             ),
         )
-        try:
-            results.append(score_target(session, spec))
-        except Exception as exc:  # noqa: BLE001 - skip a DEFC that can't be resolved/scored
-            log.warning("DEFC %s delivery scoring failed: %s", entry["code"], exc)
+        r = _isolated(session, lambda spec=spec: score_target(session, spec),
+                      label=f"DEFC {entry['code']} delivery")
+        if r is not None:
+            results.append(r)
     return results
 
 
@@ -1155,10 +1171,10 @@ def batch_score_laws(session: Session, congress: int, limit: int = 25) -> list[S
                 continue
             law_number = int(m.group(1))
             law_type = "pub" if "Public" in (laws[0].get("type") or "") else "priv"
-            try:
-                results.append(score_law(session, congress, law_number, law_type))
-            except Exception as exc:  # noqa: BLE001 - one bad law must not abort the batch
-                log.warning("batch law %s-%s failed: %s", congress, law_number, exc)
+            r = _isolated(session, lambda c=congress, n=law_number, t=law_type: score_law(session, c, n, t),
+                          label=f"batch law {congress}-{law_number}")
+            if r is not None:
+                results.append(r)
         offset += 250
     return results
 
@@ -1183,10 +1199,10 @@ def batch_score_executive_orders(session: Session, limit: int = 25) -> list[Scor
         doc_number = d.get("document_number")
         if not doc_number:
             continue
-        try:
-            results.append(score_executive_order(session, doc_number))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("batch EO %s failed: %s", doc_number, exc)
+        r = _isolated(session, lambda dn=doc_number: score_executive_order(session, dn),
+                      label=f"batch EO {doc_number}")
+        if r is not None:
+            results.append(r)
     return results
 
 
@@ -1211,10 +1227,10 @@ def batch_score_regulations(session: Session, limit: int = 25) -> list[ScoreOutc
         doc_number = d.get("document_number")
         if not doc_number:
             continue
-        try:
-            results.append(score_regulation(session, doc_number))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("batch regulation %s failed: %s", doc_number, exc)
+        r = _isolated(session, lambda dn=doc_number: score_regulation(session, dn),
+                      label=f"batch regulation {doc_number}")
+        if r is not None:
+            results.append(r)
     return results
 
 
@@ -1441,10 +1457,11 @@ def ingest_budget_execution(
     for code, name in agencies:
         if limit is not None and len(results) >= limit:
             break
-        try:
-            results.append(score_budget_execution(session, code, name, fiscal_year, realized_kind))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("budget execution %s FY%s failed: %s", name, fiscal_year, exc)
+        r = _isolated(session,
+                      lambda c=code, n=name: score_budget_execution(session, c, n, fiscal_year, realized_kind),
+                      label=f"budget execution {name} FY{fiscal_year}")
+        if r is not None:
+            results.append(r)
     return results
 
 
@@ -1456,10 +1473,10 @@ def ingest_state_policies(session: Session, keys: list[str] | None = None) -> li
         spec = STATE_POLICIES.get(key)
         if spec is None:
             continue
-        try:
-            results.append(score_state_policy(session, spec))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("state policy %s failed: %s", key, exc)
+        r = _isolated(session, lambda spec=spec: score_state_policy(session, spec),
+                      label=f"state policy {key}")
+        if r is not None:
+            results.append(r)
     return results
 
 
@@ -1481,11 +1498,14 @@ def refresh_all(
     )
     counts["state_policies"] = len(ingest_state_policies(session))
     counts["court_survival"] = sum(
-        1 for spec in COURT_SURVIVAL_SPECS.values() if score_court_survival(session, spec)
+        1 for spec in COURT_SURVIVAL_SPECS.values()
+        if _isolated(session, lambda spec=spec: score_court_survival(session, spec),
+                     label=f"court survival {spec.key}")
     )
     counts["curated_targets"] = sum(
         1 for key in ("CARES-DELIVERY", "IIJA-DELIVERY", "UKRAINE-2022-DELIVERY")
-        if score_target(session, TARGET_SPECS[key])
+        if _isolated(session, lambda key=key: score_target(session, TARGET_SPECS[key]),
+                     label=f"curated target {key}")
     )
     counts["laws"] = len(batch_score_laws(session, congress, limit=law_limit))
     counts["executive_orders"] = len(batch_score_executive_orders(session, limit=eo_limit))
@@ -1630,17 +1650,8 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
 
     signer = _ensure_named_official(session, spec.signer_name) if spec.signer_name else None
     sponsor = _ensure_named_official(session, spec.sponsor_name) if spec.sponsor_name else None
-    session.add(Law(action_id=action.id, public_law_number=spec.key,
-                    enacted_date=action.action_date, signed_by_official_id=signer.id if signer else None))
-    if sponsor:
-        session.add(Bill(action_id=action.id, sponsor_official_id=sponsor.id, status="enacted",
-                         became_law_action_id=action.id))
 
-    obj = Objective(action_id=action.id, text=spec.objective_text, source_id=fetch_source_id(session),
-                    source_url=spec.source_url, objective_level="statutory")
-    session.add(obj)
-
-    # Treated-state employment metric.
+    # Treated-state employment metric (get-or-create).
     metric = session.execute(
         select(Metric).where(Metric.code == f"state_nonfarm_employment_{spec.state_fips}")
     ).scalar_one_or_none()
@@ -1656,9 +1667,29 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
         session.add(metric)
         session.flush()
 
-    existing = _existing_outcome_for_metric(session, action.id, metric.id)
-    if existing is not None:  # idempotent (cron-safe)
-        return existing
+    # Idempotent (cron-safe): if already scored, return BEFORE creating any child rows.
+    # (A prior run already created this action's Law/Bill/Objective; re-inserting them
+    # would violate the laws/bills primary key — this was the duplicate-key cron failure.)
+    existing_out = _existing_outcome_for_metric(session, action.id, metric.id)
+    if existing_out is not None:
+        return existing_out
+
+    # Create the action's child records once; guarded so a partial prior run can't duplicate.
+    if session.get(Law, action.id) is None:
+        session.add(Law(action_id=action.id, public_law_number=spec.key,
+                        enacted_date=action.action_date, signed_by_official_id=signer.id if signer else None))
+    if sponsor and session.get(Bill, action.id) is None:
+        session.add(Bill(action_id=action.id, sponsor_official_id=sponsor.id, status="enacted",
+                         became_law_action_id=action.id))
+    obj = session.execute(
+        select(Objective).where(Objective.action_id == action.id)
+    ).scalars().first()
+    if obj is None:
+        obj = Objective(action_id=action.id, text=spec.objective_text, source_id=fetch_source_id(session),
+                        source_url=spec.source_url, objective_level="statutory")
+        session.add(obj)
+        session.flush()
+
     eu = EvaluationUnit(action_id=action.id, objective_id=obj.id, metric_id=metric.id,
                         lag_window_months=spec.lag_window_months, sign_goal=sign_goal, status="pending")
     session.add(eu)

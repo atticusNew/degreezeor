@@ -117,6 +117,19 @@ def test_state_policy_synthetic_control_clears_gate_and_is_reproducible() -> Non
     assert r1.status == "scored"
     assert r1.reproducible_hash == r2.reproducible_hash
 
+    # Idempotency (cron-safe): re-scoring the SAME policy in the SAME session must NOT
+    # raise a duplicate-key error and must return the existing unit (regression: the cron
+    # previously crashed re-inserting the laws row on its second run).
+    s3 = _fresh_session()
+    try:
+        first = score_state_policy(s3, STATE_POLICIES["KS-HB2117"])
+        again = score_state_policy(s3, STATE_POLICIES["KS-HB2117"])
+        s3.commit()
+        assert again.eu_id == first.eu_id
+        assert again.reproducible_hash == first.reproducible_hash
+    finally:
+        s3.close()
+
 
 def test_dispute_reproducible_rerun_upholds_score() -> None:
     import os

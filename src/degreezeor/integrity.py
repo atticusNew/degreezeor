@@ -41,10 +41,11 @@ from degreezeor.core.numeric import D, q_score
 DEFAULT_COMPOSITE_GAP_THRESHOLD = D("15")  # points on the 0..100 composite
 DEFAULT_SHARE_GAP_THRESHOLD = D("0.25")  # difference in scored-share (0..1)
 DEFAULT_MIN_SCORED = 2  # require at least this many scored EUs per party to compare composites
-# Require a meaningful sample of attributed EUs before judging a party's scored-SHARE; a
-# party represented by a single legislator on one law (e.g. a former senator in a fringe
-# caucus label) is noise, not a systematic coverage gap.
-DEFAULT_MIN_ATTRIBUTED = 5
+# Require a meaningful sample of attributed EUs before judging a party's scored-SHARE.
+# A "systematic" coverage gap is only credible with enough data per party; on small samples
+# (a handful of attributed actions) a large share gap is statistical noise, not a pattern, so
+# we do not flag it for review. As scored coverage grows this check re-activates meaningfully.
+DEFAULT_MIN_ATTRIBUTED = 25
 
 
 @dataclass

@@ -22,6 +22,31 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 const fmt = (x, d = 2) => (x === null || x === undefined ? "—" : Number(x).toFixed(d));
+
+// Plain-language explainers, surfaced as inline "i" tooltips next to key terms.
+const TIPS = {
+  composite:
+    "0–100: how much an action met ITS OWN stated objective, scaled by our confidence in " +
+    "the evidence (measured outcome vs. a baseline, plus how durable it was). For an official, " +
+    "it's the attribution-weighted average over their SCORED actions. Not a good/bad rating.",
+  attribution:
+    "The share of an action's outcome credibly assignable to this official — from their role " +
+    "(sponsor, signer, decisive vote) and how pivotal they were — always leaving a large " +
+    "'unattributable residual' (most of a macro outcome isn't any one person's doing).",
+  coverage:
+    "Of this official's attributable actions, the fraction that were actually scoreable. The " +
+    "rest are 'insufficient evidence' (we can't credibly isolate the effect) — never counted as a low score.",
+  confidence:
+    "How sure we are the result is real: combines causal-design strength, data quality, attribution " +
+    "tightness, and robustness. Below the publish threshold, the composite is withheld.",
+  insufficient:
+    "We could not credibly separate the policy's effect from everything else happening at the time, " +
+    "so we report no score. This is honest abstention — NOT a low or bad score.",
+};
+const tip = (key) => el("span", {
+  class: "tip", tabindex: "0", role: "img",
+  "aria-label": "help", "data-tip": typeof key === "string" && TIPS[key] ? TIPS[key] : key,
+}, "i");
 const FACTUAL = ["outcome", "evidence", "attribution", "alignment", "dataquality", "durability"];
 // Neutral default: composite = confidence-scaled achievement (outcome + durability).
 // Other components are shown for context but excluded by default (they live in confidence).
@@ -180,11 +205,13 @@ function gateBanner(card) {
     return el("div", { class: "gate-banner gated" },
       `INSUFFICIENT EVIDENCE — confidence ${(s.confidence * 100).toFixed(1)}% is below the ` +
       `${(s.publish_threshold * 100).toFixed(0)}% publish threshold. No composite verdict is issued. ` +
-      "The full decomposition below is still shown for transparency.");
+      "The full decomposition below is still shown for transparency.",
+      tip("insufficient"));
   }
   return el("div", { class: "gate-banner scored" },
     `Composite ${fmt(s.composite, 1)}/100 (confidence-scaled, factual components only). ` +
-    `Confidence ${(s.confidence * 100).toFixed(1)}%.`);
+    `Confidence ${(s.confidence * 100).toFixed(1)}%.`,
+    tip("composite"));
 }
 
 function valueWeightPanel(card) {
@@ -245,7 +272,7 @@ async function renderDetail(id) {
   const card = await getJSON(`/api/evaluation-units/${id}`);
   app.innerHTML = "";
 
-  app.appendChild(el("a", { class: "back", href: "#/" }, "← all evaluation units"));
+  app.appendChild(el("a", { class: "back", href: "#/actions" }, "← all evaluation units"));
   app.appendChild(el("h2", { style: "margin:6px 0" }, card.action.title));
   app.appendChild(el("div", { class: "muted mono" },
     `${card.action.type.toUpperCase()} · ${card.action.public_law_number ? "Public Law " + card.action.public_law_number : ""} · ${card.action.domain || ""} · enacted ${card.action.enacted_date || "—"}`));
@@ -261,7 +288,7 @@ async function renderDetail(id) {
   // Components vector
   if (card.components.length) {
     app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Decomposed score vector (default output — not a single verdict)"),
+      el("h3", {}, "Decomposed score vector (default output — not a single verdict)", tip("composite")),
       ...card.components.map(componentBar)));
   }
 
@@ -299,7 +326,7 @@ async function renderDetail(id) {
   // Attribution
   if (card.attribution.length) {
     app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Attribution (always leaves a large unattributable residual)"),
+      el("h3", {}, "Attribution (always leaves a large unattributable residual)", tip("attribution")),
       el("table", {},
         el("thead", {}, el("tr", {}, el("th", {}, "role"), el("th", {}, "who"), el("th", { class: "right" }, "attribution"), el("th", { class: "right" }, "95% band"))),
         el("tbody", {}, ...card.attribution.map((a) =>
@@ -356,10 +383,17 @@ async function renderDetail(id) {
 async function renderOfficials() {
   const app = $("#app");
   app.innerHTML = "";
-  app.appendChild(el("p", { class: "muted" },
-    "Official-level roll-up: the attribution-weighted mean composite over each official's " +
-    "SCORED actions — always shown with coverage. \u201CInsufficient evidence\u201D means none of " +
-    "their actions cleared the confidence gate (never a low score)."));
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Officials"));
+  // Framing banner — make the (non-ideological, non-leaderboard) meaning unmissable.
+  app.appendChild(el("div", { class: "gate-banner none" },
+    "This measures whether an official's OWN actions met their OWN stated objectives — weighted " +
+    "by their causal share, shown only with coverage and confidence. It is NOT a good/bad rating, " +
+    "an ideology score, or a leaderboard. Most actions can't be causally isolated and honestly read " +
+    "\u201Cinsufficient evidence\u201D (never a low score)."));
+  // One-line legend with inline explainers for the two key numbers.
+  app.appendChild(el("div", { class: "muted", style: "font-size:13px;margin:4px 0 8px" },
+    "Each official shows ", el("b", {}, "composite"), tip("composite"),
+    " and ", el("b", {}, "coverage"), tip("coverage"), "."));
 
   // Controls: search-by-official + scored-only filter.
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
@@ -412,18 +446,22 @@ async function renderOfficialDetail(id) {
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "Roll-up (attribution-weighted, with coverage)"),
     el("div", { class: "kpi" },
-      el("div", { class: "item" }, el("div", { class: "n" }, r.composite !== null ? fmt(r.composite, 1) : "—"), el("div", { class: "l" }, "composite")),
-      el("div", { class: "item" }, el("div", { class: "n" }, r.confidence !== null ? (r.confidence * 100).toFixed(0) + "%" : "—"), el("div", { class: "l" }, "confidence")),
+      el("div", { class: "item" }, el("div", { class: "n" }, r.composite !== null ? fmt(r.composite, 1) : "—"), el("div", { class: "l" }, "composite", tip("composite"))),
+      el("div", { class: "item" }, el("div", { class: "n" }, r.confidence !== null ? (r.confidence * 100).toFixed(0) + "%" : "—"), el("div", { class: "l" }, "confidence", tip("confidence"))),
       el("div", { class: "item" }, el("div", { class: "n" }, `${r.scored_actions}/${r.total_actions}`), el("div", { class: "l" }, "scored / total")),
-      el("div", { class: "item" }, el("div", { class: "n" }, (r.coverage * 100).toFixed(0) + "%"), el("div", { class: "l" }, "coverage"))),
+      el("div", { class: "item" }, el("div", { class: "n" }, (r.coverage * 100).toFixed(0) + "%"), el("div", { class: "l" }, "coverage", tip("coverage"))),
+    ),
     r.composite === null ? el("div", { class: "gate-banner gated", style: "margin-top:10px" },
-      "INSUFFICIENT EVIDENCE — none of this official's attributable actions cleared the confidence gate. This is not a low score.") : null,
+      "INSUFFICIENT EVIDENCE — none of this official's attributable actions cleared the confidence gate. This is not a low score.",
+      tip("insufficient")) : null,
     el("p", { class: "muted", style: "font-size:12px" }, r.note)));
 
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "Attributable actions"),
     el("table", {},
-      el("thead", {}, el("tr", {}, el("th", {}, "action"), el("th", {}, "role"), el("th", { class: "right" }, "attribution"), el("th", {}, "status"), el("th", { class: "right" }, "composite"))),
+      el("thead", {}, el("tr", {}, el("th", {}, "action"), el("th", {}, "role"),
+        el("th", { class: "right" }, "attribution", tip("attribution")), el("th", {}, "status"),
+        el("th", { class: "right" }, "composite", tip("composite")))),
       el("tbody", {}, ...card.actions.map((a) =>
         el("tr", {},
           el("td", {}, el("a", { href: `#/eu/${a.eu_id}` }, a.action_title || `EU ${a.eu_id}`)),
@@ -733,7 +771,8 @@ async function route() {
     else if (location.hash.startsWith("#/coverage")) await renderCoverage();
     else if (location.hash.startsWith("#/integrity")) await renderIntegrity();
     else if (location.hash.startsWith("#/about")) await renderAbout();
-    else await renderList();
+    else if (location.hash.startsWith("#/actions")) await renderList();
+    else await renderOfficials();  // official-centric: officials are the primary view
   } catch (e) {
     $("#app").innerHTML = `<div class="card">Error: ${e.message}. Is the API running?</div>`;
   }

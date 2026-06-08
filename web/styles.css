@@ -98,6 +98,21 @@ button { background: var(--accent); color: #06101f; border: none; border-radius:
 button:hover { filter: brightness(1.1); }
 button:disabled { opacity: .6; cursor: default; }
 
+/* Inline help tooltips: a small "i" marker that reveals an explainer on hover/focus. */
+.tip {
+  display: inline-block; margin-left: 5px; width: 15px; height: 15px; line-height: 15px;
+  text-align: center; border-radius: 50%; background: var(--panel2); border: 1px solid var(--line);
+  color: var(--muted); font-size: 10px; font-weight: 700; font-style: normal; cursor: help;
+  position: relative; vertical-align: middle;
+}
+.tip:hover, .tip:focus { color: var(--accent); border-color: var(--accent); outline: none; }
+.tip:hover::after, .tip:focus::after {
+  content: attr(data-tip); position: absolute; left: 50%; bottom: 150%; transform: translateX(-50%);
+  width: min(260px, 70vw); background: #0a1626; border: 1px solid var(--accent); color: var(--text);
+  padding: 9px 11px; border-radius: 8px; font-size: 12px; font-weight: 400; line-height: 1.45;
+  text-align: left; white-space: normal; z-index: 60; box-shadow: 0 8px 28px rgba(0,0,0,.55);
+}
+
 /* --- Mobile / narrow viewport (<=640px). Scoped so desktop layout is unchanged. --- */
 @media (max-width: 640px) {
   body { font-size: 14px; }

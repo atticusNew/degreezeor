@@ -855,6 +855,27 @@ function officialActionRow(a) {
         : statusBadge(a.status || "pending")));
 }
 
+async function officialChallengeSection(card) {
+  // An official's score is the roll-up of their actions, so challenges target a specific
+  // result; each resolves via the same deterministic, audit-logged re-run as on the action page.
+  const scored = (card.actions || []).filter((a) => a.composite !== null);
+  if (!scored.length) return null;
+  const sel = selectEl(scored.map((a) => [String(a.eu_id), a.action_title || ("Action " + a.eu_id)]), String(scored[0].eu_id));
+  const holder = el("div", {});
+  async function load() { holder.innerHTML = ""; holder.appendChild(spinner("Loading…")); const c = await disputesCard(Number(sel.value)); holder.innerHTML = ""; holder.appendChild(c); }
+  sel.addEventListener("change", load);
+  const wrap = el("div", {});
+  wrap.appendChild(el("div", { class: "card" },
+    el("h3", {}, "Challenge or appeal a result"),
+    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+      "This official's score is built from their scored actions. Pick a result to challenge; we " +
+      "re-run it deterministically and publish whether it changed."),
+    el("label", { class: "muted", style: "display:block;font-size:13px" }, "Result to review ", sel)));
+  wrap.appendChild(holder);
+  await load();
+  return wrap;
+}
+
 async function renderOfficialDetail(id) {
   const app = $("#app");
   app.innerHTML = ""; app.appendChild(spinner());
@@ -942,6 +963,10 @@ async function renderOfficialDetail(id) {
     el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
       "Actions this official is credited on. Open any for the full source-anchored scorecard."),
     listWrap));
+
+  // Challenge / appeal, available right here on the official's record.
+  const chal = await officialChallengeSection(card);
+  if (chal) app.appendChild(chal);
 }
 
 // Neutral categorical hues for node types (no party blue, no judgment red/green).

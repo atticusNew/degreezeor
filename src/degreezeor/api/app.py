@@ -173,6 +173,32 @@ def verify_audit() -> dict:
     return {"audit_chain_ok": ok, "first_broken_id": broken}
 
 
+@app.get("/api/integrity/reproducibility")
+def verify_reproducibility() -> dict:
+    """Reproducibility self-audit (PLAN §9.9/§16): re-run every published score and
+    confirm each reproduces its pinned hash bit-for-bit. Read-only (re-runs happen in
+    rolled-back savepoints). On-demand — this re-executes scoring, so it is not cheap."""
+    from degreezeor.pipeline import verify_all_reproducible
+
+    with session_scope() as s:
+        a = verify_all_reproducible(s)
+    return {
+        "total": a.total, "reproduced": a.reproduced, "mismatched": a.mismatched,
+        "errored": a.errored, "all_reproduced": a.all_reproduced,
+        "checks": [
+            {"eu_id": c.eu_id, "status": c.status,
+             "stored_hash": c.stored_hash, "recomputed_hash": c.recomputed_hash,
+             "detail": c.detail}
+            for c in a.checks
+        ],
+        "note": (
+            "Each published score is independently re-derived from its stored inputs + pinned "
+            "methodology; 'reproduced' means the re-run hash matched bit-for-bit. A 'mismatch' "
+            "indicates non-determinism or tampering; an 'error' is inconclusive (e.g. cold cache)."
+        ),
+    }
+
+
 @app.get("/api/methodology")
 def methodology() -> dict:
     """Machine-readable summary of the active scoring philosophy + bias controls."""

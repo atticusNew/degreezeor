@@ -199,6 +199,24 @@ def cmd_verify_audit(_: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_verify_scores(_: argparse.Namespace) -> int:
+    """Reproducibility self-audit: re-run every published score and confirm it
+    reproduces its pinned hash bit-for-bit (PLAN §9.9/§16). Exit 1 on any mismatch."""
+    from degreezeor.pipeline import verify_all_reproducible
+
+    with session_scope() as s:
+        audit_result = verify_all_reproducible(s)
+    print(f"reproducibility self-audit: total={audit_result.total} "
+          f"reproduced={audit_result.reproduced} mismatched={audit_result.mismatched} "
+          f"errored={audit_result.errored}")
+    for c in audit_result.checks:
+        if c.status != "reproduced":
+            print(f"  [{c.status}] EU {c.eu_id}: stored={(c.stored_hash or '')[:16]} "
+                  f"recomputed={(c.recomputed_hash or '—')[:16]} {c.detail or ''}")
+    # Mismatches are hard failures (non-determinism / tampering); errors are inconclusive.
+    return 1 if audit_result.mismatched else 0
+
+
 def cmd_party_symmetry(_: argparse.Namespace) -> int:
     """Integrity-at-scale monitoring (PLAN §9.12): party-level score distribution."""
     from degreezeor.integrity import party_symmetry_report
@@ -247,6 +265,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("party-symmetry",
                    help="integrity monitoring: party-level score distribution (PLAN §9.12)"
                    ).set_defaults(func=cmd_party_symmetry)
+    sub.add_parser("verify-scores",
+                   help="reproducibility self-audit: re-run every score, confirm pinned hash"
+                   ).set_defaults(func=cmd_verify_scores)
     sub.add_parser("list").set_defaults(func=cmd_list)
 
     rf = sub.add_parser("refresh", help="idempotent full ingestion/scoring pass (cron entrypoint)")

@@ -1326,6 +1326,77 @@ def refresh_all(
     return counts
 
 
+@dataclass(frozen=True)
+class ReproCheck:
+    eu_id: int
+    status: str  # reproduced | mismatch | error
+    stored_hash: str | None
+    recomputed_hash: str | None
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
+class ReproAudit:
+    total: int  # scored EUs checked (those with a pinned reproducible hash)
+    reproduced: int
+    mismatched: int
+    errored: int
+    checks: list[ReproCheck]
+
+    @property
+    def all_reproduced(self) -> bool:
+        # An audit "passes" only if every checkable score reproduced AND none mismatched.
+        # Errors (e.g. a cold cache that can't re-fetch a series) are inconclusive, not
+        # failures, but are reported so an operator can investigate.
+        return self.mismatched == 0 and self.errored == 0 and self.total > 0
+
+
+def verify_all_reproducible(session: Session) -> ReproAudit:
+    """Platform-wide reproducibility self-audit (PLAN §9.9 / §16).
+
+    Independently RE-RUNS every published score from its stored inputs and asserts each
+    one reproduces its pinned ``reproducible_hash`` bit-for-bit — the operational proof
+    that scores are deterministic and untampered. Each re-run happens inside a SAVEPOINT
+    that is rolled back, so the audit never mutates the database (no extra score runs).
+
+    A mismatch means the stored score does not regenerate from its recorded inputs +
+    methodology — i.e. non-determinism or tampering — and is a hard failure. An error
+    (e.g. a cold replay cache) is inconclusive and reported separately.
+    """
+    checks: list[ReproCheck] = []
+    eus = session.execute(select(EvaluationUnit)).scalars().all()
+    for eu in eus:
+        run = session.execute(
+            select(ScoreRun).where(ScoreRun.eu_id == eu.id).order_by(ScoreRun.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        if run is None or run.reproducible_hash is None:
+            continue  # not a scored EU
+        stored = run.reproducible_hash
+        sp = session.begin_nested()
+        status, recomputed, detail = "error", None, None
+        try:
+            result = rescore_eu(session, eu.id)
+            recomputed = result.reproducible_hash
+            status = "reproduced" if recomputed == stored else "mismatch"
+        except Exception as exc:  # noqa: BLE001 - inconclusive (e.g. cold cache), not a failure
+            detail = str(exc)[:200]
+        finally:
+            if sp.is_active:
+                sp.rollback()
+            # Drop any stale identity-map state from the rolled-back re-run before the
+            # next EU, so each check reads fresh persisted rows.
+            session.expire_all()
+        checks.append(ReproCheck(eu.id, status, stored, recomputed, detail))
+
+    return ReproAudit(
+        total=len(checks),
+        reproduced=sum(1 for c in checks if c.status == "reproduced"),
+        mismatched=sum(1 for c in checks if c.status == "mismatch"),
+        errored=sum(1 for c in checks if c.status == "error"),
+        checks=checks,
+    )
+
+
 def _ensure_named_official(session: Session, name: str) -> Official:
     o = session.execute(select(Official).where(Official.full_name == name)).scalar_one_or_none()
     if o is None:

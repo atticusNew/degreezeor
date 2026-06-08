@@ -1042,6 +1042,7 @@ async function renderOfficialDetail(id) {
   const rec = card.record || { sponsored_total: 0, by_category: [], recent: [] };
   const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(0) + "%");
   const who = formatNameNatural(o.name);
+  setTitle(who);
   const plain = scored
     ? `On the ${r.scored_actions} of ${r.total_actions} actions we could measure, ${who}'s actions met their own ` +
       `stated goals to ${fmt(r.composite, 1)} out of 100 on average (weighted by our confidence).`
@@ -1605,10 +1606,24 @@ async function renderIntegrity() {
   app.appendChild(repro);
 }
 
+function setTitle(part) {
+  document.title = part ? `${part} \u2014 DegreeZero` : "DegreeZero";
+}
+
+const PAGE_TITLES = {
+  "#/officials": "Officials", "#/compare": "Compare", "#/actions": "Actions",
+  "#/coverage": "Coverage", "#/integrity": "Integrity", "#/about": "About",
+  "#/methodology": "Methodology", "#/sources": "Sources", "#/glossary": "Glossary",
+  "#/contact": "Contact",
+};
+
 async function route() {
   renderNav();
   const eu = location.hash.match(/#\/eu\/(\d+)/);
   const off = location.hash.match(/#\/official\/(\d+)/);
+  // Default page title from the route; detail views refine it after their data loads.
+  const key = Object.keys(PAGE_TITLES).find((k) => (location.hash || "").startsWith(k));
+  setTitle(key ? PAGE_TITLES[key] : null);
   // Show a spinner immediately so navigation (and cold starts) never look frozen.
   const isLanding = !location.hash || location.hash === "#/" || location.hash === "#";
   if (!isLanding) { $("#app").innerHTML = ""; $("#app").appendChild(spinner()); }

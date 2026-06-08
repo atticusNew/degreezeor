@@ -7,11 +7,15 @@ audit the path from score back to official source.
 
 from __future__ import annotations
 
+import html as _html
 import json
 from pathlib import Path
+from urllib.parse import quote as _urlquote
+from xml.sax.saxutils import escape as _xml_escape
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -293,6 +297,90 @@ def methodology() -> dict:
         "components_value_laden_off_by_default": ["cost", "distribution"],
         "confidence_publish_threshold": float(settings.confidence_publish_threshold),
     }
+
+
+# --- Social link previews: a small per-page OG image + crawler-readable share pages ---
+# The SPA uses hash routes (#/official/…) that crawlers can't read, so a shared link needs a
+# real URL that returns per-page <meta> + an image. /share/* does exactly that and bounces
+# human visitors into the app; /og.svg renders the (cheap, dependency-free) preview card.
+_TAGLINE = "What your officials did, and whether it worked."
+
+
+def _og_svg(title: str, subtitle: str = "") -> bytes:
+    t = _xml_escape(title[:60])
+    sub = _xml_escape(subtitle[:80])
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" '
+        f'viewBox="0 0 1200 630" role="img">'
+        f'<rect width="1200" height="630" fill="#0c1016"/>'
+        f'<rect x="0" y="0" width="14" height="630" fill="#b48ead"/>'
+        f'<text x="80" y="150" font-family="Georgia,\'Times New Roman\',serif" '
+        f'font-size="46" fill="#b48ead" letter-spacing="1">DegreeZero</text>'
+        f'<text x="80" y="300" font-family="Helvetica,Arial,sans-serif" font-size="76" '
+        f'font-weight="700" fill="#f4f1ee">{t}</text>'
+        + (f'<text x="80" y="370" font-family="Helvetica,Arial,sans-serif" font-size="40" '
+           f'fill="#a7adba">{sub}</text>' if sub else "")
+        + f'<text x="80" y="560" font-family="Helvetica,Arial,sans-serif" font-size="32" '
+        f'fill="#a7adba">{_xml_escape(_TAGLINE)}</text>'
+        f'</svg>'
+    ).encode("utf-8")
+
+
+@app.get("/og.svg")
+def og_image(title: str = "DegreeZero", subtitle: str = "") -> Response:
+    return Response(content=_og_svg(title, subtitle), media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+def _share_html(*, title: str, description: str, hash_path: str, image: str) -> HTMLResponse:
+    """Minimal crawler-readable page: per-page OG/Twitter meta + a redirect for humans."""
+    t, d = _html.escape(title), _html.escape(description)
+    redirect = _html.escape("/#" + hash_path)
+    img = _html.escape(image)
+    body = (
+        f"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/>"
+        f"<title>{t} — DegreeZero</title>"
+        f"<meta name=\"description\" content=\"{d}\"/>"
+        f"<meta property=\"og:title\" content=\"{t}\"/>"
+        f"<meta property=\"og:description\" content=\"{d}\"/>"
+        f"<meta property=\"og:type\" content=\"website\"/>"
+        f"<meta property=\"og:image\" content=\"{img}\"/>"
+        f"<meta name=\"twitter:card\" content=\"summary_large_image\"/>"
+        f"<meta name=\"twitter:title\" content=\"{t}\"/>"
+        f"<meta name=\"twitter:description\" content=\"{d}\"/>"
+        f"<meta name=\"twitter:image\" content=\"{img}\"/>"
+        f"<meta http-equiv=\"refresh\" content=\"0; url={redirect}\"/>"
+        f"</head><body><p>Redirecting to <a href=\"{redirect}\">{t} on DegreeZero</a>…</p></body></html>"
+    )
+    return HTMLResponse(content=body)
+
+
+@app.get("/share/official/{official_id}")
+def share_official(official_id: int) -> HTMLResponse:
+    with session_scope() as s:
+        card = presentation.build_official(s, official_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="official not found")
+    name = card["official"]["name"]
+    office = card["official"].get("position") or "Official record"
+    r, rec = card["rollup"], card.get("record", {})
+    votes = card.get("votes", {})
+    if r.get("composite") is not None:
+        desc = (f"{office}. Composite {r['composite']} of 100 over {r['scored_actions']} scored "
+                f"action(s), with sources. See the full record on DegreeZero.")
+    else:
+        bits = []
+        if rec.get("sponsored_total"):
+            bits.append(f"{rec['sponsored_total']} bills sponsored")
+        if rec.get("cosponsored_total"):
+            bits.append(f"{rec['cosponsored_total']} cosponsored")
+        if votes.get("total"):
+            bits.append(f"{votes['total']} recorded votes")
+        desc = f"{office}. " + (", ".join(bits) + ". " if bits else "") + \
+            "The record of what they acted on, with official sources."
+    image = f"/og.svg?title={_urlquote(name)}&subtitle={_urlquote(office)}"
+    return _share_html(title=name, description=desc,
+                       hash_path=f"/official/{official_id}", image=image)
 
 
 # --- Static explainability UI (zero-build SPA; a pure client of /api) ---

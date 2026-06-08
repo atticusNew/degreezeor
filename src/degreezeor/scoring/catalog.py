@@ -138,6 +138,41 @@ CATALOG: list[MetricSpec] = [
         keywords=("death rate", "mortality rate", "reduce deaths", "public health", "save lives"),
         default_lag_months=60,
     ),
+    # --- Socioeconomic domain (Census SAIPE, Tier-1; needs DZ_CENSUS_API_KEY) ---
+    MetricSpec(
+        code="poverty_rate",
+        name="Poverty Rate, All Ages, U.S. (Census SAIPE)",
+        unit="percent",
+        direction_good="down",
+        source_name="Census",
+        native_series_id="CENSUS|timeseries/poverty/saipe|SAEPOVRTALL_PT",
+        domain="Income and Poverty",
+        keywords=("poverty", "poor", "low-income", "lift out of poverty", "reduce poverty"),
+        default_lag_months=36,
+    ),
+    MetricSpec(
+        code="median_household_income",
+        name="Median Household Income, U.S. (Census SAIPE)",
+        unit="dollars",
+        direction_good="up",
+        source_name="Census",
+        native_series_id="CENSUS|timeseries/poverty/saipe|SAEMHI_PT",
+        domain="Income and Poverty",
+        keywords=("median income", "household income", "raise incomes", "middle class", "earnings of families"),
+        default_lag_months=36,
+    ),
+    # --- Energy domain (EIA, Tier-1; needs DZ_EIA_API_KEY) ---
+    MetricSpec(
+        code="energy_co2_emissions",
+        name="Total U.S. Energy CO2 Emissions (EIA, million metric tons)",
+        unit="million metric tons CO2",
+        direction_good="down",
+        source_name="EIA",
+        native_series_id="EIA|total-energy|TETCEUS",
+        domain="Energy and Environment",
+        keywords=("carbon", "co2", "emissions", "greenhouse gas", "decarbonize", "climate"),
+        default_lag_months=48,
+    ),
 ]
 
 BY_CODE = {m.code: m for m in CATALOG}

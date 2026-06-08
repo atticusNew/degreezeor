@@ -455,17 +455,18 @@ def _load_bls_observations(session: Session, metric: Metric, start_year: int, en
     return count
 
 
-def _load_cdc_observations(session: Session, metric: Metric, start_year: int, end_year: int) -> int:
-    from degreezeor.ingestion.adapters.cdc import cdc_adapter
-
-    fetch = cdc_adapter.fetch(metric.native_series_id, start_year=start_year, end_year=end_year)
+def _load_annual_observations(session: Session, metric: Metric, start_year: int, end_year: int,
+                              adapter, ensure_src) -> int:
+    """Generic loader for annual single-value series (CDC / Census / EIA). The adapter
+    exposes ``fetch(native_id, start_year, end_year)`` + ``parse_series(content, native_id)
+    -> [(year, value)]``; we anchor each annual point to Jan 1 of its year."""
+    fetch = adapter.fetch(metric.native_series_id, start_year=start_year, end_year=end_year)
     land(session, fetch)
     jur = ensure_us_federal(session)
-    src_id = ensure_cdc_source(session).id
+    src_id = ensure_src(session).id
     retrieved = datetime.fromisoformat(fetch.retrieved_at.isoformat())
     count = 0
-    for year, value in cdc_adapter.parse_series(fetch.content, metric.native_series_id):
-        # CDC series are annual; anchor to Jan 1 of the year.
+    for year, value in adapter.parse_series(fetch.content, metric.native_series_id):
         if _insert_observation(session, metric, jur.id, src_id, f"{year}-01-01", value,
                                fetch.source_url, retrieved):
             count += 1
@@ -477,9 +478,21 @@ def load_observations(
     session: Session, metric: Metric, start_year: int, end_year: int
 ) -> int:
     """Ingest a metric's official outcome series into observations (pluggable by source).
-    Dispatches on the metric's native series id: CDC Socrata vs BLS. Returns count loaded."""
-    if metric.native_series_id.startswith("CDC|"):
-        return _load_cdc_observations(session, metric, start_year, end_year)
+    Dispatches on the metric's native series id prefix (CDC / Census / EIA Socrata-style
+    annual series, else BLS monthly). Returns the count loaded."""
+    nsid = metric.native_series_id
+    if nsid.startswith("CDC|"):
+        from degreezeor.ingestion.adapters.cdc import cdc_adapter
+        return _load_annual_observations(session, metric, start_year, end_year,
+                                         cdc_adapter, ensure_cdc_source)
+    if nsid.startswith("CENSUS|"):
+        from degreezeor.ingestion.adapters.census import census_adapter
+        return _load_annual_observations(session, metric, start_year, end_year,
+                                         census_adapter, ensure_census_source)
+    if nsid.startswith("EIA|"):
+        from degreezeor.ingestion.adapters.eia import eia_adapter
+        return _load_annual_observations(session, metric, start_year, end_year,
+                                         eia_adapter, ensure_eia_source)
     return _load_bls_observations(session, metric, start_year, end_year)
 
 
@@ -521,4 +534,18 @@ def ensure_cdc_source(session: Session) -> DataSource:
     from degreezeor.ingestion.adapters.cdc import cdc_adapter
     return ensure_source(
         session, name=cdc_adapter.name, tier=cdc_adapter.tier, base_url=cdc_adapter.base_url
+    )
+
+
+def ensure_census_source(session: Session) -> DataSource:
+    from degreezeor.ingestion.adapters.census import census_adapter
+    return ensure_source(
+        session, name=census_adapter.name, tier=census_adapter.tier, base_url=census_adapter.base_url
+    )
+
+
+def ensure_eia_source(session: Session) -> DataSource:
+    from degreezeor.ingestion.adapters.eia import eia_adapter
+    return ensure_source(
+        session, name=eia_adapter.name, tier=eia_adapter.tier, base_url=eia_adapter.base_url
     )

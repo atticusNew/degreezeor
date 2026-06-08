@@ -87,7 +87,8 @@ def ensure_metric(session: Session, spec: MetricSpec) -> Metric:
     if src is None:
         # Source is normally created during ingestion; create a correct placeholder if the
         # catalog is seeded first (base_url per known source so the trail stays accurate).
-        base_urls = {"BLS": "https://api.bls.gov", "CDC": "https://data.cdc.gov/resource"}
+        base_urls = {"BLS": "https://api.bls.gov", "CDC": "https://data.cdc.gov/resource",
+                     "Census": "https://api.census.gov/data", "EIA": "https://api.eia.gov/v2"}
         src = DataSource(name=spec.source_name, tier=1,
                          base_url=base_urls.get(spec.source_name, "https://example.gov"))
         session.add(src)

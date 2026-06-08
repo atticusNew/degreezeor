@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     govinfo_api_key: str = "DEMO_KEY"
     bls_api_key: str = ""  # optional; raises BLS rate limits
     courtlistener_token: str = ""  # optional; raises CourtListener rate limits
+    census_api_key: str = ""  # required for Census outcome series (poverty/income)
+    eia_api_key: str = ""  # required for EIA energy outcome series (CO2 emissions)
+    fbi_api_key: str = ""  # reserved; FBI CDE endpoints not yet wired
 
     # --- Immutable raw landing (content-addressed snapshots) ---
     data_dir: Path = REPO_ROOT / "data"

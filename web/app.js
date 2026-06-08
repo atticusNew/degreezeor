@@ -226,16 +226,80 @@ function spinner(msg = "Loading…") {
 async function renderLanding() {
   const app = $("#app");
   app.innerHTML = "";
-  app.appendChild(el("div", { class: "hero" },
+  const hero = el("div", { class: "hero" },
     el("img", { class: "mark", src: "/logo.png", alt: "DegreeZero" }),
     el("h1", {}, "DegreeZero"),
     el("div", { class: "sub" },
-      "Did a public action meet the goal it set for itself? We measure outcomes against each " +
-      "policy's own stated objective, with sources you can check and confidence we report plainly."),
+      "Did a public action meet the goal it set for itself? We measure the outcome against each " +
+      "policy's own stated objective, with sources you can check."),
     el("div", { class: "ctas" },
       el("a", { class: "cta", href: "#/officials" }, "Explore officials"),
       el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"),
-      el("a", { class: "cta ghost", href: "#/about" }, "How it works"))));
+      el("a", { class: "cta ghost", href: "#/about" }, "How it works")));
+  app.appendChild(hero);
+
+  // Real credibility stats (skipped quietly if the API is still waking up).
+  try {
+    const s = await getJSON("/api/stats");
+    hero.appendChild(el("div", { class: "statbar" },
+      el("div", { class: "s" }, el("div", { class: "n" }, String(s.scored)), el("div", { class: "l" }, "actions scored")),
+      el("div", { class: "s" }, el("div", { class: "n" }, String(s.officials)), el("div", { class: "l" }, "officials tracked")),
+      el("div", { class: "s" }, el("div", { class: "n" }, String(s.sources)), el("div", { class: "l" }, "official sources")),
+      el("div", { class: "s" }, el("div", { class: "n" }, String(s.actions_considered)), el("div", { class: "l" }, "actions considered"))));
+    if (s.last_updated) {
+      hero.appendChild(el("div", { class: "freshness" }, "Data last updated " + s.last_updated.slice(0, 10)));
+    }
+  } catch (e) { /* stats are best-effort */ }
+
+  // Three-step gist.
+  hero.appendChild(el("div", { class: "steps" },
+    el("div", { class: "step" }, el("span", { class: "num" }, "1"), el("b", {}, "A policy sets a goal"),
+      el("p", {}, "We take the objective the law, order, or budget stated for itself.")),
+    el("div", { class: "step" }, el("span", { class: "num" }, "2"), el("b", {}, "We measure the result"),
+      el("p", {}, "Official data versus a defensible baseline, with the credit shared by causal role.")),
+    el("div", { class: "step" }, el("span", { class: "num" }, "3"), el("b", {}, "We score it, or abstain"),
+      el("p", {}, "A 0 to 100 score with confidence and sources, or \u201Cinsufficient evidence\u201D when we cannot tell."))));
+}
+
+async function renderSources() {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Sources"));
+  app.appendChild(el("p", { class: "muted" },
+    "Every source that feeds a score, with its provenance tier. Tier 0 is the action record, " +
+    "Tier 1 is official statistics, Tier 2 is official analysis, Tier 3 is a verified mirror."));
+  const rows = await getJSON("/api/sources");
+  app.appendChild(el("div", { class: "card" },
+    el("table", {},
+      el("thead", {}, el("tr", {}, el("th", {}, "source"), el("th", {}, "tier"), el("th", {}, "endpoint"))),
+      el("tbody", {}, ...rows.map((d) =>
+        el("tr", {},
+          el("td", {}, d.name),
+          el("td", {}, d.tier_label),
+          el("td", { class: "mono", style: "font-size:12px" },
+            el("a", { href: d.base_url, target: "_blank", rel: "noopener" }, d.base_url))))))));
+}
+
+const GLOSSARY = [
+  ["Composite score", TIPS.composite, "composite = confidence x achievement of the stated goal"],
+  ["Attribution (role share)", TIPS.attribution, "share = authority x pivotality, normalized with a large unattributable residual"],
+  ["Coverage", TIPS.coverage, "coverage = scored actions / total attributable actions"],
+  ["Confidence", TIPS.confidence, "confidence = design x data x attribution x model x sensitivity"],
+  ["Insufficient evidence", TIPS.insufficient, null],
+  ["Baseline", "What the metric would likely have done without the action, used to net out other forces.", null],
+  ["Pre-registration", "The metric and method are fixed and hashed before outcomes are fetched, so results cannot be cherry-picked.", null],
+];
+async function renderGlossary() {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Glossary"));
+  app.appendChild(el("p", { class: "muted" }, "Plain-language definitions, with the math where it applies."));
+  for (const [term, def, eq] of GLOSSARY) {
+    app.appendChild(el("div", { class: "card" },
+      el("h3", {}, term),
+      el("p", { style: "margin:0" }, def),
+      eq ? el("div", { class: "eq" }, eq) : null));
+  }
 }
 
 const NAV = [["#/officials", "Officials"], ["#/actions", "Actions"], ["#/coverage", "Coverage"],
@@ -947,6 +1011,8 @@ async function route() {
     else if (location.hash.startsWith("#/coverage")) await renderCoverage();
     else if (location.hash.startsWith("#/integrity")) await renderIntegrity();
     else if (location.hash.startsWith("#/about")) await renderAbout();
+    else if (location.hash.startsWith("#/sources")) await renderSources();
+    else if (location.hash.startsWith("#/glossary")) await renderGlossary();
     else if (location.hash.startsWith("#/actions")) await renderList();
     else await renderLanding();  // default = welcoming landing/hero
   } catch (e) {

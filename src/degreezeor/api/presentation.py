@@ -22,6 +22,7 @@ from degreezeor.core.models import (
     AttributionWeight,
     Baseline,
     ConfidenceInterval,
+    DataSource,
     EUScore,
     EvaluationUnit,
     Law,
@@ -519,6 +520,37 @@ def build_coverage(session: Session) -> dict[str, Any]:
             "the scored subset is NOT a complete or representative record of any official."
         ),
     }
+
+
+def build_stats(session: Session) -> dict[str, Any]:
+    """Headline credibility stats for the landing page: real counts + data freshness."""
+    cov = build_coverage(session)
+    officials = session.execute(
+        select(func.count(func.distinct(AttributionWeight.official_id))).where(
+            AttributionWeight.official_id.is_not(None), AttributionWeight.is_residual.is_(False)
+        )
+    ).scalar() or 0
+    sources = session.execute(select(func.count()).select_from(DataSource)).scalar() or 0
+    last = session.execute(select(func.max(RawLanding.retrieved_at))).scalar()
+    return {
+        "actions_considered": cov["total_evaluation_units"],
+        "scored": cov["scored"],
+        "insufficient_evidence": cov["insufficient_evidence"],
+        "non_scoreable": cov["non_scoreable"],
+        "officials": officials,
+        "sources": sources,
+        "last_updated": last.isoformat() if last else None,
+        "methodology_version": settings.methodology_version,
+    }
+
+
+def build_sources(session: Session) -> list[dict[str, Any]]:
+    """Every data source, with its provenance tier, so users can browse what feeds scores."""
+    rows = session.execute(select(DataSource).order_by(DataSource.tier, DataSource.name)).scalars().all()
+    tier_label = {0: "Tier 0 (action record)", 1: "Tier 1 (official statistics)",
+                  2: "Tier 2 (official analysis)", 3: "Tier 3 (verified mirror)"}
+    return [{"name": d.name, "tier": d.tier, "tier_label": tier_label.get(d.tier, f"Tier {d.tier}"),
+             "base_url": d.base_url, "license": d.license} for d in rows]
 
 
 def list_units(session: Session) -> list[dict[str, Any]]:

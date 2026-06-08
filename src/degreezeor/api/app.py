@@ -184,6 +184,18 @@ def coverage() -> dict:
         return presentation.build_coverage(s)
 
 
+@app.get("/api/stats")
+def stats() -> dict:
+    with session_scope() as s:
+        return presentation.build_stats(s)
+
+
+@app.get("/api/sources")
+def sources() -> list[dict]:
+    with session_scope() as s:
+        return presentation.build_sources(s)
+
+
 @app.get("/api/integrity/party-symmetry")
 def party_symmetry() -> dict:
     """Integrity-at-scale monitoring (PLAN §9.12): party-level distribution of scored

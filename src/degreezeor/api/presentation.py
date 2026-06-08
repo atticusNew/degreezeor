@@ -430,6 +430,29 @@ def official_activity(session: Session, official_id: int) -> dict[str, Any]:
     }
 
 
+def official_executive_actions(session: Session, official_id: int) -> dict[str, Any]:
+    """The record of executive orders a president SIGNED (unscored breadth) — the executive
+    analogue of sponsored bills, so a president's full term is visible even where individual
+    EOs aren't isolatable to a single measured outcome."""
+    rows = session.execute(
+        select(Action.title, Action.action_date, Action.source_url, ExecutiveOrder.eo_number)
+        .join(ExecutiveOrder, ExecutiveOrder.action_id == Action.id)
+        .where(ExecutiveOrder.signing_official_id == official_id, Action.type == "eo")
+        .order_by(Action.action_date.desc().nullslast())
+    ).all()
+    by_year: dict[int, int] = defaultdict(int)
+    recent = []
+    for title, adate, url, eo_number in rows:
+        if adate:
+            by_year[adate.year] += 1
+        if len(recent) < 12:
+            recent.append({
+                "title": title, "date": adate.isoformat() if adate else None,
+                "eo_number": eo_number, "source_url": url,
+            })
+    return {"total": len(rows), "recent": recent, "by_year": dict(by_year)}
+
+
 def official_votes(session: Session, official_id: int) -> dict[str, Any]:
     """The record of how an official VOTED on recorded (roll-call) votes, grouped by topic
     (unscored). Uses only comprehensive roll-calls (roll_call set), not the attribution-only
@@ -570,17 +593,18 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
     # timeline reflects recent legislative activity, not only the older scoreable actions.
     record = official_activity(session, official_id)
     votes = official_votes(session, official_id)
+    executive = official_executive_actions(session, official_id)
     year_counts: dict[int, int] = defaultdict(int)
     for d in details:
         if d.get("date"):
             year_counts[int(d["date"][:4])] += 1
-    for y, n in record.get("by_year", {}).items():
-        year_counts[int(y)] += n
-    for y, n in votes.get("by_year", {}).items():
-        year_counts[int(y)] += n
+    for src in (record, votes, executive):
+        for y, n in src.get("by_year", {}).items():
+            year_counts[int(y)] += n
     years = sorted(year_counts)
     activity = {
-        "count": len(details) + record["sponsored_total"] + record["cosponsored_total"] + votes["total"],
+        "count": (len(details) + record["sponsored_total"] + record["cosponsored_total"]
+                  + votes["total"] + executive["total"]),
         "dated_count": sum(year_counts.values()),
         "first_year": years[0] if years else None,
         "last_year": years[-1] if years else None,
@@ -614,6 +638,7 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
         "activity": activity,
         "record": record,
         "votes": votes,
+        "executive": executive,
         "most_active_category": most_active_category,
         "actions": details,
     }

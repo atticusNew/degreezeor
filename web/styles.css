@@ -66,6 +66,12 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
 a.cta { display: inline-block; background: var(--accent); color: #06101f; padding: 9px 15px; border-radius: 8px; font-weight: 600; font-size: 14px; }
 a.cta:hover { text-decoration: none; filter: brightness(1.08); }
 
+/* Roll-call vote position badges. */
+.vbadge { display: inline-block; white-space: nowrap; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.vbadge.yea { color: var(--good); border-color: rgba(46,204,113,.4); background: rgba(46,204,113,.08); }
+.vbadge.nay { color: var(--bad); border-color: rgba(231,76,60,.5); background: rgba(231,76,60,.1); }
+.vbadge.present, .vbadge.nv { color: var(--muted); background: var(--panel2); }
+
 /* Transient toast (e.g. "Link copied"). */
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 16px); z-index: 1000;
   background: var(--panel); color: var(--text); border: 1px solid var(--accent-border); border-radius: 10px;

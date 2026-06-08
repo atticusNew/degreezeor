@@ -430,6 +430,49 @@ def official_activity(session: Session, official_id: int) -> dict[str, Any]:
     }
 
 
+def official_votes(session: Session, official_id: int) -> dict[str, Any]:
+    """The record of how an official VOTED on recorded (roll-call) votes, grouped by topic
+    (unscored). Uses only comprehensive roll-calls (roll_call set), not the attribution-only
+    passage votes, so there is no double counting."""
+    rows = session.execute(
+        select(Vote.category, Vote.vote_date, Vote.result, Vote.bill_number,
+               Vote.question, VotePosition.position)
+        .join(VotePosition, VotePosition.vote_id == Vote.id)
+        .where(VotePosition.official_id == official_id, Vote.roll_call.is_not(None))
+        .order_by(Vote.vote_date.desc().nullslast())
+    ).all()
+    by_pos: dict[str, int] = defaultdict(int)
+    by_cat: dict[str, dict[str, int]] = defaultdict(lambda: {"yea": 0, "nay": 0, "total": 0})
+    by_year: dict[int, int] = defaultdict(int)
+    recent = []
+    for cat, vdate, result, bn, url, pos in rows:
+        by_pos[pos] += 1
+        key = cat or "other"
+        if pos in ("yea", "nay"):
+            by_cat[key][pos] += 1
+        by_cat[key]["total"] += 1
+        if vdate:
+            by_year[vdate.year] += 1
+        if len(recent) < 12:
+            recent.append({
+                "date": vdate.isoformat() if vdate else None, "result": result,
+                "bill_number": bn, "category": cat,
+                "category_label": category_label(cat) if cat else None,
+                "position": pos, "source_url": url,
+            })
+    cats = sorted(
+        ({"category": k, "category_label": category_label(k), **v} for k, v in by_cat.items()),
+        key=lambda c: (-c["total"], category_sort_key(c["category"])),
+    )
+    return {
+        "total": len(rows),
+        "by_position": dict(by_pos),
+        "by_category": cats,
+        "recent": recent,
+        "by_year": dict(by_year),
+    }
+
+
 def _official_contributions(session: Session, official_id: int):
     """Gather this official's (non-residual) attributable EUs + their latest score."""
     from degreezeor.scoring.rollup import ActionContribution
@@ -526,15 +569,18 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
     # attributable actions PLUS the record layer (bills sponsored + cosponsored), so the
     # timeline reflects recent legislative activity, not only the older scoreable actions.
     record = official_activity(session, official_id)
+    votes = official_votes(session, official_id)
     year_counts: dict[int, int] = defaultdict(int)
     for d in details:
         if d.get("date"):
             year_counts[int(d["date"][:4])] += 1
     for y, n in record.get("by_year", {}).items():
         year_counts[int(y)] += n
+    for y, n in votes.get("by_year", {}).items():
+        year_counts[int(y)] += n
     years = sorted(year_counts)
     activity = {
-        "count": len(details) + record["sponsored_total"] + record["cosponsored_total"],
+        "count": len(details) + record["sponsored_total"] + record["cosponsored_total"] + votes["total"],
         "dated_count": sum(year_counts.values()),
         "first_year": years[0] if years else None,
         "last_year": years[-1] if years else None,
@@ -567,6 +613,7 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
         "by_category": categories,
         "activity": activity,
         "record": record,
+        "votes": votes,
         "most_active_category": most_active_category,
         "actions": details,
     }

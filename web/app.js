@@ -947,6 +947,44 @@ function officialActionRow(a) {
         : statusBadge(a.status || "pending")));
 }
 
+const VOTE_LABEL = { yea: "Yea", nay: "Nay", present: "Present", nv: "No vote" };
+
+function card_votes(card) {
+  const v = card.votes || {};
+  if (!v.total) return null;
+  const who = formatNameNatural(card.official.name);
+  const bp = v.by_position || {};
+  const out = el("div", { class: "card" },
+    el("h3", {}, "How they voted"),
+    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+      `${who}'s recorded roll-call votes (${v.total}). The record of how they voted, not a score.`));
+  const chips = el("div", { class: "chips" });
+  for (const k of ["yea", "nay", "present", "nv"]) {
+    if (bp[k]) chips.appendChild(el("span", { class: "chip" }, VOTE_LABEL[k] + " ", el("b", {}, String(bp[k]))));
+  }
+  out.appendChild(chips);
+  const cats = (v.by_category || []).filter((c) => c.category);
+  if (cats.length) {
+    out.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, "By topic (yea\u2013nay)"));
+    const maxc = Math.max(...cats.map((c) => c.total), 1);
+    for (const c of cats) out.appendChild(el("div", { class: "bar-wrap" },
+      el("div", { class: "comp-name" }, c.category_label),
+      el("div", { class: "bar" }, el("span", { style: `width:${Math.round((c.total / maxc) * 100)}%` })),
+      el("div", { class: "right mono" }, `${c.yea}\u2013${c.nay}`)));
+  }
+  if ((v.recent || []).length) {
+    out.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, "Recent votes"));
+    for (const r of v.recent) out.appendChild(el("div", { class: "list-item" },
+      el("div", { class: "li-main" },
+        el("div", { class: "title" }, [r.bill_number, r.category_label].filter(Boolean).join(" \u00b7 ") || "Roll-call vote"),
+        el("div", { class: "muted mono" }, [r.date ? r.date.slice(0, 10) : null, r.result].filter(Boolean).join(" \u00b7 "))),
+      el("div", { class: "li-side" },
+        el("span", { class: "vbadge " + r.position }, VOTE_LABEL[r.position] || r.position),
+        r.source_url ? el("a", { href: r.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+  }
+  return out;
+}
+
 function activityCard(activity) {
   const series = (activity && activity.by_year) || [];
   const counts = {};
@@ -1068,6 +1106,10 @@ async function renderOfficialDetail(id) {
     }
     app.appendChild(card);
   }
+
+  // How they voted: the recorded (roll-call) voting record, by topic (unscored).
+  const vt = card_votes(card);
+  if (vt) app.appendChild(vt);
 
   // Activity over time (when / how often they act).
   const actCard = activityCard(card.activity || {});

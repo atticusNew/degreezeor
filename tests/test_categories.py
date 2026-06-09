@@ -8,7 +8,19 @@ from degreezeor.categories import (
     category_for,
     category_label,
     category_sort_key,
+    classify_executive_domain,
 )
+
+
+def test_executive_order_keyword_classification() -> None:
+    # An EO carries no policy area; we classify a topic from its title/abstract.
+    assert category_for(classify_executive_domain("Securing the Southern Border"), "eo") == "immigration"
+    assert category_for(classify_executive_domain("Unleashing American Energy production"), "eo") == "energy_environment"
+    assert category_for(classify_executive_domain("Protecting the American People health"), "eo") == "health"
+    assert category_for(classify_executive_domain("Imposing tariffs on imported goods"), "eo") in {"cost_spending", "foreign_affairs"}
+    assert category_for(classify_executive_domain("Restructuring federal agencies and deregulation"), "eo") == "government"
+    # Nothing recognizable -> None (caller falls back), category 'other'.
+    assert classify_executive_domain("A proclamation of national xyz day") is None
 
 
 def test_known_domains_map_to_expected_categories() -> None:

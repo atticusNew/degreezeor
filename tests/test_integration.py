@@ -245,7 +245,7 @@ def test_executive_actions_record_surface(session) -> None:
     for i, yr in enumerate((2017, 2025, 2026)):
         a = Action(type="eo", title=f"EO about energy {i}", action_date=date(yr, 2, 1),
                    jurisdiction_id=jur.id, source_id=src.id, source_url=f"https://fr/{i}",
-                   native_identifier=f"EO-REC-{i}")
+                   native_identifier=f"EO-REC-{i}", domain="Energy")
         session.add(a)
         session.flush()
         session.add(ExecutiveOrder(action_id=a.id, eo_number=str(14000 + i),
@@ -258,3 +258,14 @@ def test_executive_actions_record_surface(session) -> None:
     assert {2017, 2025, 2026} <= years
     assert card["activity"]["first_year"] == 2017 and card["activity"]["last_year"] == 2026
     assert card["rollup"]["composite"] is None  # record only; never a score
+    # EOs grouped by topic (energy domain -> energy_environment).
+    assert any(c["category"] == "energy_environment" for c in card["executive"]["by_category"])
+
+
+def test_public_bill_url_builds_key_free_congress_gov_link() -> None:
+    from degreezeor.api.presentation import public_bill_url
+    assert public_bill_url(118, "HR3076") == "https://www.congress.gov/bill/118th-congress/house-bill/3076"
+    assert public_bill_url(119, "S1") == "https://www.congress.gov/bill/119th-congress/senate-bill/1"
+    assert public_bill_url(118, "HJRES7") == "https://www.congress.gov/bill/118th-congress/house-joint-resolution/7"
+    assert public_bill_url(None, "HR1") is None
+    assert public_bill_url(118, "ZZ9") is None

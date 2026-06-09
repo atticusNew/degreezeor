@@ -276,13 +276,40 @@ function disclosure(title, buildFn) {
 async function renderLanding() {
   const app = $("#app");
   app.innerHTML = "";
+  const search = el("input", { class: "hero-search", type: "text", autocomplete: "off",
+    placeholder: "Search an official by name\u2026", "aria-label": "Search an official by name" });
+  const go = () => {
+    const q = search.value.trim();
+    location.hash = "#/officials" + (q ? "?q=" + encodeURIComponent(q) : "");
+  };
+  search.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
   app.appendChild(el("div", { class: "hero" },
     el("img", { class: "mark", src: "/logo.png", alt: "DegreeZero" }),
     el("div", { class: "sub" }, "Nonpartisan. Data-driven. Open source."),
+    el("div", { class: "hero-search-wrap" }, search,
+      el("button", { class: "cta", type: "button", onclick: go }, "Search")),
     el("div", { class: "ctas" },
-      el("a", { class: "cta", href: "#/officials" }, "Find an official"),
+      el("a", { class: "cta ghost", href: "#/officials" }, "Browse officials"),
       el("a", { class: "cta ghost", href: "#/compare" }, "Compare two"),
       el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"))));
+  search.focus();
+
+  // "What's new": the most recently scored actions, so returning voters see fresh results.
+  const newWrap = el("div", { class: "whatsnew" });
+  app.appendChild(newWrap);
+  getJSON("/api/recent-scored?limit=6").then((items) => {
+    if (!items || !items.length) return;
+    newWrap.appendChild(el("div", { class: "filter-label", style: "text-align:center" }, "Recently scored"));
+    const list = el("div", { class: "whatsnew-list" });
+    for (const it of items) {
+      list.appendChild(el("a", { class: "whatsnew-item", href: `#/eu/${it.eu_id}` },
+        el("span", { class: "wn-badge scored" }, fmt(it.composite, 0)),
+        el("span", { class: "wn-main" },
+          el("span", { class: "wn-title" }, it.title),
+          el("span", { class: "wn-meta" }, [it.official_name ? formatNameNatural(it.official_name) : actionTypeLabel(it.action_type), it.category_label].filter(Boolean).join(" \u00b7 ")))));
+    }
+    newWrap.appendChild(list);
+  }).catch(() => { /* non-essential */ });
 }
 
 async function renderSources() {
@@ -1745,9 +1772,11 @@ function toast(msg) {
 }
 
 function shareUrlForCurrentPage() {
-  // Per-official pages get a crawler-readable share URL so link previews are per-official.
+  // Per-official / per-comparison pages get a crawler-readable share URL so link previews work.
   const off = (location.hash || "").match(/#\/official\/(\d+)/);
   if (off) return new URL("/share/official/" + off[1], location.origin).href;
+  const cmp = (location.hash || "").match(/#\/compare\?a=(\d+)&b=(\d+)/);
+  if (cmp) return new URL(`/share/compare/${cmp[1]}/${cmp[2]}`, location.origin).href;
   return location.href;
 }
 

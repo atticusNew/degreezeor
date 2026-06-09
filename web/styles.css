@@ -319,7 +319,21 @@ button:disabled { opacity: .55; cursor: default; }
 .hero img.mark { width: auto; height: 210px; max-width: 94%; border-radius: 0; object-fit: contain; margin-bottom: 10px; }
 .hero h1 { font-size: 34px; margin: 6px 0 4px; letter-spacing: .5px; }
 .hero .sub { color: var(--muted); font-size: 16px; max-width: 640px; margin: 6px auto 22px; line-height: 1.5; }
+.hero .hero-search-wrap { display: flex; gap: 8px; justify-content: center; max-width: 520px; margin: 0 auto 16px; }
+.hero .hero-search { flex: 1 1 auto; min-width: 0; padding: 12px 16px; font-size: 15px; border-radius: 999px;
+  background: var(--panel2); border: 1px solid var(--line); color: var(--text); }
+.hero .hero-search:focus { outline: none; border-color: var(--accent-border); }
 .hero .ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.whatsnew { max-width: 620px; margin: 34px auto 0; }
+.whatsnew-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.whatsnew-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--panel); text-align: left; }
+.whatsnew-item:hover { border-color: var(--accent-border); text-decoration: none; }
+.wn-badge { flex: 0 0 auto; min-width: 38px; text-align: center; font-weight: 700; font-size: 14px;
+  padding: 4px 8px; border-radius: 8px; background: var(--score-soft); color: var(--score); border: 1px solid var(--score-border); }
+.wn-main { display: flex; flex-direction: column; min-width: 0; }
+.wn-title { color: var(--text); font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wn-meta { color: var(--muted); font-size: 12px; }
 .hero .cta { background: var(--accent); color: #06101f; padding: 9px 15px; border-radius: 8px; font-weight: 600; font-size: 14px; }
 .hero .cta.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
 .hero .cta:hover { text-decoration: none; filter: brightness(1.08); }

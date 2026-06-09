@@ -569,7 +569,7 @@ async function renderList() {
     const groups = [...byCat.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
     const rank = { scored: 0, insufficient: 1, non: 2 };
     for (const [key, list] of groups) {
-      list.sort((a, b) => rank[actionStatus(a)] - rank[actionStatus(b)] || (b.composite ?? -1) - (a.composite ?? -1));
+      list.sort((a, b) => (b.date || "").localeCompare(a.date || "") || rank[actionStatus(a)] - rank[actionStatus(b)]);
       listEl.appendChild(el("h3", { class: "group-h" }, labelOf(key),
         el("span", { class: "muted", style: "font-weight:400;margin-left:8px" }, String(list.length))));
       for (const u of list) listEl.appendChild(actionRow(u));
@@ -800,6 +800,7 @@ function matchOfficial(blob, q) {
 function officialRow(o) {
   const titleRow = el("div", { class: "title" }, formatName(o.name));
   if (o.position) titleRow.appendChild(el("span", { class: "pill", style: "margin-left:8px" }, o.position));
+  if (o.in_office) titleRow.appendChild(el("span", { class: "pill inoffice", style: "margin-left:6px" }, "In office"));
   const parts = [];
   if (o.scored_actions > 0) parts.push(`${o.scored_actions} scored`);
   if (o.sponsored) parts.push(`${o.sponsored} sponsored`);
@@ -1143,7 +1144,8 @@ async function renderOfficialDetail(id) {
   // Headline: name + office + one big neutral number + one plain sentence + how-measured link.
   app.appendChild(el("div", { class: "headline" },
     el("p", { class: "name" }, who),
-    el("div", { class: "submeta" }, o.position || "Official record"),
+    el("div", { class: "submeta" }, o.position || "Official record",
+      o.in_office ? el("span", { class: "pill inoffice", style: "margin-left:8px" }, "In office") : null),
     el("div", { class: "big" },
       scored
         ? el("span", { class: "bignum scored" }, fmt(r.composite, 1))
@@ -1246,12 +1248,9 @@ function scoredByCategoryBody(card) {
 }
 
 function renderOfficialActions(app, card) {
-  const actions = (card.actions || []).slice().sort((a, b) => {
-    const as = a.composite !== null ? 1 : 0, bs = b.composite !== null ? 1 : 0;
-    if (as !== bs) return bs - as;
-    if (b.attribution !== a.attribution) return b.attribution - a.attribution;
-    return (b.date || "").localeCompare(a.date || "");
-  });
+  // Actions list: most recent first (descending by date), then by attribution as a tiebreak.
+  const actions = (card.actions || []).slice().sort((a, b) =>
+    (b.date || "").localeCompare(a.date || "") || (b.attribution - a.attribution));
   if (!actions.length) return;
   app.appendChild(disclosure(`All scored & attributable actions \u2014 ${actions.length}`, () => {
     const wrap = el("div", {});
@@ -1709,8 +1708,25 @@ const PAGE_TITLES = {
   "#/contact": "Contact",
 };
 
+// First-party analytics: an anonymous, client-generated visitor id (no PII) + the page path.
+function visitorId() {
+  try {
+    let v = localStorage.getItem("dz_vid");
+    if (!v) { v = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)); localStorage.setItem("dz_vid", v); }
+    return v;
+  } catch (e) { return "anon"; }
+}
+function trackView() {
+  try {
+    const body = JSON.stringify({ visitor_id: visitorId(), path: (location.hash || "#/").split("?")[0] });
+    fetch(API + "/api/collect", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true })
+      .catch(() => {});
+  } catch (e) { /* analytics is best-effort, never blocks the app */ }
+}
+
 async function route() {
   renderNav();
+  trackView();
   const eu = location.hash.match(/#\/eu\/(\d+)/);
   const off = location.hash.match(/#\/official\/(\d+)/);
   // Default page title from the route; detail views refine it after their data loads.

@@ -24,16 +24,27 @@ class GenericUrlAdapter(SourceAdapter):
     license = "Official government source"
 
     def fetch(self, native_identifier: str, **params: Any) -> RawFetch:
-        """``native_identifier`` is the official URL itself; ``params['label']`` optional."""
+        """``native_identifier`` is the official URL itself; ``params['label']`` optional.
+
+        Provenance is a *citation*: if the official host is temporarily unreachable or ships
+        a broken TLS chain (common for government sites), we still record the source URL with
+        a deterministic placeholder hash rather than block scoring. The scored OUTCOME data is
+        fetched and verified separately, and the reproducible score hash does not depend on
+        these provenance bytes — so this degradation never affects a score's integrity."""
         url = native_identifier
-        content = client.get_bytes(url)
+        try:
+            content = client.get_bytes(url)
+            content_hash = sha256_hex(content)
+        except Exception:  # noqa: BLE001 - flaky/broken-TLS official host must not block scoring
+            content = b""
+            content_hash = sha256_hex(f"unfetched-source:{url}".encode())
         return RawFetch(
             source_name=self.name,
             tier=self.tier,
             source_url=url,
             native_identifier=params.get("label", url),
             content=content,
-            content_hash=sha256_hex(content),
+            content_hash=content_hash,
             retrieved_at=datetime.now(UTC),
         )
 

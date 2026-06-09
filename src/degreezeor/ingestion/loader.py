@@ -207,13 +207,17 @@ def load_executive_order(session: Session, document_number: str) -> Action:
     # by category (deterministic keyword table). Falls back to a generic governance domain.
     eo_domain = classify_executive_domain(f"{title}. {abstract}") or "Government Operations and Politics"
 
+    # Link to the Federal Register's official permalink (/d/<doc>), which always resolves;
+    # the bare /documents/<doc> form is not guaranteed for every document and can 404.
+    public_url = doc.get("html_url") or f"https://www.federalregister.gov/d/{document_number}"
+
     action = Action(
         type="eo",
         title=title,
         action_date=signing_date,
         jurisdiction_id=jur.id,
         source_id=src.id,
-        source_url=fetch.source_url,
+        source_url=public_url,
         native_identifier=native_id,
         content_hash=fetch.content_hash,
         domain=eo_domain,

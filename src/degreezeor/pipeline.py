@@ -1741,6 +1741,26 @@ def ingest_executive_actions(
     return inserted
 
 
+def backfill_eo_source_urls(session: Session, *, limit: int = 8000) -> int:
+    """Repair executive-order links that point at the bare /documents/<doc> form (which can
+    404) by switching to the Federal Register's guaranteed /d/<doc> permalink."""
+    rows = session.execute(
+        select(Action.id, ExecutiveOrder.fr_doc_number)
+        .join(ExecutiveOrder, ExecutiveOrder.action_id == Action.id)
+        .where(Action.type == "eo", ExecutiveOrder.fr_doc_number.is_not(None),
+               Action.source_url.notlike("%federalregister.gov/d/%"),
+               Action.source_url.notlike("%/documents/2%/%/%"))  # leave canonical date-path URLs
+        .limit(limit)
+    ).all()
+    fixed = 0
+    for aid, doc in rows:
+        session.execute(sa_update(Action).where(Action.id == aid).values(
+            source_url=f"https://www.federalregister.gov/d/{doc}"))
+        fixed += 1
+    session.flush()
+    return fixed
+
+
 def backfill_eo_categories(session: Session, *, limit: int = 6000) -> int:
     """Re-classify executive orders that still carry the legacy uniform domain (or none) so
     the executive record groups by topic. Deterministic; uses the EO's title + objective text."""
@@ -2519,6 +2539,7 @@ def refresh_all(
     _stage("executive_actions", lambda: ingest_executive_actions(session))
     _stage("executive_orders", lambda: len(batch_score_executive_orders(session, limit=eo_limit)))
     _stage("eo_signers_backfilled", lambda: backfill_eo_signers(session))
+    _stage("eo_sources_backfilled", lambda: backfill_eo_source_urls(session))
     _stage("eo_categories_backfilled", lambda: backfill_eo_categories(session))
     _stage("vote_categories_backfilled", lambda: backfill_vote_categories(session))
     _stage("regulations", lambda: len(batch_score_regulations(session, limit=eo_limit)))

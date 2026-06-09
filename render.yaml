@@ -51,6 +51,8 @@ services:
         sync: false
       - key: DZ_FBI_API_KEY
         sync: false
+      - key: DZ_METRICS_TOKEN  # gate for /api/metrics (web service only)
+        sync: false
 
   # NOTE: The SPA is served by the API web service itself (FastAPI mounts web/ at "/"),
   # so the UI and /api share one origin and config.js can stay empty (same-origin). This

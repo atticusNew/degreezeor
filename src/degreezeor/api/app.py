@@ -38,7 +38,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -248,6 +248,34 @@ def recent_activity(limit: int = 50, category: str | None = None) -> list[dict]:
     """Recent sponsored bills (the activity/record layer), newest first."""
     with session_scope() as s:
         return presentation.build_recent_activity(s, limit=min(limit, 200), category=category)
+
+
+class CollectIn(BaseModel):
+    visitor_id: str
+    path: str = ""
+
+
+@app.post("/api/collect")
+def collect(payload: CollectIn) -> dict:
+    """Record one anonymous usage event (first-party analytics). No PII, no IP."""
+    from degreezeor.analytics import record_event
+
+    with session_scope() as s:
+        ok = record_event(s, visitor_id=payload.visitor_id, path=payload.path)
+    return {"ok": ok}
+
+
+@app.get("/api/metrics")
+def metrics(token: str = "") -> dict:
+    """Usage metrics (DAU/WAU/MAU/retention). Token-gated via DZ_METRICS_TOKEN; if no token
+    is configured the endpoint is disabled (so metrics are never publicly exposed)."""
+    from degreezeor.analytics import compute_metrics
+
+    expected = settings.metrics_token
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="metrics disabled or bad token")
+    with session_scope() as s:
+        return compute_metrics(s)
 
 
 @app.get("/api/recent-scored")

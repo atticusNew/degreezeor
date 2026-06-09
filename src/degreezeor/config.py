@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     census_api_key: str = ""  # required for Census outcome series (poverty/income)
     eia_api_key: str = ""  # required for EIA energy outcome series (CO2 emissions)
     fbi_api_key: str = ""  # reserved; FBI CDE endpoints not yet wired
+    metrics_token: str = ""  # gate for /api/metrics; empty => endpoint disabled
 
     # --- Immutable raw landing (content-addressed snapshots) ---
     data_dir: Path = REPO_ROOT / "data"

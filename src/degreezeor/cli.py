@@ -213,6 +213,18 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_metrics(_: argparse.Namespace) -> int:
+    """Print first-party usage metrics (DAU/WAU/MAU/retention)."""
+    import json as _json
+
+    from degreezeor.analytics import compute_metrics
+
+    with session_scope() as s:
+        m = compute_metrics(s)
+    print(_json.dumps(m, indent=2))
+    return 0
+
+
 def cmd_purge_officials(_: argparse.Namespace) -> int:
     """Delete official records that carry no record anywhere (data artifacts). Genuine
     (incl. former) officeholders are kept by design."""
@@ -297,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("purge-officials",
                    help="delete empty official records (data artifacts); keeps real officeholders"
                    ).set_defaults(func=cmd_purge_officials)
+    sub.add_parser("metrics", help="print first-party usage metrics (DAU/WAU/MAU/retention)"
+                   ).set_defaults(func=cmd_metrics)
     sub.add_parser("party-symmetry",
                    help="integrity monitoring: party-level score distribution (PLAN §9.12)"
                    ).set_defaults(func=cmd_party_symmetry)

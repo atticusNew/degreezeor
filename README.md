@@ -12,7 +12,9 @@ default "good/bad politician" number — that would require a hidden value funct
 artifact is a **decomposed, source-linked, confidence-gated score vector**; a single composite is
 opt-in, value-laden, and confidence-gated.
 
-> Read the philosophy and equations in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
+> Read the shareable overview in [`docs/WHITEPAPER.md`](docs/WHITEPAPER.md), the
+> philosophy and equations in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md), and the
+> release/distribution plan in [`docs/OUTREACH.md`](docs/OUTREACH.md).
 
 ## Why "actions vs. their own stated objectives"?
 

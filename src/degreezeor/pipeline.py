@@ -18,6 +18,7 @@ from datetime import date
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from degreezeor.config import settings
@@ -1740,6 +1741,67 @@ def ingest_executive_actions(
     return inserted
 
 
+def backfill_eo_categories(session: Session, *, limit: int = 6000) -> int:
+    """Re-classify executive orders that still carry the legacy uniform domain (or none) so
+    the executive record groups by topic. Deterministic; uses the EO's title + objective text."""
+    from degreezeor.categories import classify_executive_domain
+
+    rows = session.execute(
+        select(Action.id, Action.title, Action.domain, Objective.text)
+        .join(ExecutiveOrder, ExecutiveOrder.action_id == Action.id)
+        .join(Objective, Objective.action_id == Action.id, isouter=True)
+        .where(Action.type == "eo",
+               Action.domain.in_(["Economics and Public Finance", "Government Operations and Politics"])
+               | Action.domain.is_(None))
+        .limit(limit)
+    ).all()
+    fixed = 0
+    seen: set[int] = set()
+    for aid, title, _domain, otext in rows:
+        if aid in seen:
+            continue
+        seen.add(aid)
+        new_domain = classify_executive_domain(f"{title}. {otext or ''}")
+        if new_domain:
+            session.execute(
+                sa_update(Action).where(Action.id == aid).values(domain=new_domain)
+            )
+            fixed += 1
+    session.flush()
+    return fixed
+
+
+def backfill_vote_categories(session: Session, *, limit: int = 20000) -> int:
+    """Fill in the topic for roll-call votes that were ingested before the bill they reference
+    was in our record. Looks up the bill (congress + bill_number) and applies its category."""
+    from degreezeor.categories import category_for
+    from degreezeor.core.models import Vote
+
+    bill_idx: dict[tuple[int, str], str | None] = {}
+    for congress, bn, domain in session.execute(
+        select(Bill.congress, Bill.bill_number, Action.domain)
+        .join(Action, Action.id == Bill.action_id)
+    ).all():
+        if congress and bn:
+            bill_idx[(congress, bn)] = domain
+    rows = session.execute(
+        select(Vote.id, Vote.congress, Vote.bill_number)
+        .where(Vote.category.is_(None), Vote.bill_number.is_not(None),
+               Vote.roll_call.is_not(None))
+        .limit(limit)
+    ).all()
+    fixed = 0
+    for vid, congress, bn in rows:
+        key = (congress, bn)
+        if key not in bill_idx:
+            continue
+        cat = category_for(bill_idx[key], "bill")
+        session.execute(sa_update(Vote).where(Vote.id == vid).values(category=cat))
+        fixed += 1
+    session.flush()
+    return fixed
+
+
 def backfill_eo_signers(session: Session, *, limit: int = 5000) -> int:
     """Repair executive orders scored before their president's term was on record (e.g. EOs
     signed after the last known term started): set the signer from the action date and
@@ -2457,6 +2519,8 @@ def refresh_all(
     _stage("executive_actions", lambda: ingest_executive_actions(session))
     _stage("executive_orders", lambda: len(batch_score_executive_orders(session, limit=eo_limit)))
     _stage("eo_signers_backfilled", lambda: backfill_eo_signers(session))
+    _stage("eo_categories_backfilled", lambda: backfill_eo_categories(session))
+    _stage("vote_categories_backfilled", lambda: backfill_vote_categories(session))
     _stage("regulations", lambda: len(batch_score_regulations(session, limit=eo_limit)))
 
     # Best-effort name enrichment (bounded by Congress.gov throughput).

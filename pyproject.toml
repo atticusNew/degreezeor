@@ -17,6 +17,7 @@ dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
     "python-dateutil>=2.9",
+    "pillow>=10.3",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +38,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"degreezeor.api" = ["assets/*.ttf"]
 
 [tool.ruff]
 line-length = 100

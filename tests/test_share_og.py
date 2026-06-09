@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from degreezeor.api.app import _og_svg, _share_html
+from degreezeor.api.app import _PIL_OK, _og_png, _og_svg, _share_html
+
+
+def test_og_png_renders_valid_image() -> None:
+    if not _PIL_OK:  # Pillow optional; SVG fallback covers this case
+        return
+    png = _og_png("Jane Doe", "Senator")
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"  # PNG magic
+    assert len(png) > 1000
 
 
 def test_og_svg_is_well_formed_and_escaped() -> None:

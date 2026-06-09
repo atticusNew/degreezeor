@@ -369,6 +369,78 @@ def og_image(title: str = "DegreeZero", subtitle: str = "") -> Response:
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
+# Raster OG card (PNG) for platforms that don't render SVG previews (X, Facebook, iMessage).
+# Pillow + a bundled DejaVu font so it renders identically anywhere; falls back to SVG if
+# Pillow is unavailable.
+from io import BytesIO  # noqa: E402
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    _PIL_OK = True
+except Exception:  # noqa: BLE001
+    _PIL_OK = False
+
+_ASSETS = Path(__file__).resolve().parent / "assets"
+_font_cache: dict = {}
+
+
+def _font(bold: bool, size: int):
+    key = (bold, size)
+    if key not in _font_cache:
+        name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+        _font_cache[key] = ImageFont.truetype(str(_ASSETS / name), size)
+    return _font_cache[key]
+
+
+def _wrap(draw, text: str, font, max_w: int, max_lines: int) -> list[str]:
+    lines: list[str] = []
+    cur = ""
+    for word in text.split():
+        trial = (cur + " " + word).strip()
+        if draw.textlength(trial, font=font) <= max_w:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = word
+            if len(lines) == max_lines:
+                break
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+    if len(lines) == max_lines and draw.textlength(lines[-1], font=font) > max_w - 40:
+        lines[-1] = lines[-1].rstrip() + "\u2026"
+    return lines
+
+
+def _og_png(title: str, subtitle: str = "") -> bytes:
+    w, h = 1200, 630
+    img = Image.new("RGB", (w, h), (12, 16, 22))
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, 14, h], fill=(180, 142, 173))
+    d.text((80, 64), "DegreeZero", font=_font(False, 44), fill=(180, 142, 173))
+    title_font = _font(True, 76)
+    y = 190
+    for line in _wrap(d, title, title_font, w - 160, 3):
+        d.text((80, y), line, font=title_font, fill=(244, 241, 238))
+        y += 90
+    if subtitle:
+        d.text((80, y + 4), subtitle[:80], font=_font(False, 40), fill=(167, 173, 186))
+    d.text((80, h - 72), _TAGLINE, font=_font(False, 30), fill=(167, 173, 186))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@app.get("/og.png")
+def og_image_png(title: str = "DegreeZero", subtitle: str = "") -> Response:
+    if not _PIL_OK:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(
+            url=f"/og.svg?title={_urlquote(title)}&subtitle={_urlquote(subtitle)}")
+    return Response(content=_og_png(title, subtitle), media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 def _share_html(*, title: str, description: str, hash_path: str, image: str) -> HTMLResponse:
     """Minimal crawler-readable page: per-page OG/Twitter meta + a redirect for humans."""
     t, d = _html.escape(title), _html.escape(description)
@@ -415,7 +487,7 @@ def share_official(official_id: int) -> HTMLResponse:
             bits.append(f"{votes['total']} recorded votes")
         desc = f"{office}. " + (", ".join(bits) + ". " if bits else "") + \
             "The record of what they acted on, with official sources."
-    image = f"/og.svg?title={_urlquote(name)}&subtitle={_urlquote(office)}"
+    image = f"/og.png?title={_urlquote(name)}&subtitle={_urlquote(office)}"
     return _share_html(title=name, description=desc,
                        hash_path=f"/official/{official_id}", image=image)
 

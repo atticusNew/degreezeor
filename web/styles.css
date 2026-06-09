@@ -94,6 +94,12 @@ a.cta:hover { text-decoration: none; filter: brightness(1.08); }
 .foot-meta a { font-size: 12px; font-weight: 600; }
 
 /* Category/status chip filters + grouped section headers (Actions view). */
+/* Inline summary chips (record/votes/headline). Base styles so chips are pill-separated and
+   never run together (e.g. one chip's count touching the next chip's label). */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; }
+.chip { display: inline-block; background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 5px 11px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.chip b { color: var(--text); font-weight: 700; }
 .chipbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
 .fchip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 13px;

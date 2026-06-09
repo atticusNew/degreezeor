@@ -403,6 +403,14 @@ function actionTypeLabel(t) {
   return ACTION_TYPE_LABELS[t] || (t.charAt(0).toUpperCase() + t.slice(1));
 }
 
+// Collapsed-by-default disclosure (native <details>): keeps detail available without forcing
+// long scrolls. Summary stays visible; the list opens on tap.
+function disclosure(summaryText, items, open = false) {
+  return el("details", { class: "disc", ...(open ? { open: "" } : {}) },
+    el("summary", {}, summaryText),
+    el("div", { class: "disc-body" }, ...items));
+}
+
 function actionStatus(u) {
   if (u.composite !== null && u.status === "scored") return "scored";
   if (u.status === "insufficient_evidence") return "insufficient";
@@ -966,13 +974,23 @@ function card_executive(card) {
     el("h3", {}, "Executive actions"),
     el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
       `Executive orders ${who} signed (${e.total}). The record of what they acted on, not a score.`));
+  const cats = (e.by_category || []).filter((c) => c.category && c.category !== "other");
+  if (cats.length) {
+    out.appendChild(el("div", { class: "group-h" }, "By topic"));
+    const maxc = Math.max(...cats.map((c) => c.count), 1);
+    for (const c of cats) out.appendChild(el("div", { class: "bar-wrap" },
+      el("div", { class: "comp-name" }, c.category_label),
+      el("div", { class: "bar" }, el("span", { style: `width:${Math.round((c.count / maxc) * 100)}%` })),
+      el("div", { class: "right mono" }, String(c.count))));
+  }
   if ((e.recent || []).length) {
-    out.appendChild(el("div", { class: "group-h" }, "Recent"));
-    for (const a of e.recent) out.appendChild(el("div", { class: "list-item" },
+    const items = e.recent.map((a) => el("div", {
+      class: "list-item", onclick: a.source_url ? () => window.open(a.source_url, "_blank", "noopener") : null },
       el("div", { class: "li-main" },
         el("div", { class: "title" }, a.title || ("Executive Order " + (a.eo_number || ""))),
         el("div", { class: "muted mono" }, [a.eo_number ? ("EO " + a.eo_number) : null, a.date ? a.date.slice(0, 10) : null].filter(Boolean).join(" \u00b7 "))),
       el("div", { class: "li-side" }, a.source_url ? el("a", { href: a.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+    out.appendChild(disclosure(`Recent (${e.recent.length})`, items));
   }
   return out;
 }
@@ -1003,14 +1021,15 @@ function card_votes(card) {
       el("div", { class: "right mono" }, `${c.yea}\u2013${c.nay}`)));
   }
   if ((v.recent || []).length) {
-    out.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, "Recent votes"));
-    for (const r of v.recent) out.appendChild(el("div", { class: "list-item" },
+    const items = v.recent.map((r) => el("div", {
+      class: "list-item", onclick: r.source_url ? () => window.open(r.source_url, "_blank", "noopener") : null },
       el("div", { class: "li-main" },
         el("div", { class: "title" }, [r.bill_number, r.category_label].filter(Boolean).join(" \u00b7 ") || "Roll-call vote"),
         el("div", { class: "muted mono" }, [r.date ? r.date.slice(0, 10) : null, r.result].filter(Boolean).join(" \u00b7 "))),
       el("div", { class: "li-side" },
         el("span", { class: "vbadge " + r.position }, VOTE_LABEL[r.position] || r.position),
         r.source_url ? el("a", { href: r.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+    out.appendChild(disclosure(`Recent votes (${v.recent.length})`, items));
   }
   return out;
 }
@@ -1134,11 +1153,12 @@ async function renderOfficialDetail(id) {
       card.appendChild(chips);
     }
     if (rec.recent.length) {
-      card.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, "Recent sponsored"));
-      for (const b of rec.recent) card.appendChild(el("div", { class: "list-item" },
+      const items = rec.recent.map((b) => el("div", {
+        class: "list-item", onclick: b.source_url ? () => window.open(b.source_url, "_blank", "noopener") : null },
         el("div", { class: "li-main" }, el("div", { class: "title" }, b.title),
           el("div", { class: "muted mono" }, [b.category_label, b.bill_number, b.date ? b.date.slice(0, 10) : null].filter(Boolean).join(" · "))),
         el("div", { class: "li-side" }, b.source_url ? el("a", { href: b.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+      card.appendChild(disclosure(`Recent sponsored bills (${rec.recent.length})`, items));
     }
     app.appendChild(card);
   }

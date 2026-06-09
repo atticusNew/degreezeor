@@ -24,7 +24,7 @@ services:
     name: degreezeor-api
     runtime: python
     plan: starter
-    buildCommand: "pip install -e ."
+    buildCommand: "pip install -e . && python scripts/build_docs_pdf.py"  # regenerate branded PDFs from latest docs
     preDeployCommand: "degreezeor migrate"          # apply migrations before each deploy
     startCommand: "uvicorn degreezeor.api.app:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /api/health

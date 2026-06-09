@@ -1873,6 +1873,44 @@ def ingest_executive_actions(
     return inserted
 
 
+def purge_empty_officials(session: Session) -> int:
+    """Remove official records that carry NO record anywhere — no scored attribution, no
+    sponsored/cosponsored bills, no recorded votes, no signed laws/EOs. These are data
+    artifacts (e.g. vote-derived stubs that never linked). Officials who genuinely held office
+    are kept by design: their record stands regardless of whether they're still in office."""
+    from degreezeor.core.models import (
+        BillCosponsor,
+        ExecutiveOrder,
+        Law,
+        OfficeTerm,
+        VotePosition,
+    )
+
+    referenced: set[int] = set()
+    referenced |= {x for (x,) in session.execute(
+        select(AttributionWeight.official_id).distinct()).all() if x is not None}
+    referenced |= {x for (x,) in session.execute(
+        select(Bill.sponsor_official_id).where(Bill.sponsor_official_id.is_not(None)).distinct()).all()}
+    referenced |= {x for (x,) in session.execute(
+        select(BillCosponsor.official_id).distinct()).all() if x is not None}
+    referenced |= {x for (x,) in session.execute(
+        select(VotePosition.official_id).distinct()).all() if x is not None}
+    referenced |= {x for (x,) in session.execute(
+        select(ExecutiveOrder.signing_official_id).where(
+            ExecutiveOrder.signing_official_id.is_not(None)).distinct()).all()}
+    referenced |= {x for (x,) in session.execute(
+        select(Law.signed_by_official_id).where(Law.signed_by_official_id.is_not(None)).distinct()).all()}
+
+    all_ids = {x for (x,) in session.execute(select(Official.id)).all()}
+    orphans = all_ids - referenced
+    if not orphans:
+        return 0
+    session.execute(sa_delete(OfficeTerm).where(OfficeTerm.official_id.in_(orphans)))
+    session.execute(sa_delete(Official).where(Official.id.in_(orphans)))
+    session.flush()
+    return len(orphans)
+
+
 def backfill_eo_source_urls(session: Session, *, limit: int = 8000) -> int:
     """Repair executive-order links that point at the bare /documents/<doc> form (which can
     404) by switching to the Federal Register's guaranteed /d/<doc> permalink."""
@@ -2681,6 +2719,9 @@ def refresh_all(
         from degreezeor.ingestion.loader import enrich_official_names
         return enrich_official_names(session)
     _stage("names_enriched", _enrich)
+
+    # Keep the directory clean: drop official records that carry no record anywhere (artifacts).
+    _stage("officials_purged", lambda: purge_empty_officials(session))
 
     # Self-validate: the nightly pass must leave the append-only audit chain intact. Guarded so a
     # dropped connection at the very end reports unknown rather than crashing the whole command.

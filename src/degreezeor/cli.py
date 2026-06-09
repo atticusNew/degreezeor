@@ -213,6 +213,17 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_purge_officials(_: argparse.Namespace) -> int:
+    """Delete official records that carry no record anywhere (data artifacts). Genuine
+    (incl. former) officeholders are kept by design."""
+    from degreezeor.pipeline import purge_empty_officials
+
+    with session_scope() as s:
+        n = purge_empty_officials(s)
+    print(f"purged {n} empty official record(s)")
+    return 0
+
+
 def cmd_verify_audit(_: argparse.Namespace) -> int:
     with session_scope() as s:
         ok, broken = audit.verify_chain(s)
@@ -283,6 +294,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("initdb").set_defaults(func=cmd_initdb)
     sub.add_parser("migrate", help="apply DB migrations (alembic upgrade head)").set_defaults(func=cmd_migrate)
     sub.add_parser("verify-audit").set_defaults(func=cmd_verify_audit)
+    sub.add_parser("purge-officials",
+                   help="delete empty official records (data artifacts); keeps real officeholders"
+                   ).set_defaults(func=cmd_purge_officials)
     sub.add_parser("party-symmetry",
                    help="integrity monitoring: party-level score distribution (PLAN §9.12)"
                    ).set_defaults(func=cmd_party_symmetry)

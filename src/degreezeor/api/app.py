@@ -43,6 +43,35 @@ app.add_middleware(
 )
 
 
+# --- Lightweight latency hygiene ---------------------------------------------------------
+# Read data only changes after a cron run, so (1) a tiny in-process TTL memo avoids repeating
+# the heaviest aggregate queries on every hit, and (2) Cache-Control lets the browser/CDN
+# serve repeat views without touching the API at all. Both are conservative and safe.
+import time as _time  # noqa: E402
+
+_TTL_SECONDS = 120
+_memo: dict[str, tuple[float, object]] = {}
+
+
+def _cached(key: str, fn):
+    now = _time.time()
+    hit = _memo.get(key)
+    if hit is not None and now - hit[0] < _TTL_SECONDS:
+        return hit[1]
+    val = fn()
+    _memo[key] = (now, val)
+    return val
+
+
+@app.middleware("http")
+async def _cache_headers(request: Request, call_next):
+    resp = await call_next(request)
+    if request.method == "GET" and request.url.path.startswith("/api/") \
+            and "cache-control" not in resp.headers:
+        resp.headers["Cache-Control"] = f"public, max-age={_TTL_SECONDS}"
+    return resp
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "version": __version__,
@@ -79,8 +108,10 @@ def list_officials(
 @app.get("/api/officials-index")
 def officials_index() -> list[dict]:
     """Lightweight directory for client-side typeahead / A-to-Z browse (most-active first)."""
-    with session_scope() as s:
-        return presentation.officials_index(s)
+    def _build():
+        with session_scope() as s:
+            return presentation.officials_index(s)
+    return _cached("officials-index", _build)
 
 
 @app.get("/api/officials/{official_id}")
@@ -192,14 +223,18 @@ def eu_sensitivity_endpoint(eu_id: int) -> dict:
 
 @app.get("/api/coverage")
 def coverage() -> dict:
-    with session_scope() as s:
-        return presentation.build_coverage(s)
+    def _build():
+        with session_scope() as s:
+            return presentation.build_coverage(s)
+    return _cached("coverage", _build)
 
 
 @app.get("/api/stats")
 def stats() -> dict:
-    with session_scope() as s:
-        return presentation.build_stats(s)
+    def _build():
+        with session_scope() as s:
+            return presentation.build_stats(s)
+    return _cached("stats", _build)
 
 
 @app.get("/api/sources")
@@ -218,8 +253,10 @@ def recent_activity(limit: int = 50, category: str | None = None) -> list[dict]:
 @app.get("/api/categories")
 def categories() -> dict:
     """Objective category catalog (derived from action/metric domain) + per-category counts."""
-    with session_scope() as s:
-        return presentation.build_categories(s)
+    def _build():
+        with session_scope() as s:
+            return presentation.build_categories(s)
+    return _cached("categories", _build)
 
 
 @app.get("/api/integrity/party-symmetry")

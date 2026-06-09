@@ -1496,6 +1496,7 @@ async function renderCoverage() {
   const catLabel = (k) => (catMeta.find((m) => m.key === k) || {}).label || k;
   const catOrder = catMeta.map((m) => m.key);
   const catRows = Object.entries(c.by_category || {})
+    .filter(([, statuses]) => Object.values(statuses).reduce((a, b) => a + b, 0) > 0)
     .sort((a, b) => catOrder.indexOf(a[0]) - catOrder.indexOf(b[0]))
     .map(([cat, statuses]) => {
       const tot = Object.values(statuses).reduce((a, b) => a + b, 0);
@@ -1617,33 +1618,33 @@ async function renderMethodology() {
 async function renderIntegrity() {
   const app = $("#app");
   app.innerHTML = ""; app.appendChild(spinner());
-  const r = await getJSON("/api/integrity/party-symmetry");
+  let audit = { audit_chain_ok: null };
+  try { audit = await getJSON("/api/audit/verify"); } catch (e) { /* shown as unknown */ }
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Integrity"));
   app.appendChild(el("p", { class: "muted" },
-    "Scoring is provably party-blind: the formula never reads party. As a second check, we " +
-    "monitor whether scored outcomes are distributed evenly across affiliations \u2014 computed " +
-    "for audit, and shown here only as a neutral summary (no official is named or labeled). A " +
-    "flagged gap prompts a human review of metric and baseline choices; it never triggers an " +
-    "automated correction and never changes any score."));
+    "Three guarantees make every number here checkable: scoring is party-blind by construction, " +
+    "the record is tamper-evident, and every score is independently reproducible."));
 
-  const banner = el("div", { class: "gate-banner " + (r.review_required ? "gated" : "scored") },
-    r.review_required
-      ? "Audit note: a distribution gap crossed a review threshold. This prompts a human look at the metric and baseline choices. It does not flag any official and does not change any score."
-      : "No distribution gap crosses the review thresholds on the current scored set.");
-  app.appendChild(banner);
-
+  // 1) Party-blind by construction.
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Distribution gap checks (vs. review thresholds)"),
-    el("div", { class: "row" }, el("span", { class: "k" }, "mean-composite gap"),
-      el("span", { class: "v mono" }, (r.composite_gap !== null ? fmt(r.composite_gap, 1) : "n/a (need ≥2 comparable parties)") + ` (threshold ${fmt(r.composite_gap_threshold, 0)})`)),
-    el("div", { class: "row" }, el("span", { class: "k" }, "scored-share gap"),
-      el("span", { class: "v mono" }, (r.scored_share_gap !== null ? (r.scored_share_gap * 100).toFixed(0) + "%" : "n/a") + ` (threshold ${(r.scored_share_gap_threshold * 100).toFixed(0)}%)`)),
-    ...(r.review_reasons.length
-      ? r.review_reasons.map((reason) => el("div", { class: "hint" }, reason))
-      : [el("div", { class: "muted", style: "font-size:13px;margin-top:8px" }, "No review reasons flagged.")])));
+    el("h3", {}, "Party-blind by construction"),
+    el("p", { style: "margin:0", class: "muted" },
+      "The scoring formula never reads party affiliation \u2014 enforced by automated tests (a static " +
+      "guard that no scoring code imports party, and a behavioural test that swapping an official's " +
+      "party cannot change any stored score). Actions are measured only against their own stated goals.")));
 
-  app.appendChild(el("p", { class: "muted", style: "font-size:12px" }, r.disclaimer));
+  // 2) Tamper-evident audit chain.
+  const ok = audit.audit_chain_ok;
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "Tamper-evident audit chain"),
+    el("div", { class: "gate-banner " + (ok === false ? "gated" : "scored") },
+      ok === null ? "Audit chain status unavailable right now."
+        : ok ? "\u2713 Append-only audit hash chain verified \u2014 history has not been altered."
+             : "\u2715 Audit hash chain broken \u2014 investigate immediately."),
+    el("p", { class: "muted", style: "margin:8px 0 0;font-size:13px" },
+      "Every score run, dispute, and methodology change is appended to a hash-chained log; any " +
+      "out-of-band edit to history breaks the chain and is surfaced here and in the header.")));
 
   // Reproducibility self-audit (on-demand: it re-runs every published score).
   const repro = el("div", { class: "card" });
@@ -1748,7 +1749,7 @@ function showSplash() {
   document.body.appendChild(el("div", { class: "splash", id: "splash" },
     el("img", { src: "/logo.png", alt: "DegreeZero" }),
     el("div", { class: "spinner" }),
-    el("div", { class: "sub" }, "Loading. First load can take a moment while the server wakes up.")));
+    el("div", { class: "sub" }, "Loading latest data\u2026")));
 }
 function hideSplash() {
   const s = document.getElementById("splash");

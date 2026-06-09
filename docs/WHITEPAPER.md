@@ -175,14 +175,16 @@ repeat views are fast; the "Recently scored" feed shows what each refresh added.
 ## 14. Status and roadmap
 
 Live today: federal executive orders, enacted-law delivery, agency budget
-execution, ~30 curated state comparison-design policies (jobs, wages, poverty,
-child poverty, health coverage, energy), the full congressional activity layer
-(sponsored, cosponsored, votes), and the executive activity layer.
+execution, and curated state comparison-design policies across **jobs, wages,
+poverty, child poverty, health coverage, drug-overdose mortality (CDC), energy,
+and education (NAEP grade-4 reading)** — plus the full congressional activity layer
+(sponsored, cosponsored, votes) and the executive activity layer. Each outcome
+series is added behind its own offline parse test and a live reproducibility test.
 
-Near-term: additional vetted outcome series (housing permits via Census BPS,
-traffic fatalities via NHTSA FARS, educational attainment via NAEP), each added
-behind its own reproducibility test; deeper historical backfill; and expanded
-state coverage.
+Near-term: additional vetted outcome series (housing permits via Census Building
+Permits Survey, traffic fatalities via NHTSA FARS, crime via FBI CDE — each
+pending a stable state-level endpoint and a defensible policy spec), deeper
+historical backfill, and expanded per-category state coverage.
 
 ---
 

@@ -213,6 +213,30 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coverage(_: argparse.Namespace) -> int:
+    """Per-category scored coverage report (flags categories with no scored result yet)."""
+    from degreezeor.api import presentation
+    from degreezeor.categories import category_catalog
+
+    with session_scope() as s:
+        cov = presentation.build_coverage(s)
+    by_cat = cov.get("by_category", {})
+    print(f"{'category':22} {'scored':>7} {'insuf':>7} {'total':>7}")
+    gaps = []
+    for c in category_catalog():
+        st = by_cat.get(c["key"], {})
+        scored = st.get("scored", 0)
+        insuf = st.get("insufficient_evidence", 0)
+        total = sum(st.values()) if st else 0
+        flag = "" if scored else "  <-- no scored result"
+        print(f"{c['label'][:22]:22} {scored:>7} {insuf:>7} {total:>7}{flag}")
+        if not scored and c["key"] != "other":
+            gaps.append(c["label"])
+    if gaps:
+        print("\nCategories without a scored result yet:", ", ".join(gaps))
+    return 0
+
+
 def cmd_metrics(_: argparse.Namespace) -> int:
     """Print first-party usage metrics (DAU/WAU/MAU/retention)."""
     import json as _json
@@ -311,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
                    ).set_defaults(func=cmd_purge_officials)
     sub.add_parser("metrics", help="print first-party usage metrics (DAU/WAU/MAU/retention)"
                    ).set_defaults(func=cmd_metrics)
+    sub.add_parser("coverage", help="per-category scored coverage report (flags gaps)"
+                   ).set_defaults(func=cmd_coverage)
     sub.add_parser("party-symmetry",
                    help="integrity monitoring: party-level score distribution (PLAN §9.12)"
                    ).set_defaults(func=cmd_party_symmetry)

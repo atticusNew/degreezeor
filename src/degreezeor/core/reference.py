@@ -25,6 +25,22 @@ PRESIDENTS: list[tuple[str, str, str, date, date | None]] = [
     ("Donald J. Trump", "T000452p", "R", date(2025, 1, 20), None),
 ]
 
+# Current executive officeholders who are NOT in the congressional roster, so their CURRENT
+# office (and "in office" status) is shown correctly even though their legislative record was
+# built in a prior role (e.g. a Vice President who was previously a Senator). Bioguide -> the
+# office to display. Keep this small, explicit, and updatable; it is public record, never read
+# by scoring. (The sitting President is already covered by PRESIDENTS with end=None.)
+CURRENT_EXECUTIVE: dict[str, str] = {
+    "V000137": "Vice President",  # JD Vance (2025– ; previously U.S. Senator, OH)
+}
+
+
+def current_executive_bioguides() -> set[str]:
+    """Bioguides currently holding executive office (sitting president + CURRENT_EXECUTIVE)."""
+    ids = {bio for _n, bio, _p, _s, end in PRESIDENTS if end is None}
+    ids |= set(CURRENT_EXECUTIVE)
+    return ids
+
 
 def ensure_party_term(session: Session, official: Official, abbrev: str) -> None:
     """Attach a party (via an office term) to an official if not already present.

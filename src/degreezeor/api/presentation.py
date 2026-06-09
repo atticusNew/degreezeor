@@ -362,7 +362,7 @@ def _positions_for(session: Session, official_ids: set[int]) -> dict[int, str | 
     Returns None when the office cannot be determined objectively (shown as just the name)."""
     if not official_ids:
         return {}
-    from degreezeor.core.reference import PRESIDENTS
+    from degreezeor.core.reference import CURRENT_EXECUTIVE, PRESIDENTS
 
     pres_bio = {b for _, b, _, _, _ in PRESIDENTS}
     bio = dict(session.execute(
@@ -397,7 +397,11 @@ def _positions_for(session: Session, official_ids: set[int]) -> dict[int, str | 
 
     out: dict[int, str | None] = {}
     for oid in official_ids:
-        if bio.get(oid) in pres_bio or oid in eo_signers or oid in fed_law_signers:
+        # Current executive office takes precedence over a prior legislative role (e.g. a
+        # Vice President who used to be a Senator shows "Vice President", not "Senator").
+        if bio.get(oid) in CURRENT_EXECUTIVE:
+            out[oid] = CURRENT_EXECUTIVE[bio[oid]]
+        elif bio.get(oid) in pres_bio or oid in eo_signers or oid in fed_law_signers:
             out[oid] = "President"
         elif oid in state_law_signers:
             out[oid] = "Governor"

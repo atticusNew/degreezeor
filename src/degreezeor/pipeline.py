@@ -2009,18 +2009,21 @@ def ingest_executive_actions(
 def mark_officials_in_office(session: Session) -> int:
     """Flag officials who currently hold office: the current-legislators roster plus the
     sitting president. Display metadata only; never read by scoring. Returns the count flagged."""
-    from degreezeor.core.reference import PRESIDENTS
+    from degreezeor.core.reference import current_executive_bioguides
     from degreezeor.ingestion.adapters.congress_legislators import congress_legislators_adapter
 
+    roster_ok = True
     try:
         current = congress_legislators_adapter.current_bioguide_ids()
-    except Exception as exc:  # noqa: BLE001 - never fatal; leave flags unchanged on failure
+    except Exception as exc:  # noqa: BLE001 - never fatal
         log.warning("could not load current legislators roster: %s", exc)
-        return 0
-    for _name, bio, _party, _start, end in PRESIDENTS:
-        if end is None:
-            current.add(bio)
-    session.execute(sa_update(Official).values(in_office=False))
+        current, roster_ok = set(), False
+    # Always include sitting executive officeholders (president + VP), roster or not.
+    current |= current_executive_bioguides()
+    # Only reset all flags when we actually have the roster (so a transient roster failure
+    # can't wipe everyone's in-office status); always (re-)affirm the current set.
+    if roster_ok:
+        session.execute(sa_update(Official).values(in_office=False))
     if current:
         session.execute(
             sa_update(Official).where(Official.bioguide_id.in_(current)).values(in_office=True)

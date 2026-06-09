@@ -193,6 +193,10 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
 .kpi .item { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; min-width: 130px; }
 .kpi .item .n { font-size: 22px; font-weight: 700; }
 .kpi .item .l { color: var(--muted); font-size: 12px; }
+/* "At a glance" stat strip on the official page: full-width, equal columns. */
+.kpi.glance { gap: 12px; margin: 4px 0 16px; }
+.kpi.glance .item { flex: 1 1 0; min-width: 0; text-align: center; }
+.kpi.glance .item .n { color: var(--score); }
 .back { display: inline-block; margin-bottom: 8px; }
 .src { font-size: 12px; }
 .src td { vertical-align: top; }

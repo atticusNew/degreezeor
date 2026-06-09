@@ -974,9 +974,8 @@ function card_executive(card) {
   const e = card.executive || {};
   if (!e.total) return null;
   const who = formatNameNatural(card.official.name);
-  const out = el("div", { class: "card" },
-    el("h3", {}, "Executive actions"),
-    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+  const out = el("div", {},
+    el("p", { class: "muted", style: "font-size:13px;margin-top:0" },
       `Executive orders ${who} signed (${e.total}). The record of what they acted on, not a score.`));
   const cats = (e.by_category || []).filter((c) => c.category && c.category !== "other");
   if (cats.length) {
@@ -1006,9 +1005,8 @@ function card_votes(card) {
   if (!v.total) return null;
   const who = formatNameNatural(card.official.name);
   const bp = v.by_position || {};
-  const out = el("div", { class: "card" },
-    el("h3", {}, "How they voted"),
-    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+  const out = el("div", {},
+    el("p", { class: "muted", style: "font-size:13px;margin-top:0" },
       `${who}'s recorded roll-call votes (${v.total}). The record of how they voted, not a score.`));
   const chips = el("div", { class: "chips" });
   for (const k of ["yea", "nay", "present", "nv"]) {
@@ -1094,6 +1092,7 @@ async function renderOfficialDetail(id) {
   const scored = r.composite !== null;
   const rec = card.record || { sponsored_total: 0, by_category: [], recent: [] };
   const exe = card.executive || { total: 0, recent: [] };
+  const votes = card.votes || { total: 0 };
   const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(0) + "%");
   const who = formatNameNatural(o.name);
   setTitle(who);
@@ -1125,110 +1124,113 @@ async function renderOfficialDetail(id) {
       scored ? el("span", { class: "ofmax" }, "/ 100 composite") : null,
       tip("composite")),
     el("p", { class: "plain" }, plain),
-    el("div", { class: "chips" },
-      r.total_actions > 0 ? el("span", { class: "chip" }, "coverage ", el("b", {}, pct(r.coverage)), tip("coverage")) : null,
-      r.total_actions > 0 ? el("span", { class: "chip" }, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`)) : null,
-      rec.sponsored_total ? el("span", { class: "chip" }, "sponsored ", el("b", {}, String(rec.sponsored_total))) : null,
-      rec.cosponsored_total ? el("span", { class: "chip" }, "cosponsored ", el("b", {}, String(rec.cosponsored_total))) : null,
-      exe.total ? el("span", { class: "chip" }, "executive orders ", el("b", {}, String(exe.total))) : null,
-      period ? el("span", { class: "chip" }, "active ", el("b", {}, period)) : null,
-      card.most_active_category ? el("span", { class: "chip" }, "most active in ", el("b", {}, card.most_active_category)) : null),
     scored ? el("div", { style: "margin-top:12px" },
       el("a", { href: "#", onclick: (e) => { e.preventDefault(); howMeasuredModal(r.note); } }, "How is this measured? →")) : null));
 
-  // What they've acted on: the record of bills sponsored + cosponsored, by topic (unscored).
-  if (rec.sponsored_total || rec.cosponsored_total) {
-    const card = el("div", { class: "card" },
-      el("h3", {}, "What they've acted on"),
-      el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
-        `Bills ${who} sponsored or cosponsored, by topic. The record of what they acted on, not a score.`));
-    if (rec.by_category.length) {
-      const maxc = Math.max(...rec.by_category.map((c) => c.count), 1);
-      card.appendChild(el("div", { class: "group-h" }, `Sponsored (${rec.sponsored_total})`));
-      for (const c of rec.by_category) card.appendChild(el("div", { class: "bar-wrap" },
-        el("div", { class: "comp-name" }, c.category_label),
-        el("div", { class: "bar" }, el("span", { style: `width:${Math.round((c.count / maxc) * 100)}%` })),
-        el("div", { class: "right mono" }, String(c.count))));
-    }
-    if (rec.cosponsored_total) {
-      card.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, `Cosponsored (${rec.cosponsored_total})`));
-      const chips = el("div", { class: "chips" });
-      for (const c of (rec.cosponsored_by_category || [])) chips.appendChild(el("span", { class: "chip" }, c.category_label, " ", el("b", {}, String(c.count))));
-      card.appendChild(chips);
-    }
-    if (rec.recent.length) {
-      const items = rec.recent.map((b) => el("div", {
-        class: "list-item", onclick: b.source_url ? () => window.open(b.source_url, "_blank", "noopener") : null },
-        el("div", { class: "li-main" }, el("div", { class: "title" }, b.title),
-          el("div", { class: "muted mono" }, [b.category_label, b.bill_number, b.date ? b.date.slice(0, 10) : null].filter(Boolean).join(" · "))),
-        el("div", { class: "li-side" }, b.source_url ? el("a", { href: b.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
-      card.appendChild(disclosure(`Recent sponsored bills (${rec.recent.length})`, () => el("div", {}, ...items)));
-    }
-    app.appendChild(card);
+  // At a glance: the three most relevant numbers (the big composite already leads when scored).
+  const statCandidates = [];
+  if (r.total_actions > 0) {
+    statCandidates.push(["Coverage", pct(r.coverage)]);
+    statCandidates.push(["Scored actions", `${r.scored_actions}/${r.total_actions}`]);
+  }
+  if (rec.sponsored_total) statCandidates.push(["Bills sponsored", String(rec.sponsored_total)]);
+  if (rec.cosponsored_total) statCandidates.push(["Cosponsored", String(rec.cosponsored_total)]);
+  if (votes.total) statCandidates.push(["Votes cast", String(votes.total)]);
+  if (exe.total) statCandidates.push(["Executive orders", String(exe.total)]);
+  if (period) statCandidates.push(["Active", period]);
+  if (card.most_active_category) statCandidates.push(["Most active in", card.most_active_category]);
+  const stats = statCandidates.slice(0, 3);
+  if (stats.length) {
+    app.appendChild(el("div", { class: "kpi glance" }, ...stats.map(([label, val]) =>
+      el("div", { class: "item" }, el("div", { class: "n" }, val), el("div", { class: "l" }, label)))));
   }
 
-  // How they voted: the recorded (roll-call) voting record, by topic (unscored).
-  const vt = card_votes(card);
-  if (vt) app.appendChild(vt);
-
-  // Executive actions: orders a president signed (unscored breadth).
-  const ex = card_executive(card);
-  if (ex) app.appendChild(ex);
-
-  // Activity over time (when / how often they act).
+  // Everything else lives behind collapsed disclosures so the default view stays digestible.
+  // 1) What they've acted on (sponsored + cosponsored bills, by topic).
+  if (rec.sponsored_total || rec.cosponsored_total) {
+    app.appendChild(disclosure(
+      `What they've acted on \u2014 ${(rec.sponsored_total || 0) + (rec.cosponsored_total || 0)} bills`,
+      () => recordBody(card, who)));
+  }
+  // 2) How they voted (roll-call record).
+  if (votes.total) {
+    app.appendChild(disclosure(`How they voted \u2014 ${votes.total} roll-calls`, () => card_votes(card)));
+  }
+  // 3) Executive actions (orders signed).
+  if (exe.total) {
+    app.appendChild(disclosure(`Executive actions \u2014 ${exe.total} orders`, () => card_executive(card)));
+  }
+  // 4) Activity over time (kept inline as a compact visual overview).
   const actCard = activityCard(card.activity || {});
   if (actCard) app.appendChild(actCard);
-
-  // Record by category: compact mauve bars (the meaningful, neutral breakdown).
+  // 5) Scored record by category.
   if (card.by_category && card.by_category.length) {
-    const bars = card.by_category.map((b) => {
-      const has = b.composite !== null;
-      const w = has ? Math.max(0, Math.min(100, Number(b.composite))) : 0;
-      return el("div", { class: "bar-wrap" },
-        el("div", { class: "comp-name" }, b.category_label,
-          el("small", {}, `${b.scored_actions}/${b.total_actions} scored` +
-            (b.coverage !== null ? ` · coverage ${(b.coverage * 100).toFixed(0)}%` : ""))),
-        el("div", { class: "bar" }, has ? el("span", { style: `width:${w}%` }) : null),
-        el("div", { class: "right mono" }, has ? fmt(b.composite, 1) : "n/a"));
-    });
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Record by category"),
-      el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" }, "The same measure, split by topic. Descriptive, not a ranking."),
-      ...bars));
+    app.appendChild(disclosure("Record by category", () => scoredByCategoryBody(card)));
   }
+  renderOfficialActions(app, card);
+  const chal = await officialChallengeSection(card);
+  if (chal) app.appendChild(chal);
+}
 
-  // Their actions: a clean, clickable list. Scored first; long lists collapse.
+// Body builders for the official-page disclosures (built lazily when opened).
+function recordBody(card, who) {
+  const rec = card.record || { sponsored_total: 0, by_category: [], recent: [] };
+  const body = el("div", {},
+    el("p", { class: "muted", style: "font-size:13px;margin-top:0" },
+      `Bills ${who} sponsored or cosponsored, by topic. The record of what they acted on, not a score.`));
+  if (rec.by_category.length) {
+    const maxc = Math.max(...rec.by_category.map((c) => c.count), 1);
+    body.appendChild(el("div", { class: "group-h" }, `Sponsored (${rec.sponsored_total})`));
+    for (const c of rec.by_category) body.appendChild(el("div", { class: "bar-wrap" },
+      el("div", { class: "comp-name" }, c.category_label),
+      el("div", { class: "bar" }, el("span", { style: `width:${Math.round((c.count / maxc) * 100)}%` })),
+      el("div", { class: "right mono" }, String(c.count))));
+  }
+  if (rec.cosponsored_total) {
+    body.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, `Cosponsored (${rec.cosponsored_total})`));
+    const chips = el("div", { class: "chips" });
+    for (const c of (rec.cosponsored_by_category || [])) chips.appendChild(el("span", { class: "chip" }, c.category_label, " ", el("b", {}, String(c.count))));
+    body.appendChild(chips);
+  }
+  if (rec.recent.length) {
+    for (const b of rec.recent) body.appendChild(el("div", {
+      class: "list-item", onclick: b.source_url ? () => window.open(b.source_url, "_blank", "noopener") : null },
+      el("div", { class: "li-main" }, el("div", { class: "title" }, b.title),
+        el("div", { class: "muted mono" }, [b.category_label, b.bill_number, b.date ? b.date.slice(0, 10) : null].filter(Boolean).join(" · "))),
+      el("div", { class: "li-side" }, b.source_url ? el("a", { href: b.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+  }
+  return body;
+}
+
+function scoredByCategoryBody(card) {
+  const bars = card.by_category.map((b) => {
+    const has = b.composite !== null;
+    const w = has ? Math.max(0, Math.min(100, Number(b.composite))) : 0;
+    return el("div", { class: "bar-wrap" },
+      el("div", { class: "comp-name" }, b.category_label,
+        el("small", {}, `${b.scored_actions}/${b.total_actions} scored` +
+          (b.coverage !== null ? ` · coverage ${(b.coverage * 100).toFixed(0)}%` : ""))),
+      el("div", { class: "bar" }, has ? el("span", { style: `width:${w}%` }) : null),
+      el("div", { class: "right mono" }, has ? fmt(b.composite, 1) : "n/a"));
+  });
+  return el("div", {},
+    el("p", { class: "muted", style: "font-size:13px;margin-top:0" }, "The same measure, split by topic. Descriptive, not a ranking."),
+    ...bars);
+}
+
+function renderOfficialActions(app, card) {
   const actions = (card.actions || []).slice().sort((a, b) => {
     const as = a.composite !== null ? 1 : 0, bs = b.composite !== null ? 1 : 0;
     if (as !== bs) return bs - as;
     if (b.attribution !== a.attribution) return b.attribution - a.attribution;
     return (b.date || "").localeCompare(a.date || "");
   });
-  const listWrap = el("div", {});
-  const CAP = 8;
-  const head = actions.slice(0, CAP);
-  for (const a of head) listWrap.appendChild(officialActionRow(a));
-  if (actions.length > CAP) {
-    const rest = el("div", {});
-    for (const a of actions.slice(CAP)) rest.appendChild(officialActionRow(a));
-    rest.style.display = "none";
-    const btn = el("button", { class: "linkbtn", onclick: () => {
-      const open = rest.style.display === "none";
-      rest.style.display = open ? "block" : "none";
-      btn.textContent = open ? "Show fewer" : `Show all ${actions.length} actions`;
-    } }, `Show all ${actions.length} actions`);
-    listWrap.appendChild(rest);
-    listWrap.appendChild(btn);
-  }
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Their actions"),
-    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
-      "Actions this official is credited on. Open any for the full source-anchored scorecard."),
-    listWrap));
-
-  // Challenge / appeal, available right here on the official's record.
-  const chal = await officialChallengeSection(card);
-  if (chal) app.appendChild(chal);
+  if (!actions.length) return;
+  app.appendChild(disclosure(`All scored & attributable actions \u2014 ${actions.length}`, () => {
+    const wrap = el("div", {});
+    for (const a of actions) wrap.appendChild(officialActionRow(a));
+    return wrap;
+  }));
 }
 
 // Reusable keyboard typeahead for picking an official (used by Compare).

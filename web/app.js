@@ -403,13 +403,6 @@ function actionTypeLabel(t) {
   return ACTION_TYPE_LABELS[t] || (t.charAt(0).toUpperCase() + t.slice(1));
 }
 
-// Collapsed-by-default disclosure (native <details>): keeps detail available without forcing
-// long scrolls. Summary stays visible; the list opens on tap.
-function disclosure(summaryText, items, open = false) {
-  return el("details", { class: "disc", ...(open ? { open: "" } : {}) },
-    el("summary", {}, summaryText),
-    el("div", { class: "disc-body" }, ...items));
-}
 
 function actionStatus(u) {
   if (u.composite !== null && u.status === "scored") return "scored";
@@ -449,7 +442,7 @@ async function renderList() {
   const present = new Set(units.map((u) => u.category));
 
   const state = { cat: params.get("category") || "", status: params.get("status") || "",
-                  mode: params.get("mode") === "recent" ? "recent" : "scored" };
+                  mode: params.get("mode") === "recent" ? "recent" : "scored", started: false };
 
   const modeBar = el("div", { class: "chipbar" });
   const catBar = el("div", { class: "chipbar" });
@@ -463,6 +456,7 @@ async function renderList() {
     const c = el("button", { type: "button", class: "fchip" + (active ? " active" : "") },
       label, count !== null ? el("span", { class: "chip-n" }, String(count)) : null);
     c.addEventListener("click", () => {
+      state.started = true;
       state[key] = state[key] === val ? "" : val;
       for (const ch of bar.children) ch.classList.remove("active");
       if (state[key] === val) c.classList.add("active");
@@ -490,6 +484,7 @@ async function renderList() {
   const modeChip = (val, label) => {
     const c = el("button", { type: "button", class: "fchip" + (state.mode === val ? " active" : "") }, label);
     c.addEventListener("click", () => {
+      state.started = true;
       state.mode = val;
       for (const ch of modeBar.children) ch.classList.toggle("active", ch === c);
       statusLabel.style.display = statusBar.style.display = val === "recent" ? "none" : "";
@@ -523,6 +518,15 @@ async function renderList() {
         return;
       }
       for (const b of bills) listEl.appendChild(recentRow(b));
+      return;
+    }
+    // Don't dump the entire list by default: ask the reader to pick a result type or topic
+    // first (a category/status deep-link or any chip click reveals the list).
+    if (!state.started && !state.cat && !state.status) {
+      countEl.textContent = "";
+      listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+        el("p", { style: "margin:0 0 4px;color:var(--text);font-weight:600" }, "Pick a result type or topic to begin"),
+        el("p", { style: "margin:0;font-size:13px" }, "Use the filters above \u2014 e.g. \u201cScored\u201d to see graded actions, or a topic like Health \u2014 or switch to \u201cRecent activity\u201d.")));
       return;
     }
     let rows = units;
@@ -990,7 +994,7 @@ function card_executive(card) {
         el("div", { class: "title" }, a.title || ("Executive Order " + (a.eo_number || ""))),
         el("div", { class: "muted mono" }, [a.eo_number ? ("EO " + a.eo_number) : null, a.date ? a.date.slice(0, 10) : null].filter(Boolean).join(" \u00b7 "))),
       el("div", { class: "li-side" }, a.source_url ? el("a", { href: a.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
-    out.appendChild(disclosure(`Recent (${e.recent.length})`, items));
+    out.appendChild(disclosure(`Recent (${e.recent.length})`, () => el("div", {}, ...items)));
   }
   return out;
 }
@@ -1029,7 +1033,7 @@ function card_votes(card) {
       el("div", { class: "li-side" },
         el("span", { class: "vbadge " + r.position }, VOTE_LABEL[r.position] || r.position),
         r.source_url ? el("a", { href: r.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
-    out.appendChild(disclosure(`Recent votes (${v.recent.length})`, items));
+    out.appendChild(disclosure(`Recent votes (${v.recent.length})`, () => el("div", {}, ...items)));
   }
   return out;
 }
@@ -1158,7 +1162,7 @@ async function renderOfficialDetail(id) {
         el("div", { class: "li-main" }, el("div", { class: "title" }, b.title),
           el("div", { class: "muted mono" }, [b.category_label, b.bill_number, b.date ? b.date.slice(0, 10) : null].filter(Boolean).join(" · "))),
         el("div", { class: "li-side" }, b.source_url ? el("a", { href: b.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
-      card.appendChild(disclosure(`Recent sponsored bills (${rec.recent.length})`, items));
+      card.appendChild(disclosure(`Recent sponsored bills (${rec.recent.length})`, () => el("div", {}, ...items)));
     }
     app.appendChild(card);
   }

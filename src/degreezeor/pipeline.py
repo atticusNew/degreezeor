@@ -105,6 +105,20 @@ _FIPS_USPS: dict[str, str] = {
     "47": "TN", "48": "TX", "49": "UT", "50": "VT", "51": "VA", "53": "WA", "54": "WV",
     "55": "WI", "56": "WY",
 }
+# Full state names (CDC Socrata datasets key on the spelled-out state name).
+_FIPS_NAME: dict[str, str] = {
+    "01": "Alabama", "02": "Alaska", "04": "Arizona", "05": "Arkansas", "06": "California",
+    "08": "Colorado", "09": "Connecticut", "10": "Delaware", "11": "District of Columbia",
+    "12": "Florida", "13": "Georgia", "15": "Hawaii", "16": "Idaho", "17": "Illinois",
+    "18": "Indiana", "19": "Iowa", "20": "Kansas", "21": "Kentucky", "22": "Louisiana",
+    "23": "Maine", "24": "Maryland", "25": "Massachusetts", "26": "Michigan", "27": "Minnesota",
+    "28": "Mississippi", "29": "Missouri", "30": "Montana", "31": "Nebraska", "32": "Nevada",
+    "33": "New Hampshire", "34": "New Jersey", "35": "New Mexico", "36": "New York",
+    "37": "North Carolina", "38": "North Dakota", "39": "Ohio", "40": "Oklahoma", "41": "Oregon",
+    "42": "Pennsylvania", "44": "Rhode Island", "45": "South Carolina", "46": "South Dakota",
+    "47": "Tennessee", "48": "Texas", "49": "Utah", "50": "Vermont", "51": "Virginia",
+    "53": "Washington", "54": "West Virginia", "55": "Wisconsin", "56": "Wyoming",
+}
 
 # Descriptor per comparison-design ``metric_kind``: the official state series and which way
 # is "toward" the policy's own stated goal. ``sign`` is fixed at pre-registration.
@@ -128,8 +142,16 @@ STATE_METRIC_KINDS: dict[str, dict[str, object]] = {
                       "name": "Child Poverty Rate, Under 18 (Census SAIPE)",
                       "unit": "percent", "direction_good": "down", "sign": -1,
                       "domain": "Income and Poverty"},
+    "overdose": {"code": "state_drug_overdose_rate",
+                 "name": "Drug Overdose Death Rate, Age-Adjusted (CDC)",
+                 "unit": "per 100,000", "direction_good": "down", "sign": -1, "domain": "Health"},
+    "naep_reading4": {"code": "state_naep_grade4_reading",
+                      "name": "NAEP Grade 4 Reading, Mean Scale Score",
+                      "unit": "scale score", "direction_good": "up", "sign": 1,
+                      "domain": "Education"},
 }
-_ANNUAL_KINDS = {"poverty", "income", "uninsured", "energy", "child_poverty"}
+_ANNUAL_KINDS = {"poverty", "income", "uninsured", "energy", "child_poverty",
+                 "overdose", "naep_reading4"}
 
 
 def state_series_id(fips: str, metric_kind: str = "employment") -> str:
@@ -147,11 +169,17 @@ def state_series_id(fips: str, metric_kind: str = "employment") -> str:
         return f"CENSUS|timeseries/healthins/sahie|PCTUI_PT|state:{fips}"
     if metric_kind == "energy":
         return f"EIA|co2-emissions/co2-emissions-aggregates|stateId={_FIPS_USPS.get(fips, fips)};sectorId=TT;fuelId=TO"
+    if metric_kind == "overdose":
+        return (f"CDC|44rk-q6r2|year|ageadjrate|state={_FIPS_NAME.get(fips, fips)};"
+                f"sex=Both Sexes;age=All Ages;race=All Races-All Origins")
+    if metric_kind == "naep_reading4":
+        return f"NAEP|reading|4|RRPCM|{_FIPS_USPS.get(fips, fips)}"
     return state_employment_series_id(fips)
 
 
 def _series_is_annual(native_series_id: str | None) -> bool:
-    return bool(native_series_id) and native_series_id.startswith(("CENSUS|", "EIA|", "CDC|"))
+    return bool(native_series_id) and native_series_id.startswith(
+        ("CENSUS|", "EIA|", "CDC|", "NAEP|"))
 
 
 def _pre_years_for(native_series_id: str | None) -> int:
@@ -173,6 +201,16 @@ def _fetch_state_series_points(native_series_id: str, start_year: int, end_year:
     if native_series_id.startswith("EIA|"):
         f = eia_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
         pts = [(f"{y}-01-01", v) for y, v in eia_adapter.parse_series(f.content, native_series_id)]
+        return f, pts
+    if native_series_id.startswith("CDC|"):
+        from degreezeor.ingestion.adapters.cdc import cdc_adapter
+        f = cdc_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+        pts = [(f"{y}-01-01", v) for y, v in cdc_adapter.parse_series(f.content, native_series_id)]
+        return f, pts
+    if native_series_id.startswith("NAEP|"):
+        from degreezeor.ingestion.adapters.naep import naep_adapter
+        f = naep_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+        pts = [(f"{y}-01-01", v) for y, v in naep_adapter.parse_series(f.content, native_series_id)]
         return f, pts
     f = bls_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
     series = json.loads(f.content)["Results"]["series"][0]
@@ -682,6 +720,43 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         enacted_year=2020, enacted_month=1, lag_window_months=24,
         signer_name="Brad Little", signer_party="R",
         metric_kind="uninsured",
+    ),
+    # --- Health: drug-overdose mortality (metric_kind="overdose"), CDC age-adjusted rate,
+    # where a fall is toward the policy's own stated goal of curbing overdose deaths. ---
+    "FL-2011-PILLMILL": StatePolicySpec(
+        key="FL-2011-PILLMILL",
+        title="Florida 2011 prescription-drug ('pill mill') crackdown (HB 7095)",
+        state_fips="12",
+        state_name="Florida",
+        # Southeastern states without a comparable 2011 pill-mill crackdown.
+        donor_fips=["13", "01", "45", "37", "47"],  # GA AL SC NC TN
+        source_url="https://www.flsenate.gov/Session/Bill/2011/7095",
+        objective_text=(
+            "Crack down on prescription-drug 'pill mills' and over-prescription of controlled "
+            "substances to reduce prescription-drug overdose deaths in Florida (HB 7095)."
+        ),
+        enacted_year=2011, enacted_month=7, lag_window_months=48,
+        signer_name="Rick Scott", signer_party="R",
+        metric_kind="overdose",
+    ),
+    # --- Education: NAEP grade-4 reading (metric_kind="naep_reading4"), where a rise in the
+    # mean scale score is toward the reform's own stated literacy goal. ---
+    "MS-2013-LBPA": StatePolicySpec(
+        key="MS-2013-LBPA",
+        title="Mississippi 2013 Literacy-Based Promotion Act (SB 2347)",
+        state_fips="28",
+        state_name="Mississippi",
+        # Southeastern states without a comparable 2013 early-literacy/retention reform.
+        donor_fips=["01", "22", "05", "47", "45"],  # AL LA AR TN SC
+        source_url="https://billstatus.ls.state.ms.us/2013/pdf/history/SB/SB2347.xml",
+        objective_text=(
+            "Improve early-grade reading achievement through screening, intervention, and a "
+            "third-grade reading gate (Literacy-Based Promotion Act), measured by fourth-grade "
+            "reading proficiency."
+        ),
+        enacted_year=2013, enacted_month=4, lag_window_months=72,
+        signer_name="Phil Bryant", signer_party="R",
+        metric_kind="naep_reading4",
     ),
     # --- Additional minimum-wage laws (metric_kind="wage"): scored on the BLS state average
     # hourly earnings series, where a rise is toward the law's stated wage-raising goal. ---
@@ -2879,6 +2954,12 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
         src_id = ensure_census_source(session).id
     elif nsid.startswith("EIA|"):
         src_id = ensure_eia_source(session).id
+    elif nsid.startswith("CDC|"):
+        from degreezeor.ingestion.loader import ensure_cdc_source
+        src_id = ensure_cdc_source(session).id
+    elif nsid.startswith("NAEP|"):
+        from degreezeor.ingestion.loader import ensure_naep_source
+        src_id = ensure_naep_source(session).id
     else:
         src_id = session.execute(select(DataSource.id).where(DataSource.name == "BLS")).scalar_one()
     metric = session.execute(

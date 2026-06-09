@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
@@ -822,6 +822,64 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         enacted_year=2015, enacted_month=6, lag_window_months=48,
         signer_name="Edmund G. Brown Jr.", signer_party="D",
         metric_kind="child_poverty",
+    ),
+    "NE-2020-MEDICAID": StatePolicySpec(
+        key="NE-2020-MEDICAID",
+        title="Nebraska Medicaid expansion (Initiative 427)",
+        state_fips="31",
+        state_name="Nebraska",
+        donor_fips=["20", "56", "46", "48", "47"],  # KS WY SD TX TN
+        source_url="https://sos.nebraska.gov/sites/sos.nebraska.gov/files/doc/elections/2018/Initiative_427.pdf",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act (voter Initiative 427) to "
+            "reduce the number of uninsured Nebraskans (coverage effective Oct 1, 2020)."
+        ),
+        enacted_year=2020, enacted_month=10, lag_window_months=24,
+        metric_kind="uninsured", sponsor_name="Nebraska Initiative 427",
+    ),
+    "MO-2021-MEDICAID": StatePolicySpec(
+        key="MO-2021-MEDICAID",
+        title="Missouri Medicaid expansion (Amendment 2)",
+        state_fips="29",
+        state_name="Missouri",
+        donor_fips=["20", "47", "13", "28", "48"],  # KS TN GA MS TX
+        source_url="https://www.sos.mo.gov/CMSImages/Elections/Petitions/2020-050.pdf",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act (voter Amendment 2) to "
+            "reduce the number of uninsured Missourians (coverage effective July 1, 2021)."
+        ),
+        enacted_year=2021, enacted_month=7, lag_window_months=24,
+        metric_kind="uninsured", sponsor_name="Missouri Amendment 2",
+    ),
+    "NY-2016-MINWAGE": StatePolicySpec(
+        key="NY-2016-MINWAGE",
+        title="New York minimum wage increase toward $15 (S6406C, FY2017 budget)",
+        state_fips="36",
+        state_name="New York",
+        donor_fips=["42", "47", "13", "45", "48"],  # PA TN GA SC TX
+        source_url="https://www.nysenate.gov/legislation/bills/2015/s6406",
+        objective_text=(
+            "Raise New York's minimum wage in steps toward $15 to increase pay for the state's "
+            "lowest-wage workers (first increase Dec 31, 2016)."
+        ),
+        enacted_year=2016, enacted_month=12, lag_window_months=36,
+        signer_name="Andrew M. Cuomo", signer_party="D",
+        metric_kind="wage",
+    ),
+    "KY-2012-HB1": StatePolicySpec(
+        key="KY-2012-HB1",
+        title="Kentucky 2012 prescription-drug ('pill mill') crackdown (HB 1)",
+        state_fips="21",
+        state_name="Kentucky",
+        donor_fips=["47", "51", "13", "01", "29"],  # TN VA GA AL MO
+        source_url="https://apps.legislature.ky.gov/record/12rs/hb1.html",
+        objective_text=(
+            "Crack down on prescription-drug 'pill mills' and over-prescription of controlled "
+            "substances to reduce prescription-drug overdose deaths in Kentucky (HB 1)."
+        ),
+        enacted_year=2012, enacted_month=7, lag_window_months=48,
+        signer_name="Steve Beshear", signer_party="D",
+        metric_kind="overdose",
     ),
 }
 
@@ -1948,6 +2006,31 @@ def ingest_executive_actions(
     return inserted
 
 
+def mark_officials_in_office(session: Session) -> int:
+    """Flag officials who currently hold office: the current-legislators roster plus the
+    sitting president. Display metadata only; never read by scoring. Returns the count flagged."""
+    from degreezeor.core.reference import PRESIDENTS
+    from degreezeor.ingestion.adapters.congress_legislators import congress_legislators_adapter
+
+    try:
+        current = congress_legislators_adapter.current_bioguide_ids()
+    except Exception as exc:  # noqa: BLE001 - never fatal; leave flags unchanged on failure
+        log.warning("could not load current legislators roster: %s", exc)
+        return 0
+    for _name, bio, _party, _start, end in PRESIDENTS:
+        if end is None:
+            current.add(bio)
+    session.execute(sa_update(Official).values(in_office=False))
+    if current:
+        session.execute(
+            sa_update(Official).where(Official.bioguide_id.in_(current)).values(in_office=True)
+        )
+    session.flush()
+    return session.execute(
+        select(func.count()).select_from(Official).where(Official.in_office.is_(True))
+    ).scalar() or 0
+
+
 def purge_empty_officials(session: Session) -> int:
     """Remove official records that carry NO record anywhere — no scored attribution, no
     sponsored/cosponsored bills, no recorded votes, no signed laws/EOs. These are data
@@ -2795,7 +2878,8 @@ def refresh_all(
         return enrich_official_names(session)
     _stage("names_enriched", _enrich)
 
-    # Keep the directory clean: drop official records that carry no record anywhere (artifacts).
+    # Flag who currently holds office (display only), then drop empty official artifacts.
+    _stage("officials_in_office", lambda: mark_officials_in_office(session))
     _stage("officials_purged", lambda: purge_empty_officials(session))
 
     # Self-validate: the nightly pass must leave the append-only audit chain intact. Guarded so a

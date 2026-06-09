@@ -65,6 +65,9 @@ class Official(Base):
     fec_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
     full_name: Mapped[str] = mapped_column(String(200))
     dob: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Currently holds office (set during refresh from the current-legislators roster +
+    # the sitting president). Descriptive metadata only; never read by scoring.
+    in_office: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class Office(Base):
@@ -161,6 +164,19 @@ class ExecutiveOrder(Base):
     eo_number: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)
     signing_official_id: Mapped[int | None] = mapped_column(ForeignKey("officials.id"))
     fr_doc_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class AnalyticsEvent(Base):
+    """First-party, privacy-light usage event: an anonymous client-generated visitor id
+    (random UUID in localStorage — no PII, no IP) + the page path + a timestamp. Powers
+    DAU/WAU/MAU/retention without any third-party tracker."""
+
+    __tablename__ = "analytics_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    visitor_id: Mapped[str] = mapped_column(String(40), index=True)
+    path: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class BillCosponsor(Base):

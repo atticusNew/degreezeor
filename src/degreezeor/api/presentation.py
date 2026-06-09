@@ -659,7 +659,7 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
     return {
         "official": {"id": official.id, "name": official.full_name,
                      "bioguide_id": official.bioguide_id, "party": party,
-                     "position": position},
+                     "position": position, "in_office": bool(official.in_office)},
         "rollup": {
             "total_actions": r.total_actions,
             "scored_actions": r.scored_actions,
@@ -845,8 +845,10 @@ def officials_index(session: Session) -> list[dict[str, Any]]:
         bill_cats[oid].add(category_for(domain, "bill"))
 
     all_ids = set(by_off.keys()) | set(sponsored.keys()) | set(cosponsored.keys())
-    name_map = {o.id: o.full_name for o in session.execute(
-        select(Official).where(Official.id.in_(all_ids))).scalars()}
+    _officials = list(session.execute(
+        select(Official).where(Official.id.in_(all_ids))).scalars())
+    name_map = {o.id: o.full_name for o in _officials}
+    in_office_map = {o.id: bool(o.in_office) for o in _officials}
     position_map = _positions_for(session, all_ids)
 
     out = []
@@ -870,6 +872,7 @@ def officials_index(session: Session) -> list[dict[str, Any]]:
             "id": oid,
             "name": name_map.get(oid),
             "position": position_map.get(oid),
+            "in_office": in_office_map.get(oid, False),
             "total_actions": len(seen),
             "scored_actions": scored,
             "sponsored": sponsored.get(oid, 0),
@@ -912,9 +915,16 @@ def build_recent_activity(
     return out
 
 
-def build_recent_scored(session: Session, *, limit: int = 12) -> list[dict[str, Any]]:
-    """Newest published scores first (the 'what changed' feed): the most recently scored
-    evaluation units, so returning voters can see new graded actions at a glance."""
+def build_recent_scored(
+    session: Session, *, limit: int = 12, since_year: int | None = None,
+) -> list[dict[str, Any]]:
+    """The 'what changed' feed: most recently scored evaluation units, restricted to actions
+    from ``since_year`` onward (defaults to the current calendar year). This keeps the launch
+    view from filling up with the historical backfill — it shows only current-year actions and
+    grows naturally as new ones are scored."""
+    from datetime import date as _date
+
+    cutoff = since_year if since_year is not None else _date.today().year
     rows = session.execute(
         select(EUScore.composite, ScoreRun.eu_id, ScoreRun.started_at)
         .join(ScoreRun, ScoreRun.id == EUScore.score_run_id)
@@ -930,6 +940,9 @@ def build_recent_scored(session: Session, *, limit: int = 12) -> list[dict[str, 
         eu = session.get(EvaluationUnit, eu_id)
         action = session.get(Action, eu.action_id) if eu else None
         if action is None:
+            continue
+        # Current-year actions only, so the feed reflects new activity, not the backfill.
+        if action.action_date is None or action.action_date.year < cutoff:
             continue
         metric = session.get(Metric, eu.metric_id) if eu and eu.metric_id else None
         cat = category_for(action.domain, action.type, metric.domain if metric else None)
@@ -1164,6 +1177,7 @@ def list_units(session: Session) -> list[dict[str, Any]]:
             "status": eu.status,
             "category": cat,
             "category_label": category_label(cat),
+            "date": action.action_date.isoformat() if action.action_date else None,
             "composite": _num(score.composite) if score else None,
             "confidence": _num(score.confidence) if score else None,
         })

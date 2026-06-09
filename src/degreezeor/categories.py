@@ -93,6 +93,59 @@ def _lookup(domain: str | None) -> str | None:
     return DOMAIN_TO_CATEGORY.get(domain.strip().lower())
 
 
+# Keyword -> Congress.gov-style policyArea for executive orders, which carry no policy area
+# of their own. Ordered most-specific first; the first list with a hit wins. Deterministic
+# and auditable (a fixed table), exactly like DOMAIN_TO_CATEGORY. Presentation only.
+_EO_KEYWORD_DOMAINS: list[tuple[str, tuple[str, ...]]] = [
+    ("immigration", ("immigration", "immigrant", "border", "asylum", "alien", "visa",
+                     "deportation", "naturalization", "refugee", "migrant")),
+    ("crime and law enforcement", ("crime", "criminal", "law enforcement", "police", "cartel",
+                                   "trafficking", "firearm", "gun ", "gang", "drug")),
+    ("armed forces and national security", ("military", "defense", "armed forces",
+                                            "national security", "veteran", "troop", "warfight",
+                                            "missile", "nuclear weapon", "homeland")),
+    ("immigration", ("citizenship",)),
+    ("health", ("health", "medicare", "medicaid", "hospital", "disease", "pandemic", "vaccine",
+                "opioid", "prescription drug", "mental health")),
+    ("education", ("education", "school", "student", "university", "college", "teacher")),
+    ("energy", ("energy", "oil", "natural gas", "pipeline", "drilling", "electric", "power grid",
+                "petroleum", "coal", "lng")),
+    ("environmental protection", ("environment", "climate", "emission", "pollution", "clean water",
+                                  "clean air", "conservation", "wildlife", "endangered")),
+    ("housing and community development", ("housing", "mortgage", "homeless", "rent ", "eviction")),
+    ("transportation and public works", ("transportation", "highway", "aviation", "airport",
+                                         "railroad", "infrastructure", "bridge", "transit")),
+    ("agriculture and food", ("agriculture", "farm", "food ", "crop", "rural")),
+    ("foreign trade and international finance", ("tariff", "import duty", "customs", "trade deficit")),
+    ("international affairs", ("foreign", "sanction", "diplomacy", "treaty", "embassy", "ukraine",
+                              "russia", "china", "israel", "gaza", "iran", "venezuela", "nato",
+                              "alliance", "overseas")),
+    ("taxation", ("tax ", "taxation", "taxes", "tariff")),
+    ("civil rights and liberties, minority issues", ("civil right", "discrimination", "voting right",
+                                                     "diversity", "equity", "gender", "disab")),
+    ("labor and employment", ("labor", "worker", "wage", "employment", "workforce", "union",
+                              "apprentice", "job ", "jobs")),
+    ("government operations and politics", ("federal agency", "federal workforce", "civil service",
+                                            "procurement", "regulation", "regulatory", "deregulat",
+                                            "executive branch", "schedule f", "government efficiency",
+                                            "accountability")),
+    ("economics and public finance", ("econom", "inflation", "financial", "bank", "commerce",
+                                      "business", "small business", "crypto", "digital asset")),
+]
+
+
+def classify_executive_domain(text: str | None) -> str | None:
+    """Best-effort topic for an executive order from its title/abstract (it has no policy area).
+    Returns a policyArea string understood by ``category_for``; None if nothing matches."""
+    if not text:
+        return None
+    t = f" {text.lower()} "
+    for domain, keywords in _EO_KEYWORD_DOMAINS:
+        if any(kw in t for kw in keywords):
+            return domain
+    return None
+
+
 def category_for(
     domain: str | None,
     action_type: str | None = None,

@@ -17,6 +17,7 @@ from dateutil import parser as dtparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from degreezeor.categories import classify_executive_domain
 from degreezeor.core.hashing import sha256_hex
 from degreezeor.core.models import (
     Action,
@@ -202,6 +203,9 @@ def load_executive_order(session: Session, document_number: str) -> Action:
     signer = president_on(session, signing_date) if signing_date else None
     title = doc.get("title", "")
     abstract = _strip_html(doc.get("abstract") or "")
+    # EOs carry no policy area; classify a topic from the title+abstract so the record groups
+    # by category (deterministic keyword table). Falls back to a generic governance domain.
+    eo_domain = classify_executive_domain(f"{title}. {abstract}") or "Government Operations and Politics"
 
     action = Action(
         type="eo",
@@ -212,7 +216,7 @@ def load_executive_order(session: Session, document_number: str) -> Action:
         source_url=fetch.source_url,
         native_identifier=native_id,
         content_hash=fetch.content_hash,
-        domain="Economics and Public Finance",
+        domain=eo_domain,
         implemented=True,
     )
     session.add(action)

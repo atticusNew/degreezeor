@@ -124,8 +124,12 @@ STATE_METRIC_KINDS: dict[str, dict[str, object]] = {
     "energy": {"code": "state_co2_emissions", "name": "Total Energy CO2 Emissions (EIA)",
                "unit": "million metric tons CO2", "direction_good": "down", "sign": -1,
                "domain": "Energy and Environment"},
+    "child_poverty": {"code": "state_child_poverty_rate",
+                      "name": "Child Poverty Rate, Under 18 (Census SAIPE)",
+                      "unit": "percent", "direction_good": "down", "sign": -1,
+                      "domain": "Income and Poverty"},
 }
-_ANNUAL_KINDS = {"poverty", "income", "uninsured", "energy"}
+_ANNUAL_KINDS = {"poverty", "income", "uninsured", "energy", "child_poverty"}
 
 
 def state_series_id(fips: str, metric_kind: str = "employment") -> str:
@@ -137,6 +141,8 @@ def state_series_id(fips: str, metric_kind: str = "employment") -> str:
         return f"CENSUS|timeseries/poverty/saipe|SAEPOVRTALL_PT|state:{fips}"
     if metric_kind == "income":
         return f"CENSUS|timeseries/poverty/saipe|SAEMHI_PT|state:{fips}"
+    if metric_kind == "child_poverty":
+        return f"CENSUS|timeseries/poverty/saipe|SAEPOVRTUNDER18_PT|state:{fips}"
     if metric_kind == "uninsured":
         return f"CENSUS|timeseries/healthins/sahie|PCTUI_PT|state:{fips}"
     if metric_kind == "energy":
@@ -615,6 +621,132 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         enacted_year=2014, enacted_month=1, lag_window_months=36,
         signer_name="Edmund G. Brown Jr.", signer_party="D",
         metric_kind="uninsured",
+    ),
+    "LA-2016-MEDICAID": StatePolicySpec(
+        key="LA-2016-MEDICAID",
+        title="Louisiana Medicaid expansion (Executive Order JBE 16-01)",
+        state_fips="22",
+        state_name="Louisiana",
+        # Southern states that had not expanded Medicaid (clean non-treated controls).
+        donor_fips=["48", "28", "01", "45", "47"],  # TX MS AL SC TN
+        source_url="https://gov.louisiana.gov/assets/ExecutiveOrders/JBE-16-01.pdf",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act to reduce the number of "
+            "uninsured working Louisianans (effective July 1, 2016)."
+        ),
+        enacted_year=2016, enacted_month=7, lag_window_months=36,
+        signer_name="John Bel Edwards", signer_party="D",
+        metric_kind="uninsured",
+    ),
+    "MT-2016-MEDICAID": StatePolicySpec(
+        key="MT-2016-MEDICAID",
+        title="Montana Medicaid expansion (HELP Act, SB 405)",
+        state_fips="30",
+        state_name="Montana",
+        donor_fips=["56", "46", "20", "48", "28"],  # WY SD KS TX MS
+        source_url="https://leg.mt.gov/bills/2015/billpdf/SB0405.pdf",
+        objective_text=(
+            "Expand Medicaid coverage to low-income adults to reduce the number of uninsured "
+            "Montanans (Montana HELP Act; coverage effective Jan 1, 2016)."
+        ),
+        enacted_year=2016, enacted_month=1, lag_window_months=36,
+        signer_name="Steve Bullock", signer_party="D",
+        metric_kind="uninsured",
+    ),
+    "VA-2019-MEDICAID": StatePolicySpec(
+        key="VA-2019-MEDICAID",
+        title="Virginia Medicaid expansion (2018 budget, HB 5002)",
+        state_fips="51",
+        state_name="Virginia",
+        donor_fips=["37", "47", "13", "45", "48"],  # NC TN GA SC TX
+        source_url="https://lis.virginia.gov/cgi-bin/legp604.exe?181+sum+HB5002",
+        objective_text=(
+            "Expand Medicaid eligibility to low-income adults to reduce the number of uninsured "
+            "Virginians (coverage effective Jan 1, 2019)."
+        ),
+        enacted_year=2019, enacted_month=1, lag_window_months=24,
+        signer_name="Ralph Northam", signer_party="D",
+        metric_kind="uninsured",
+    ),
+    "ID-2020-MEDICAID": StatePolicySpec(
+        key="ID-2020-MEDICAID",
+        title="Idaho Medicaid expansion (Proposition 2)",
+        state_fips="16",
+        state_name="Idaho",
+        donor_fips=["56", "46", "20", "48", "47"],  # WY SD KS TX TN
+        source_url="https://sos.idaho.gov/elect/inits/2018/prop2.pdf",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act (voter Proposition 2) to "
+            "reduce the number of uninsured Idahoans (coverage effective Jan 1, 2020)."
+        ),
+        enacted_year=2020, enacted_month=1, lag_window_months=24,
+        signer_name="Brad Little", signer_party="R",
+        metric_kind="uninsured",
+    ),
+    # --- Additional minimum-wage laws (metric_kind="wage"): scored on the BLS state average
+    # hourly earnings series, where a rise is toward the law's stated wage-raising goal. ---
+    "CT-2019-HB5004": StatePolicySpec(
+        key="CT-2019-HB5004",
+        title="Connecticut minimum wage increase to $15 (Public Act 19-4)",
+        state_fips="09",
+        state_name="Connecticut",
+        # Peer states that kept the federal minimum in the window.
+        donor_fips=["42", "47", "13", "45", "48"],  # PA TN GA SC TX
+        source_url="https://www.cga.ct.gov/2019/act/pa/pdf/2019PA-00004-R00HB-05004-PA.pdf",
+        objective_text=(
+            "Raise Connecticut's minimum wage in steps to $15 by 2023 to increase pay for the "
+            "state's lowest-wage workers (Public Act 19-4; first increase Oct 1, 2019)."
+        ),
+        enacted_year=2019, enacted_month=10, lag_window_months=36,
+        signer_name="Ned Lamont", signer_party="D",
+        metric_kind="wage",
+    ),
+    "VA-2020-HB395": StatePolicySpec(
+        key="VA-2020-HB395",
+        title="Virginia minimum wage increase (HB 395)",
+        state_fips="51",
+        state_name="Virginia",
+        donor_fips=["37", "47", "13", "45", "48"],  # NC TN GA SC TX
+        source_url="https://lis.virginia.gov/cgi-bin/legp604.exe?201+sum+HB395",
+        objective_text=(
+            "Raise Virginia's minimum wage in steps toward $15 to increase pay for the state's "
+            "lowest-wage workers (HB 395; first increase May 1, 2021)."
+        ),
+        enacted_year=2021, enacted_month=5, lag_window_months=24,
+        signer_name="Ralph Northam", signer_party="D",
+        metric_kind="wage",
+    ),
+    "DE-2021-SB15": StatePolicySpec(
+        key="DE-2021-SB15",
+        title="Delaware minimum wage increase to $15 (SB 15)",
+        state_fips="10",
+        state_name="Delaware",
+        donor_fips=["42", "47", "13", "45", "37"],  # PA TN GA SC NC
+        source_url="https://legis.delaware.gov/BillDetail?legislationId=68328",
+        objective_text=(
+            "Raise Delaware's minimum wage in steps to $15 by 2025 to increase pay for the state's "
+            "lowest-wage workers (SB 15; first increase Jan 1, 2022)."
+        ),
+        enacted_year=2022, enacted_month=1, lag_window_months=24,
+        signer_name="John Carney", signer_party="D",
+        metric_kind="wage",
+    ),
+    # --- Child poverty (metric_kind="child_poverty"): an anti-poverty credit measured against
+    # the Census SAIPE under-18 poverty rate, where a fall is toward its stated goal. ---
+    "CA-2015-SB80-CHILD": StatePolicySpec(
+        key="CA-2015-SB80-CHILD",
+        title="California EITC (CalEITC) \u2014 child-poverty outcome (SB 80)",
+        state_fips="06",
+        state_name="California",
+        donor_fips=["48", "12", "13", "37", "42"],  # TX FL GA NC PA
+        source_url="https://leginfo.legislature.ca.gov/faces/billNavClient.xhtml?bill_id=201520160SB80",
+        objective_text=(
+            "Create a refundable California Earned Income Tax Credit whose stated purpose is to "
+            "reduce poverty among California's poorest working families, including children."
+        ),
+        enacted_year=2015, enacted_month=6, lag_window_months=48,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="child_poverty",
     ),
 }
 

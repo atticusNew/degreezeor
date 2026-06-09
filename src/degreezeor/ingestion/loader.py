@@ -501,6 +501,10 @@ def load_observations(
         from degreezeor.ingestion.adapters.eia import eia_adapter
         return _load_annual_observations(session, metric, start_year, end_year,
                                          eia_adapter, ensure_eia_source)
+    if nsid.startswith("NAEP|"):
+        from degreezeor.ingestion.adapters.naep import naep_adapter
+        return _load_annual_observations(session, metric, start_year, end_year,
+                                         naep_adapter, ensure_naep_source)
     return _load_bls_observations(session, metric, start_year, end_year)
 
 
@@ -563,4 +567,11 @@ def ensure_eia_source(session: Session) -> DataSource:
     from degreezeor.ingestion.adapters.eia import eia_adapter
     return ensure_source(
         session, name=eia_adapter.name, tier=eia_adapter.tier, base_url=eia_adapter.base_url
+    )
+
+
+def ensure_naep_source(session: Session) -> DataSource:
+    from degreezeor.ingestion.adapters.naep import naep_adapter
+    return ensure_source(
+        session, name=naep_adapter.name, tier=naep_adapter.tier, base_url=naep_adapter.base_url
     )

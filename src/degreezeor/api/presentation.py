@@ -659,11 +659,14 @@ def build_official(session: Session, official_id: int) -> dict[str, Any] | None:
         select(Party.abbrev).join(OfficeTerm, OfficeTerm.party_id == Party.id)
         .where(OfficeTerm.official_id == official_id).order_by(OfficeTerm.id.desc()).limit(1)
     ).scalar_one_or_none()
+    from degreezeor.core.reference import current_executive_bioguides
     position = _positions_for(session, {official_id}).get(official_id)
     return {
         "official": {"id": official.id, "name": official.full_name,
                      "bioguide_id": official.bioguide_id, "party": party,
-                     "position": position, "in_office": bool(official.in_office)},
+                     "position": position,
+                     "in_office": bool(official.in_office)
+                     or (official.bioguide_id in current_executive_bioguides())},
         "rollup": {
             "total_actions": r.total_actions,
             "scored_actions": r.scored_actions,
@@ -849,10 +852,14 @@ def officials_index(session: Session) -> list[dict[str, Any]]:
         bill_cats[oid].add(category_for(domain, "bill"))
 
     all_ids = set(by_off.keys()) | set(sponsored.keys()) | set(cosponsored.keys())
+    from degreezeor.core.reference import current_executive_bioguides
+    _exec_bios = current_executive_bioguides()
     _officials = list(session.execute(
         select(Official).where(Official.id.in_(all_ids))).scalars())
     name_map = {o.id: o.full_name for o in _officials}
-    in_office_map = {o.id: bool(o.in_office) for o in _officials}
+    # in-office = the refresh-set flag OR a sitting executive (so the President/VP badge shows
+    # immediately, without waiting for a roster refresh to run).
+    in_office_map = {o.id: bool(o.in_office) or (o.bioguide_id in _exec_bios) for o in _officials}
     position_map = _positions_for(session, all_ids)
 
     out = []

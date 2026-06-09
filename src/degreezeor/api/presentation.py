@@ -50,6 +50,34 @@ def _num(x: Any) -> float | None:
     return float(x) if x is not None else None
 
 
+_BILL_TYPE_SEG = {
+    "HR": "house-bill", "S": "senate-bill",
+    "HRES": "house-resolution", "SRES": "senate-resolution",
+    "HJRES": "house-joint-resolution", "SJRES": "senate-joint-resolution",
+    "HCONRES": "house-concurrent-resolution", "SCONRES": "senate-concurrent-resolution",
+}
+
+
+def _ordinal(n: int) -> str:
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def public_bill_url(congress: int | None, bill_number: str | None) -> str | None:
+    """Public, key-free congress.gov URL for a bill (the stored source_url is the API URL,
+    which requires a key and 401s in a browser). E.g. (118, 'HR3076') ->
+    https://www.congress.gov/bill/118th-congress/house-bill/3076."""
+    if not congress or not bill_number:
+        return None
+    bn = bill_number.upper()
+    prefix = "".join(c for c in bn if c.isalpha())
+    num = "".join(c for c in bn if c.isdigit())
+    seg = _BILL_TYPE_SEG.get(prefix)
+    if not seg or not num:
+        return None
+    return f"https://www.congress.gov/bill/{_ordinal(congress)}-congress/{seg}/{num}"
+
+
 def _latest_run(session: Session, eu_id: int) -> ScoreRun | None:
     return session.execute(
         select(ScoreRun).where(ScoreRun.eu_id == eu_id).order_by(ScoreRun.id.desc()).limit(1)
@@ -386,14 +414,15 @@ def official_activity(session: Session, official_id: int) -> dict[str, Any]:
     """The record of what an official ACTED ON: bills they sponsored, grouped by topic
     category (unscored). Distinct from the scored composite; this is breadth, not effect."""
     rows = session.execute(
-        select(Action.title, Action.domain, Action.action_date, Action.source_url, Bill.bill_number)
+        select(Action.title, Action.domain, Action.action_date, Action.source_url,
+               Bill.bill_number, Bill.congress)
         .join(Bill, Bill.action_id == Action.id)
         .where(Bill.sponsor_official_id == official_id, Action.type == "bill")
     ).all()
     by_cat: dict[str, int] = defaultdict(int)
     by_year: dict[int, int] = defaultdict(int)
     items = []
-    for title, domain, adate, url, bn in rows:
+    for title, domain, adate, url, bn, congress in rows:
         cat = category_for(domain, "bill")
         by_cat[cat] += 1
         if adate:
@@ -401,7 +430,7 @@ def official_activity(session: Session, official_id: int) -> dict[str, Any]:
         items.append({
             "title": title, "date": adate.isoformat() if adate else None,
             "category": cat, "category_label": category_label(cat),
-            "bill_number": bn, "source_url": url,
+            "bill_number": bn, "source_url": public_bill_url(congress, bn) or url,
         })
     items.sort(key=lambda x: x["date"] or "", reverse=True)
     cats = sorted(
@@ -435,22 +464,31 @@ def official_executive_actions(session: Session, official_id: int) -> dict[str, 
     analogue of sponsored bills, so a president's full term is visible even where individual
     EOs aren't isolatable to a single measured outcome."""
     rows = session.execute(
-        select(Action.title, Action.action_date, Action.source_url, ExecutiveOrder.eo_number)
+        select(Action.title, Action.domain, Action.action_date, Action.source_url,
+               ExecutiveOrder.eo_number)
         .join(ExecutiveOrder, ExecutiveOrder.action_id == Action.id)
         .where(ExecutiveOrder.signing_official_id == official_id, Action.type == "eo")
         .order_by(Action.action_date.desc().nullslast())
     ).all()
     by_year: dict[int, int] = defaultdict(int)
+    by_cat: dict[str, int] = defaultdict(int)
     recent = []
-    for title, adate, url, eo_number in rows:
+    for title, domain, adate, url, eo_number in rows:
+        cat = category_for(domain, "eo")
+        by_cat[cat] += 1
         if adate:
             by_year[adate.year] += 1
         if len(recent) < 12:
             recent.append({
                 "title": title, "date": adate.isoformat() if adate else None,
+                "category": cat, "category_label": category_label(cat),
                 "eo_number": eo_number, "source_url": url,
             })
-    return {"total": len(rows), "recent": recent, "by_year": dict(by_year)}
+    cats = sorted(
+        ({"category": k, "category_label": category_label(k), "count": v} for k, v in by_cat.items()),
+        key=lambda c: (-c["count"], category_sort_key(c["category"])),
+    )
+    return {"total": len(rows), "recent": recent, "by_year": dict(by_year), "by_category": cats}
 
 
 def official_votes(session: Session, official_id: int) -> dict[str, Any]:
@@ -851,7 +889,7 @@ def build_recent_activity(
     These are unscored 'recorded' actions, so they live here rather than in the scored list."""
     rows = session.execute(
         select(Action.title, Action.domain, Action.action_date, Action.source_url,
-               Bill.bill_number, Bill.sponsor_official_id, Official.full_name)
+               Bill.bill_number, Bill.congress, Bill.sponsor_official_id, Official.full_name)
         .join(Bill, Bill.action_id == Action.id)
         .join(Official, Official.id == Bill.sponsor_official_id, isouter=True)
         .where(Action.type == "bill")
@@ -859,14 +897,14 @@ def build_recent_activity(
         .limit(600)
     ).all()
     out = []
-    for title, domain, adate, url, bn, oid, oname in rows:
+    for title, domain, adate, url, bn, congress, oid, oname in rows:
         cat = category_for(domain, "bill")
         if category and cat != category:
             continue
         out.append({
             "title": title, "date": adate.isoformat() if adate else None,
             "category": cat, "category_label": category_label(cat),
-            "bill_number": bn, "source_url": url,
+            "bill_number": bn, "source_url": public_bill_url(congress, bn) or url,
             "official_id": oid, "official_name": oname,
         })
         if len(out) >= limit:

@@ -250,6 +250,15 @@ def recent_activity(limit: int = 50, category: str | None = None) -> list[dict]:
         return presentation.build_recent_activity(s, limit=min(limit, 200), category=category)
 
 
+@app.get("/api/recent-scored")
+def recent_scored(limit: int = 12) -> list[dict]:
+    """The 'what changed' feed: most recently scored actions, newest first."""
+    def _build():
+        with session_scope() as s:
+            return presentation.build_recent_scored(s, limit=min(limit, 50))
+    return _cached(f"recent-scored-{min(limit, 50)}", _build)
+
+
 @app.get("/api/categories")
 def categories() -> dict:
     """Objective category catalog (derived from action/metric domain) + per-category counts."""
@@ -490,6 +499,22 @@ def share_official(official_id: int) -> HTMLResponse:
     image = f"/og.png?title={_urlquote(name)}&subtitle={_urlquote(office)}"
     return _share_html(title=name, description=desc,
                        hash_path=f"/official/{official_id}", image=image)
+
+
+@app.get("/share/compare/{a_id}/{b_id}")
+def share_compare(a_id: int, b_id: int) -> HTMLResponse:
+    with session_scope() as s:
+        a = presentation.build_official(s, a_id)
+        b = presentation.build_official(s, b_id)
+    if a is None or b is None:
+        raise HTTPException(status_code=404, detail="official not found")
+    na, nb = a["official"]["name"], b["official"]["name"]
+    title = f"{na} vs. {nb}"
+    desc = ("A side-by-side of two officials' records on DegreeZero \u2014 measured against each "
+            "action's own stated goal, with sources. Descriptive, never a ranking.")
+    image = f"/og.png?title={_urlquote(title)}&subtitle={_urlquote('Compare records')}"
+    return _share_html(title=title, description=desc,
+                       hash_path=f"/compare?a={a_id}&b={b_id}", image=image)
 
 
 # --- Static explainability UI (zero-build SPA; a pure client of /api) ---

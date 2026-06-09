@@ -912,6 +912,46 @@ def build_recent_activity(
     return out
 
 
+def build_recent_scored(session: Session, *, limit: int = 12) -> list[dict[str, Any]]:
+    """Newest published scores first (the 'what changed' feed): the most recently scored
+    evaluation units, so returning voters can see new graded actions at a glance."""
+    rows = session.execute(
+        select(EUScore.composite, ScoreRun.eu_id, ScoreRun.started_at)
+        .join(ScoreRun, ScoreRun.id == EUScore.score_run_id)
+        .where(EUScore.composite.is_not(None), EUScore.gated.is_(False))
+        .order_by(ScoreRun.id.desc())
+    ).all()
+    seen: set[int] = set()
+    out: list[dict[str, Any]] = []
+    for comp, eu_id, started in rows:
+        if eu_id in seen:
+            continue
+        seen.add(eu_id)
+        eu = session.get(EvaluationUnit, eu_id)
+        action = session.get(Action, eu.action_id) if eu else None
+        if action is None:
+            continue
+        metric = session.get(Metric, eu.metric_id) if eu and eu.metric_id else None
+        cat = category_for(action.domain, action.type, metric.domain if metric else None)
+        aw = session.execute(
+            select(AttributionWeight).where(
+                AttributionWeight.eu_id == eu_id, AttributionWeight.is_residual.is_(False)
+            ).order_by(AttributionWeight.attribution.desc()).limit(1)
+        ).scalar_one_or_none()
+        off = session.get(Official, aw.official_id) if aw else None
+        out.append({
+            "eu_id": eu_id, "title": action.title, "composite": _num(comp),
+            "category": cat, "category_label": category_label(cat),
+            "action_type": action.type,
+            "scored_on": started.date().isoformat() if started else None,
+            "official_id": off.id if off else None,
+            "official_name": off.full_name if off else None,
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 def build_coverage(session: Session) -> dict[str, Any]:
     """Platform-wide coverage (PLAN.md §16 transparency / anti-cherry-picking).
 

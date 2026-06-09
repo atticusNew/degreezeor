@@ -28,6 +28,7 @@ def _no_network_scorers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pipeline, "ingest_member_bills", lambda s, *a, **k: 0)
     monkeypatch.setattr(pipeline, "ingest_house_votes", lambda s, *a, **k: 0)
     monkeypatch.setattr(pipeline, "ingest_senate_votes", lambda s, *a, **k: 0)
+    monkeypatch.setattr(pipeline, "mark_officials_in_office", lambda s, *a, **k: 0)
     # enrich_official_names is imported lazily inside refresh_all; patch at its source.
     from degreezeor.ingestion import loader
     monkeypatch.setattr(loader, "enrich_official_names", lambda s, *a, **k: 0)

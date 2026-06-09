@@ -1621,9 +1621,11 @@ async function renderIntegrity() {
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Integrity"));
   app.appendChild(el("p", { class: "muted" },
-    "Scoring is provably party-blind (the formula never reads party). This page reads party for " +
-    "audit only, to watch the distribution of scored outcomes. A flagged gap prompts a human review " +
-    "of metric and baseline choices. It never triggers an automated correction or changes any score."));
+    "Scoring is provably party-blind: the formula never reads party. As a second check, we " +
+    "monitor whether scored outcomes are distributed evenly across affiliations \u2014 computed " +
+    "for audit, and shown here only as a neutral summary (no official is named or labeled). A " +
+    "flagged gap prompts a human review of metric and baseline choices; it never triggers an " +
+    "automated correction and never changes any score."));
 
   const banner = el("div", { class: "gate-banner " + (r.review_required ? "gated" : "scored") },
     r.review_required
@@ -1632,23 +1634,7 @@ async function renderIntegrity() {
   app.appendChild(banner);
 
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Party-level distribution of scored outcomes (audit only)"),
-    el("table", {},
-      el("thead", {}, el("tr", {},
-        el("th", {}, "party"), el("th", { class: "right" }, "attributed EUs"),
-        el("th", { class: "right" }, "scored EUs"), el("th", { class: "right" }, "scored share"),
-        el("th", { class: "right" }, "mean composite"), el("th", { class: "right" }, "mean confidence"))),
-      el("tbody", {}, ...r.parties.map((p) =>
-        el("tr", {},
-          el("td", {}, p.abbrev),
-          el("td", { class: "right mono" }, String(p.attributed_eus)),
-          el("td", { class: "right mono" }, String(p.scored_eus)),
-          el("td", { class: "right mono" }, (p.scored_share * 100).toFixed(0) + "%"),
-          el("td", { class: "right mono" }, p.mean_composite !== null ? fmt(p.mean_composite, 1) : "n/a"),
-          el("td", { class: "right mono" }, p.mean_confidence !== null ? (p.mean_confidence * 100).toFixed(0) + "%" : "n/a")))))));
-
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Gap checks (vs. review thresholds)"),
+    el("h3", {}, "Distribution gap checks (vs. review thresholds)"),
     el("div", { class: "row" }, el("span", { class: "k" }, "mean-composite gap"),
       el("span", { class: "v mono" }, (r.composite_gap !== null ? fmt(r.composite_gap, 1) : "n/a (need ≥2 comparable parties)") + ` (threshold ${fmt(r.composite_gap_threshold, 0)})`)),
     el("div", { class: "row" }, el("span", { class: "k" }, "scored-share gap"),

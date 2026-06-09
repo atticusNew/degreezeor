@@ -1522,6 +1522,9 @@ async function renderAbout() {
   const app = $("#app");
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "About DegreeZero"));
+  app.appendChild(el("div", { class: "doc-downloads" },
+    el("a", { class: "cta", href: "/DegreeZero-Whitepaper.pdf", target: "_blank", rel: "noopener" }, "Download white paper (PDF)"),
+    el("a", { class: "cta ghost", href: "/DegreeZero-Methodology.pdf", target: "_blank", rel: "noopener" }, "Download methodology (PDF)")));
 
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "What it does"),
@@ -1565,6 +1568,9 @@ async function renderMethodology() {
   app.appendChild(el("p", { class: "muted", style: "margin:2px 0 6px" },
     "The technical detail behind the numbers. For a plain-language overview, see ",
     el("a", { href: "#/about" }, "About"), "."));
+  app.appendChild(el("div", { class: "doc-downloads" },
+    el("a", { class: "cta", href: "/DegreeZero-Methodology.pdf", target: "_blank", rel: "noopener" }, "Download methodology (PDF)"),
+    el("a", { class: "cta ghost", href: "/DegreeZero-Whitepaper.pdf", target: "_blank", rel: "noopener" }, "Download white paper (PDF)")));
 
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "The question, precisely"),

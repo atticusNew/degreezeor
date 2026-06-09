@@ -68,7 +68,9 @@ header.top nav a.active { color: var(--accent); background: var(--accent-soft); 
 
 /* Generic CTA (used outside the hero, e.g. Contact). */
 a.cta { display: inline-block; background: var(--accent); color: #06101f; padding: 9px 15px; border-radius: 8px; font-weight: 600; font-size: 14px; }
+a.cta.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
 a.cta:hover { text-decoration: none; filter: brightness(1.08); }
+.doc-downloads { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 16px; }
 
 /* Roll-call vote position badges. */
 .vbadge { display: inline-block; white-space: nowrap; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }

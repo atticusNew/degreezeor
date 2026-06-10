@@ -4,22 +4,39 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DegreeZero</title>
-  <link rel="icon" type="image/png" href="/logo.png" />
+  <meta name="description" content="What your officials did, and whether it worked. Measured against each action's own goal, with official sources." />
+  <link rel="icon" type="image/png" href="/icon.png" />
+  <link rel="apple-touch-icon" href="/icon.png" />
   <link rel="stylesheet" href="/styles.css" />
+  <!-- Social/link previews (static; the app is a single-page client). -->
+  <meta property="og:title" content="DegreeZero" />
+  <meta property="og:description" content="What your officials did, and whether it worked. Measured against each action's own goal, with official sources." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="/og.png" />
+  <meta name="twitter:title" content="DegreeZero" />
+  <meta name="twitter:description" content="What your officials did, and whether it worked \u2014 measured against each action's own goal, with sources." />
 </head>
 <body>
   <header class="top">
-    <a href="#/" class="brand"><img src="/logo.png" alt="DegreeZero" class="logo" /><h1>DegreeZero</h1></a>
+    <a href="#/" class="brand" aria-label="DegreeZero home"><img src="/logo.png" alt="DegreeZero" class="logo" /></a>
     <nav id="nav"></nav>
+    <input id="hsearch" class="hsearch" type="text" placeholder="Search an official…" autocomplete="off" aria-label="Search officials" />
     <span id="audit-status" class="audit-badge"></span>
+    <button id="share-btn" class="share-btn" type="button" aria-label="Share this page" title="Share this page">Share</button>
   </header>
   <div id="app" class="container"></div>
   <footer class="foot">
-    <span>DegreeZero is open source.</span>
-    <a href="https://github.com/atticusNew/degreezeor" target="_blank" rel="noopener">Code on GitHub</a>
-    <a href="#/about">Methodology</a>
-    <a href="#/sources">Sources</a>
-    <a href="#/glossary">Glossary</a>
+    <div class="foot-meta">
+      <a href="#/about">About</a>
+      <a href="#/methodology">Methodology</a>
+      <a href="#/sources">Sources</a>
+      <a href="#/glossary">Glossary</a>
+      <a href="#/integrity">Integrity</a>
+      <a href="#/contact">Contact</a>
+    </div>
+    <div class="foot-copy">© 2026 DegreeZero <span id="foot-updated"></span></div>
   </footer>
   <script src="/config.js"></script>
   <script src="/app.js"></script>

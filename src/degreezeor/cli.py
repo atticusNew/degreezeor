@@ -213,6 +213,53 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coverage(_: argparse.Namespace) -> int:
+    """Per-category scored coverage report (flags categories with no scored result yet)."""
+    from degreezeor.api import presentation
+    from degreezeor.categories import category_catalog
+
+    with session_scope() as s:
+        cov = presentation.build_coverage(s)
+    by_cat = cov.get("by_category", {})
+    print(f"{'category':22} {'scored':>7} {'insuf':>7} {'total':>7}")
+    gaps = []
+    for c in category_catalog():
+        st = by_cat.get(c["key"], {})
+        scored = st.get("scored", 0)
+        insuf = st.get("insufficient_evidence", 0)
+        total = sum(st.values()) if st else 0
+        flag = "" if scored else "  <-- no scored result"
+        print(f"{c['label'][:22]:22} {scored:>7} {insuf:>7} {total:>7}{flag}")
+        if not scored and c["key"] != "other":
+            gaps.append(c["label"])
+    if gaps:
+        print("\nCategories without a scored result yet:", ", ".join(gaps))
+    return 0
+
+
+def cmd_metrics(_: argparse.Namespace) -> int:
+    """Print first-party usage metrics (DAU/WAU/MAU/retention)."""
+    import json as _json
+
+    from degreezeor.analytics import compute_metrics
+
+    with session_scope() as s:
+        m = compute_metrics(s)
+    print(_json.dumps(m, indent=2))
+    return 0
+
+
+def cmd_purge_officials(_: argparse.Namespace) -> int:
+    """Delete official records that carry no record anywhere (data artifacts). Genuine
+    (incl. former) officeholders are kept by design."""
+    from degreezeor.pipeline import purge_empty_officials
+
+    with session_scope() as s:
+        n = purge_empty_officials(s)
+    print(f"purged {n} empty official record(s)")
+    return 0
+
+
 def cmd_verify_audit(_: argparse.Namespace) -> int:
     with session_scope() as s:
         ok, broken = audit.verify_chain(s)
@@ -283,6 +330,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("initdb").set_defaults(func=cmd_initdb)
     sub.add_parser("migrate", help="apply DB migrations (alembic upgrade head)").set_defaults(func=cmd_migrate)
     sub.add_parser("verify-audit").set_defaults(func=cmd_verify_audit)
+    sub.add_parser("purge-officials",
+                   help="delete empty official records (data artifacts); keeps real officeholders"
+                   ).set_defaults(func=cmd_purge_officials)
+    sub.add_parser("metrics", help="print first-party usage metrics (DAU/WAU/MAU/retention)"
+                   ).set_defaults(func=cmd_metrics)
+    sub.add_parser("coverage", help="per-category scored coverage report (flags gaps)"
+                   ).set_defaults(func=cmd_coverage)
     sub.add_parser("party-symmetry",
                    help="integrity monitoring: party-level score distribution (PLAN §9.12)"
                    ).set_defaults(func=cmd_party_symmetry)

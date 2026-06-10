@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from degreezeor.core.hashing import sha256_hex
@@ -38,6 +38,9 @@ class HouseVote:
     present: int
     not_voting: int
     positions: list[MemberVote]
+    congress: int | None = None
+    rollcall_num: int | None = None
+    vote_date: date | None = None
 
     @property
     def margin(self) -> int:
@@ -50,6 +53,28 @@ class HouseVote:
 
 _POS = {"yea": "yea", "aye": "yea", "yes": "yea", "nay": "nay", "no": "nay",
         "present": "present", "not voting": "nv", "": "nv"}
+
+_MONTHS = {m: i for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], start=1)}
+
+
+def _parse_house_date(raw: str) -> date | None:
+    """Parse the Clerk's ``action-date`` (e.g. '3-Jan-2025') into a date."""
+    parts = (raw or "").strip().split("-")
+    if len(parts) != 3:
+        return None
+    try:
+        day = int(parts[0])
+        month = _MONTHS.get(parts[1][:3].title())
+        year = int(parts[2])
+        return date(year, month, day) if month else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _int_or_none(s: str) -> int | None:
+    s = (s or "").strip()
+    return int(s) if s.isdigit() else None
 
 
 def parse_house_vote(xml_bytes: bytes) -> HouseVote:
@@ -79,6 +104,9 @@ def parse_house_vote(xml_bytes: bytes) -> HouseVote:
         legis_num=_txt("legis-num"), description=_txt("vote-desc"),
         yea=counts["yea"], nay=counts["nay"], present=counts["present"],
         not_voting=counts["nv"], positions=positions,
+        congress=_int_or_none(_txt("congress")),
+        rollcall_num=_int_or_none(_txt("rollcall-num")),
+        vote_date=_parse_house_date(_txt("action-date")),
     )
 
 

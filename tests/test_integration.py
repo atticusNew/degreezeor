@@ -95,6 +95,8 @@ def test_full_stack_composes(session) -> None:
     assert cov["scored"] == 2
     assert cov["total_evaluation_units"] == 2
     assert "eo" in cov["by_action_type"]
+    assert "public_safety" in cov["by_category"]
+    assert cov["by_category"]["public_safety"].get("scored") == 2
 
     # 2) Official roll-ups: each signer has a composite (attribution-weighted).
     officials = presentation.list_officials(session, scored_only=True)
@@ -121,3 +123,149 @@ def test_full_stack_composes(session) -> None:
         assert card["narrative"]
         assert len(card["components"]) >= 1
         assert any(a["role"] == "signer" for a in card["attribution"])
+        # Objective category is derived from the legal-survival metric domain ("Law").
+        assert card["action"]["category"] == "public_safety"
+        assert card["action"]["category_label"] == "Public safety"
+        assert "descriptive_context" in card
+
+    # 6) Category taxonomy composes: catalog counts + per-official breakdown + list_units.
+    cats = presentation.build_categories(session)
+    by_key = {c["key"]: c for c in cats["categories"]}
+    assert by_key["public_safety"]["total_actions"] == 2
+    assert by_key["public_safety"]["scored_actions"] == 2
+
+    units = presentation.list_units(session)
+    assert units and all(u["category"] == "public_safety" for u in units)
+
+    off = presentation.list_officials(session, scored_only=True)[0]
+    detail = presentation.build_official(session, off["id"])
+    assert "by_category" in detail
+    assert any(b["category"] == "public_safety" for b in detail["by_category"])
+    assert "public_safety" in (off["categories"])
+    # Voter-first fields: activity summary, most-active category, and per-action dates.
+    assert "activity" in detail and detail["activity"]["count"] >= 1
+    assert detail["most_active_category"] == "Public safety"
+    assert all("date" in a for a in detail["actions"])
+
+    # Lightweight directory index powers the typeahead/A-Z browse.
+    idx = presentation.officials_index(session)
+    assert idx and all({"id", "name", "position", "scored_actions", "total_actions"} <= set(o) for o in idx)
+
+    # Category filter narrows / widens the officials list correctly.
+    assert presentation.list_officials(session, category="public_safety", scored_only=True)
+    assert presentation.list_officials(session, category="health", scored_only=True) == []
+
+
+def test_activity_layer_sponsored_and_cosponsored(session) -> None:
+    """The unscored activity/record layer: a member who only sponsored/cosponsored bills
+    still appears in the directory and their record, separate from any scored composite."""
+    from degreezeor.core.models import Bill, BillCosponsor
+    from degreezeor.core.reference import ensure_us_federal
+
+    src = _get_or_create_source(session)
+    jur = ensure_us_federal(session)
+
+    sponsor = Official(full_name="Jane Sponsor", bioguide_id="X000001")
+    backer = Official(full_name="John Backer", bioguide_id="X000002")
+    session.add_all([sponsor, backer])
+    session.flush()
+
+    action = Action(type="bill", title="A jobs bill", action_date=date(2024, 3, 1),
+                    jurisdiction_id=jur.id, source_id=src.id, source_url="https://congress/hr1",
+                    native_identifier="bill/118/hr/1", domain="Economics and Public Finance")
+    session.add(action)
+    session.flush()
+    session.add(Bill(action_id=action.id, congress=118, bill_number="HR1",
+                     sponsor_official_id=sponsor.id, status="introduced"))
+    session.add(BillCosponsor(action_id=action.id, official_id=backer.id))
+    session.flush()
+
+    idx = {o["name"]: o for o in presentation.officials_index(session)}
+    assert idx["Jane Sponsor"]["sponsored"] == 1
+    assert idx["John Backer"]["cosponsored"] == 1
+    assert "jobs_economy" in idx["John Backer"]["categories"]
+
+    rec = presentation.build_official(session, backer.id)["record"]
+    assert rec["cosponsored_total"] == 1
+    assert any(c["category"] == "jobs_economy" for c in rec["cosponsored_by_category"])
+
+    srec = presentation.build_official(session, sponsor.id)["record"]
+    assert srec["sponsored_total"] == 1
+
+
+def test_voting_record_surface(session) -> None:
+    """A member's recorded roll-call votes surface by topic + position, feed the activity
+    timeline, and never become a score. Attribution-only votes (roll_call NULL) are excluded."""
+    from degreezeor.core.models import Official, Vote, VotePosition
+
+    member = Official(full_name="Vee Voter", bioguide_id="V000001")
+    session.add(member)
+    session.flush()
+
+    v1 = Vote(chamber="house", question="https://clerk.house.gov/evs/2025/roll010.xml",
+              vote_date=date(2025, 2, 1), result="Passed", congress=119, roll_call=10,
+              bill_number="HR1", category="jobs_economy", yea=220, nay=210)
+    v2 = Vote(chamber="house", question="https://clerk.house.gov/evs/2025/roll011.xml",
+              vote_date=date(2025, 3, 1), result="Failed", congress=119, roll_call=11,
+              bill_number="HR2", category="health", yea=200, nay=230)
+    # Attribution-only vote (no roll_call) must NOT count toward the voting record.
+    v3 = Vote(chamber="house", question="legacy-passage-url", vote_date=date(2019, 1, 1))
+    session.add_all([v1, v2, v3])
+    session.flush()
+    session.add_all([
+        VotePosition(vote_id=v1.id, official_id=member.id, position="yea"),
+        VotePosition(vote_id=v2.id, official_id=member.id, position="nay"),
+        VotePosition(vote_id=v3.id, official_id=member.id, position="yea"),
+    ])
+    session.flush()
+
+    card = presentation.build_official(session, member.id)
+    votes = card["votes"]
+    assert votes["total"] == 2  # v3 excluded (roll_call is NULL)
+    assert votes["by_position"] == {"yea": 1, "nay": 1}
+    cats = {c["category"]: c for c in votes["by_category"]}
+    assert cats["jobs_economy"]["yea"] == 1 and cats["health"]["nay"] == 1
+    # Votes feed the activity timeline (recent years, not only scored actions).
+    years = {d["year"] for d in card["activity"]["by_year"]}
+    assert {2025} <= years
+
+
+def test_executive_actions_record_surface(session) -> None:
+    """A president's signed executive orders surface as an unscored record across ALL years,
+    feed the activity timeline, and are never a score."""
+    from degreezeor.core.models import Action, DataSource, ExecutiveOrder, Official
+    from degreezeor.core.reference import ensure_us_federal
+
+    src = _get_or_create_source(session)
+    jur = ensure_us_federal(session)
+    assert isinstance(src, DataSource)
+    pres = Official(full_name="Pat President", bioguide_id="P000999")
+    session.add(pres)
+    session.flush()
+    for i, yr in enumerate((2017, 2025, 2026)):
+        a = Action(type="eo", title=f"EO about energy {i}", action_date=date(yr, 2, 1),
+                   jurisdiction_id=jur.id, source_id=src.id, source_url=f"https://fr/{i}",
+                   native_identifier=f"EO-REC-{i}", domain="Energy")
+        session.add(a)
+        session.flush()
+        session.add(ExecutiveOrder(action_id=a.id, eo_number=str(14000 + i),
+                                   signing_official_id=pres.id))
+    session.flush()
+
+    card = presentation.build_official(session, pres.id)
+    assert card["executive"]["total"] == 3
+    years = {d["year"] for d in card["activity"]["by_year"]}
+    assert {2017, 2025, 2026} <= years
+    assert card["activity"]["first_year"] == 2017 and card["activity"]["last_year"] == 2026
+    assert card["rollup"]["composite"] is None  # record only; never a score
+    # EOs grouped by topic (energy domain -> energy_environment).
+    assert any(c["category"] == "energy_environment" for c in card["executive"]["by_category"])
+
+
+def test_public_bill_url_builds_key_free_congress_gov_link() -> None:
+    from degreezeor.api.presentation import public_bill_url
+    assert public_bill_url(118, "HR3076") == "https://www.congress.gov/bill/118th-congress/house-bill/3076"
+    assert public_bill_url(119, "S1") == "https://www.congress.gov/bill/119th-congress/senate-bill/1"
+    assert public_bill_url(118, "HJRES7") == "https://www.congress.gov/bill/118th-congress/house-joint-resolution/7"
+    assert public_bill_url(None, "HR1") is None
+    assert public_bill_url(118, "ZZ9") is None

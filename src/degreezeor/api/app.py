@@ -7,14 +7,18 @@ audit the path from score back to official source.
 
 from __future__ import annotations
 
+import html as _html
 import json
 from pathlib import Path
+from urllib.parse import quote as _urlquote
+from xml.sax.saxutils import escape as _xml_escape
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from degreezeor import __version__
 from degreezeor.api import presentation
@@ -34,15 +38,55 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 
+# --- Lightweight latency hygiene ---------------------------------------------------------
+# Read data only changes after a cron run, so (1) a tiny in-process TTL memo avoids repeating
+# the heaviest aggregate queries on every hit, and (2) Cache-Control lets the browser/CDN
+# serve repeat views without touching the API at all. Both are conservative and safe.
+import time as _time  # noqa: E402
+
+_TTL_SECONDS = 120
+_memo: dict[str, tuple[float, object]] = {}
+
+
+def _cached(key: str, fn):
+    now = _time.time()
+    hit = _memo.get(key)
+    if hit is not None and now - hit[0] < _TTL_SECONDS:
+        return hit[1]
+    val = fn()
+    _memo[key] = (now, val)
+    return val
+
+
+@app.middleware("http")
+async def _cache_headers(request: Request, call_next):
+    resp = await call_next(request)
+    if request.method == "GET" and request.url.path.startswith("/api/") \
+            and "cache-control" not in resp.headers:
+        resp.headers["Cache-Control"] = f"public, max-age={_TTL_SECONDS}"
+    return resp
+
+
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "version": __version__,
-            "confidence_publish_threshold": float(settings.confidence_publish_threshold)}
+    """Liveness + data freshness: `last_updated` is the most recent official-data fetch and
+    `last_scored` the most recent score run, so you can confirm the cron is keeping it current."""
+    from degreezeor.core.models import RawLanding, ScoreRun
+
+    with session_scope() as s:
+        last_updated = s.execute(select(func.max(RawLanding.retrieved_at))).scalar()
+        last_scored = s.execute(select(func.max(ScoreRun.started_at))).scalar()
+    return {
+        "status": "ok", "version": __version__,
+        "confidence_publish_threshold": float(settings.confidence_publish_threshold),
+        "last_updated": last_updated.isoformat() if last_updated else None,
+        "last_scored": last_scored.isoformat() if last_scored else None,
+    }
 
 
 @app.get("/api/evaluation-units")
@@ -64,11 +108,21 @@ def get_evaluation_unit(eu_id: int) -> dict:
 def list_officials(
     q: str | None = None, scored_only: bool = False,
     min_involvement: float = 0.0, party: str | None = None, action_type: str | None = None,
+    category: str | None = None,
 ) -> list[dict]:
     with session_scope() as s:
         return presentation.list_officials(
             s, q=q, scored_only=scored_only, min_involvement=min_involvement,
-            party=party, action_type=action_type)
+            party=party, action_type=action_type, category=category)
+
+
+@app.get("/api/officials-index")
+def officials_index() -> list[dict]:
+    """Lightweight directory for client-side typeahead / A-to-Z browse (most-active first)."""
+    def _build():
+        with session_scope() as s:
+            return presentation.officials_index(s)
+    return _cached("officials-index", _build)
 
 
 @app.get("/api/officials/{official_id}")
@@ -180,20 +234,88 @@ def eu_sensitivity_endpoint(eu_id: int) -> dict:
 
 @app.get("/api/coverage")
 def coverage() -> dict:
-    with session_scope() as s:
-        return presentation.build_coverage(s)
+    def _build():
+        with session_scope() as s:
+            return presentation.build_coverage(s)
+    return _cached("coverage", _build)
 
 
 @app.get("/api/stats")
 def stats() -> dict:
-    with session_scope() as s:
-        return presentation.build_stats(s)
+    def _build():
+        with session_scope() as s:
+            return presentation.build_stats(s)
+    return _cached("stats", _build)
 
 
 @app.get("/api/sources")
 def sources() -> list[dict]:
     with session_scope() as s:
         return presentation.build_sources(s)
+
+
+@app.get("/api/recent-activity")
+def recent_activity(limit: int = 50, category: str | None = None) -> list[dict]:
+    """Recent sponsored bills (the activity/record layer), newest first."""
+    with session_scope() as s:
+        return presentation.build_recent_activity(s, limit=min(limit, 200), category=category)
+
+
+class CollectIn(BaseModel):
+    visitor_id: str
+    path: str = ""
+
+
+@app.post("/api/collect")
+def collect(payload: CollectIn) -> dict:
+    """Record one anonymous usage event (first-party analytics). No PII, no IP."""
+    from degreezeor.analytics import record_event
+
+    with session_scope() as s:
+        ok = record_event(s, visitor_id=payload.visitor_id, path=payload.path)
+    return {"ok": ok}
+
+
+@app.post("/api/collect/forget")
+def collect_forget(payload: CollectIn) -> dict:
+    """Delete this device's anonymous events (per-device analytics opt-out). Lets the owner
+    exclude their own phone/laptop from the metrics, retroactively and going forward."""
+    from degreezeor.analytics import forget_visitor
+
+    with session_scope() as s:
+        n = forget_visitor(s, visitor_id=payload.visitor_id)
+    return {"ok": True, "deleted": n}
+
+
+@app.get("/api/metrics")
+def metrics(token: str = "") -> dict:
+    """Usage metrics (DAU/WAU/MAU/retention). Token-gated via DZ_METRICS_TOKEN; if no token
+    is configured the endpoint is disabled (so metrics are never publicly exposed)."""
+    from degreezeor.analytics import compute_metrics
+
+    expected = settings.metrics_token
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="metrics disabled or bad token")
+    with session_scope() as s:
+        return compute_metrics(s)
+
+
+@app.get("/api/recent-scored")
+def recent_scored(limit: int = 12) -> list[dict]:
+    """The 'what changed' feed: most recently scored actions, newest first."""
+    def _build():
+        with session_scope() as s:
+            return presentation.build_recent_scored(s, limit=min(limit, 50))
+    return _cached(f"recent-scored-{min(limit, 50)}", _build)
+
+
+@app.get("/api/categories")
+def categories() -> dict:
+    """Objective category catalog (derived from action/metric domain) + per-category counts."""
+    def _build():
+        with session_scope() as s:
+            return presentation.build_categories(s)
+    return _cached("categories", _build)
 
 
 @app.get("/api/integrity/party-symmetry")
@@ -271,6 +393,178 @@ def methodology() -> dict:
         "components_value_laden_off_by_default": ["cost", "distribution"],
         "confidence_publish_threshold": float(settings.confidence_publish_threshold),
     }
+
+
+# --- Social link previews: a small per-page OG image + crawler-readable share pages ---
+# The SPA uses hash routes (#/official/…) that crawlers can't read, so a shared link needs a
+# real URL that returns per-page <meta> + an image. /share/* does exactly that and bounces
+# human visitors into the app; /og.svg renders the (cheap, dependency-free) preview card.
+_TAGLINE = "What your officials did, and whether it worked."
+
+
+def _og_svg(title: str, subtitle: str = "") -> bytes:
+    t = _xml_escape(title[:60])
+    sub = _xml_escape(subtitle[:80])
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" '
+        f'viewBox="0 0 1200 630" role="img">'
+        f'<rect width="1200" height="630" fill="#0c1016"/>'
+        f'<rect x="0" y="0" width="14" height="630" fill="#b48ead"/>'
+        f'<text x="80" y="150" font-family="Georgia,\'Times New Roman\',serif" '
+        f'font-size="46" fill="#b48ead" letter-spacing="1">DegreeZero</text>'
+        f'<text x="80" y="300" font-family="Helvetica,Arial,sans-serif" font-size="76" '
+        f'font-weight="700" fill="#f4f1ee">{t}</text>'
+        + (f'<text x="80" y="370" font-family="Helvetica,Arial,sans-serif" font-size="40" '
+           f'fill="#a7adba">{sub}</text>' if sub else "")
+        + f'<text x="80" y="560" font-family="Helvetica,Arial,sans-serif" font-size="32" '
+        f'fill="#a7adba">{_xml_escape(_TAGLINE)}</text>'
+        f'</svg>'
+    ).encode("utf-8")
+
+
+@app.get("/og.svg")
+def og_image(title: str = "DegreeZero", subtitle: str = "") -> Response:
+    return Response(content=_og_svg(title, subtitle), media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+# Raster OG card (PNG) for platforms that don't render SVG previews (X, Facebook, iMessage).
+# Pillow + a bundled DejaVu font so it renders identically anywhere; falls back to SVG if
+# Pillow is unavailable.
+from io import BytesIO  # noqa: E402
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    _PIL_OK = True
+except Exception:  # noqa: BLE001
+    _PIL_OK = False
+
+_ASSETS = Path(__file__).resolve().parent / "assets"
+_font_cache: dict = {}
+
+
+def _font(bold: bool, size: int):
+    key = (bold, size)
+    if key not in _font_cache:
+        name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+        _font_cache[key] = ImageFont.truetype(str(_ASSETS / name), size)
+    return _font_cache[key]
+
+
+def _wrap(draw, text: str, font, max_w: int, max_lines: int) -> list[str]:
+    lines: list[str] = []
+    cur = ""
+    for word in text.split():
+        trial = (cur + " " + word).strip()
+        if draw.textlength(trial, font=font) <= max_w:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = word
+            if len(lines) == max_lines:
+                break
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+    if len(lines) == max_lines and draw.textlength(lines[-1], font=font) > max_w - 40:
+        lines[-1] = lines[-1].rstrip() + "\u2026"
+    return lines
+
+
+def _og_png(title: str, subtitle: str = "") -> bytes:
+    w, h = 1200, 630
+    img = Image.new("RGB", (w, h), (12, 16, 22))
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, 14, h], fill=(180, 142, 173))
+    d.text((80, 64), "DegreeZero", font=_font(False, 44), fill=(180, 142, 173))
+    title_font = _font(True, 76)
+    y = 190
+    for line in _wrap(d, title, title_font, w - 160, 3):
+        d.text((80, y), line, font=title_font, fill=(244, 241, 238))
+        y += 90
+    if subtitle:
+        d.text((80, y + 4), subtitle[:80], font=_font(False, 40), fill=(167, 173, 186))
+    d.text((80, h - 72), _TAGLINE, font=_font(False, 30), fill=(167, 173, 186))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@app.get("/og.png")
+def og_image_png(title: str = "DegreeZero", subtitle: str = "") -> Response:
+    if not _PIL_OK:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(
+            url=f"/og.svg?title={_urlquote(title)}&subtitle={_urlquote(subtitle)}")
+    return Response(content=_og_png(title, subtitle), media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+def _share_html(*, title: str, description: str, hash_path: str, image: str) -> HTMLResponse:
+    """Minimal crawler-readable page: per-page OG/Twitter meta + a redirect for humans."""
+    t, d = _html.escape(title), _html.escape(description)
+    redirect = _html.escape("/#" + hash_path)
+    img = _html.escape(image)
+    body = (
+        f"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/>"
+        f"<title>{t} — DegreeZero</title>"
+        f"<meta name=\"description\" content=\"{d}\"/>"
+        f"<meta property=\"og:title\" content=\"{t}\"/>"
+        f"<meta property=\"og:description\" content=\"{d}\"/>"
+        f"<meta property=\"og:type\" content=\"website\"/>"
+        f"<meta property=\"og:image\" content=\"{img}\"/>"
+        f"<meta name=\"twitter:card\" content=\"summary_large_image\"/>"
+        f"<meta name=\"twitter:title\" content=\"{t}\"/>"
+        f"<meta name=\"twitter:description\" content=\"{d}\"/>"
+        f"<meta name=\"twitter:image\" content=\"{img}\"/>"
+        f"<meta http-equiv=\"refresh\" content=\"0; url={redirect}\"/>"
+        f"</head><body><p>Redirecting to <a href=\"{redirect}\">{t} on DegreeZero</a>…</p></body></html>"
+    )
+    return HTMLResponse(content=body)
+
+
+@app.get("/share/official/{official_id}")
+def share_official(official_id: int) -> HTMLResponse:
+    with session_scope() as s:
+        card = presentation.build_official(s, official_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="official not found")
+    name = card["official"]["name"]
+    office = card["official"].get("position") or "Official record"
+    r, rec = card["rollup"], card.get("record", {})
+    votes = card.get("votes", {})
+    if r.get("composite") is not None:
+        desc = (f"{office}. Composite {r['composite']} of 100 over {r['scored_actions']} scored "
+                f"action(s), with sources. See the full record on DegreeZero.")
+    else:
+        bits = []
+        if rec.get("sponsored_total"):
+            bits.append(f"{rec['sponsored_total']} bills sponsored")
+        if rec.get("cosponsored_total"):
+            bits.append(f"{rec['cosponsored_total']} cosponsored")
+        if votes.get("total"):
+            bits.append(f"{votes['total']} recorded votes")
+        desc = f"{office}. " + (", ".join(bits) + ". " if bits else "") + \
+            "The record of what they acted on, with official sources."
+    image = f"/og.png?title={_urlquote(name)}&subtitle={_urlquote(office)}"
+    return _share_html(title=name, description=desc,
+                       hash_path=f"/official/{official_id}", image=image)
+
+
+@app.get("/share/compare/{a_id}/{b_id}")
+def share_compare(a_id: int, b_id: int) -> HTMLResponse:
+    with session_scope() as s:
+        a = presentation.build_official(s, a_id)
+        b = presentation.build_official(s, b_id)
+    if a is None or b is None:
+        raise HTTPException(status_code=404, detail="official not found")
+    na, nb = a["official"]["name"], b["official"]["name"]
+    title = f"{na} vs. {nb}"
+    desc = ("A side-by-side of two officials' records on DegreeZero \u2014 measured against each "
+            "action's own stated goal, with sources. Descriptive, never a ranking.")
+    image = f"/og.png?title={_urlquote(title)}&subtitle={_urlquote('Compare records')}"
+    return _share_html(title=title, description=desc,
+                       hash_path=f"/compare?a={a_id}&b={b_id}", image=image)
 
 
 # --- Static explainability UI (zero-build SPA; a pure client of /api) ---

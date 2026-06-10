@@ -8,6 +8,7 @@ Order is significant for neutrality:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -16,7 +17,8 @@ from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from degreezeor.config import settings
@@ -28,6 +30,7 @@ from degreezeor.core.models import (
     AttributionWeight,
     Baseline,
     Bill,
+    BillCosponsor,
     ConfidenceInterval,
     DataSource,
     EUScore,
@@ -82,6 +85,140 @@ def state_employment_series_id(fips: str) -> str:
     return f"SMS{fips}000000000000001"
 
 
+def state_wage_series_id(fips: str) -> str:
+    """BLS state average hourly earnings, total private (NSA): SMU + FIPS(2) + area(00000)
+    + industry(05000000 = total private) + datatype(03 = avg hourly earnings, all employees).
+    Seasonally adjusted AHE is not published at the state level, so the not-seasonally-adjusted
+    series is used; the synthetic-control donor pool matches the shared seasonal path across
+    states, so a treated-vs-synthetic comparison at matched months is still valid."""
+    return f"SMU{fips}000000500000003"
+
+
+# FIPS -> USPS abbreviation (EIA state series key on the postal abbreviation, not FIPS).
+_FIPS_USPS: dict[str, str] = {
+    "01": "AL", "02": "AK", "04": "AZ", "05": "AR", "06": "CA", "08": "CO", "09": "CT",
+    "10": "DE", "11": "DC", "12": "FL", "13": "GA", "15": "HI", "16": "ID", "17": "IL",
+    "18": "IN", "19": "IA", "20": "KS", "21": "KY", "22": "LA", "23": "ME", "24": "MD",
+    "25": "MA", "26": "MI", "27": "MN", "28": "MS", "29": "MO", "30": "MT", "31": "NE",
+    "32": "NV", "33": "NH", "34": "NJ", "35": "NM", "36": "NY", "37": "NC", "38": "ND",
+    "39": "OH", "40": "OK", "41": "OR", "42": "PA", "44": "RI", "45": "SC", "46": "SD",
+    "47": "TN", "48": "TX", "49": "UT", "50": "VT", "51": "VA", "53": "WA", "54": "WV",
+    "55": "WI", "56": "WY",
+}
+# Full state names (CDC Socrata datasets key on the spelled-out state name).
+_FIPS_NAME: dict[str, str] = {
+    "01": "Alabama", "02": "Alaska", "04": "Arizona", "05": "Arkansas", "06": "California",
+    "08": "Colorado", "09": "Connecticut", "10": "Delaware", "11": "District of Columbia",
+    "12": "Florida", "13": "Georgia", "15": "Hawaii", "16": "Idaho", "17": "Illinois",
+    "18": "Indiana", "19": "Iowa", "20": "Kansas", "21": "Kentucky", "22": "Louisiana",
+    "23": "Maine", "24": "Maryland", "25": "Massachusetts", "26": "Michigan", "27": "Minnesota",
+    "28": "Mississippi", "29": "Missouri", "30": "Montana", "31": "Nebraska", "32": "Nevada",
+    "33": "New Hampshire", "34": "New Jersey", "35": "New Mexico", "36": "New York",
+    "37": "North Carolina", "38": "North Dakota", "39": "Ohio", "40": "Oklahoma", "41": "Oregon",
+    "42": "Pennsylvania", "44": "Rhode Island", "45": "South Carolina", "46": "South Dakota",
+    "47": "Tennessee", "48": "Texas", "49": "Utah", "50": "Vermont", "51": "Virginia",
+    "53": "Washington", "54": "West Virginia", "55": "Wisconsin", "56": "Wyoming",
+}
+
+# Descriptor per comparison-design ``metric_kind``: the official state series and which way
+# is "toward" the policy's own stated goal. ``sign`` is fixed at pre-registration.
+STATE_METRIC_KINDS: dict[str, dict[str, object]] = {
+    "employment": {"code": "state_nonfarm_employment", "name": "Total Nonfarm Employment (SA)",
+                   "unit": "thousands of jobs", "direction_good": "up", "sign": 1,
+                   "domain": "Economics and Public Finance"},
+    "wage": {"code": "state_avg_hourly_earnings", "name": "Average Hourly Earnings, Total Private (NSA)",
+             "unit": "dollars/hour", "direction_good": "up", "sign": 1,
+             "domain": "Economics and Public Finance"},
+    "poverty": {"code": "state_poverty_rate", "name": "Poverty Rate, All Ages (Census SAIPE)",
+                "unit": "percent", "direction_good": "down", "sign": -1, "domain": "Income and Poverty"},
+    "income": {"code": "state_median_household_income", "name": "Median Household Income (Census SAIPE)",
+               "unit": "dollars", "direction_good": "up", "sign": 1, "domain": "Income and Poverty"},
+    "uninsured": {"code": "state_uninsured_rate", "name": "Uninsured Rate, All Ages (Census SAHIE)",
+                  "unit": "percent", "direction_good": "down", "sign": -1, "domain": "Health"},
+    "energy": {"code": "state_co2_emissions", "name": "Total Energy CO2 Emissions (EIA)",
+               "unit": "million metric tons CO2", "direction_good": "down", "sign": -1,
+               "domain": "Energy and Environment"},
+    "child_poverty": {"code": "state_child_poverty_rate",
+                      "name": "Child Poverty Rate, Under 18 (Census SAIPE)",
+                      "unit": "percent", "direction_good": "down", "sign": -1,
+                      "domain": "Income and Poverty"},
+    "overdose": {"code": "state_drug_overdose_rate",
+                 "name": "Drug Overdose Death Rate, Age-Adjusted (CDC)",
+                 "unit": "per 100,000", "direction_good": "down", "sign": -1, "domain": "Health"},
+    "naep_reading4": {"code": "state_naep_grade4_reading",
+                      "name": "NAEP Grade 4 Reading, Mean Scale Score",
+                      "unit": "scale score", "direction_good": "up", "sign": 1,
+                      "domain": "Education"},
+}
+_ANNUAL_KINDS = {"poverty", "income", "uninsured", "energy", "child_poverty",
+                 "overdose", "naep_reading4"}
+
+
+def state_series_id(fips: str, metric_kind: str = "employment") -> str:
+    """Resolve the official state series id for a comparison-design metric kind
+    (BLS for jobs/wages; Census SAIPE/SAHIE for poverty/income/uninsured; EIA for CO2)."""
+    if metric_kind == "wage":
+        return state_wage_series_id(fips)
+    if metric_kind == "poverty":
+        return f"CENSUS|timeseries/poverty/saipe|SAEPOVRTALL_PT|state:{fips}"
+    if metric_kind == "income":
+        return f"CENSUS|timeseries/poverty/saipe|SAEMHI_PT|state:{fips}"
+    if metric_kind == "child_poverty":
+        return f"CENSUS|timeseries/poverty/saipe|SAEPOVRTUNDER18_PT|state:{fips}"
+    if metric_kind == "uninsured":
+        return f"CENSUS|timeseries/healthins/sahie|PCTUI_PT|state:{fips}"
+    if metric_kind == "energy":
+        return f"EIA|co2-emissions/co2-emissions-aggregates|stateId={_FIPS_USPS.get(fips, fips)};sectorId=TT;fuelId=TO"
+    if metric_kind == "overdose":
+        return (f"CDC|44rk-q6r2|year|ageadjrate|state={_FIPS_NAME.get(fips, fips)};"
+                f"sex=Both Sexes;age=All Ages;race=All Races-All Origins")
+    if metric_kind == "naep_reading4":
+        return f"NAEP|reading|4|RRPCM|{_FIPS_USPS.get(fips, fips)}"
+    return state_employment_series_id(fips)
+
+
+def _series_is_annual(native_series_id: str | None) -> bool:
+    return bool(native_series_id) and native_series_id.startswith(
+        ("CENSUS|", "EIA|", "CDC|", "NAEP|"))
+
+
+def _pre_years_for(native_series_id: str | None) -> int:
+    """Pre-period span to pull. Annual official series need a longer pre-window than monthly
+    BLS series to give the comparison-design pre-fit enough points (>= 6)."""
+    return 12 if _series_is_annual(native_series_id) else 3
+
+
+def _fetch_state_series_points(native_series_id: str, start_year: int, end_year: int):
+    """Fetch one official state series via the right adapter; return (RawFetch, points) where
+    points are [(ISO-date, value)] (monthly -> YYYY-MM-01; annual -> YYYY-01-01)."""
+    from degreezeor.ingestion.adapters.census import census_adapter
+    from degreezeor.ingestion.adapters.eia import eia_adapter
+
+    if native_series_id.startswith("CENSUS|"):
+        f = census_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+        pts = [(f"{y}-01-01", v) for y, v in census_adapter.parse_series(f.content, native_series_id)]
+        return f, pts
+    if native_series_id.startswith("EIA|"):
+        f = eia_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+        pts = [(f"{y}-01-01", v) for y, v in eia_adapter.parse_series(f.content, native_series_id)]
+        return f, pts
+    if native_series_id.startswith("CDC|"):
+        from degreezeor.ingestion.adapters.cdc import cdc_adapter
+        f = cdc_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+        pts = [(f"{y}-01-01", v) for y, v in cdc_adapter.parse_series(f.content, native_series_id)]
+        return f, pts
+    if native_series_id.startswith("NAEP|"):
+        from degreezeor.ingestion.adapters.naep import naep_adapter
+        f = naep_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+        pts = [(f"{y}-01-01", v) for y, v in naep_adapter.parse_series(f.content, native_series_id)]
+        return f, pts
+    f = bls_adapter.fetch(native_series_id, start_year=start_year, end_year=end_year)
+    series = json.loads(f.content)["Results"]["series"][0]
+    pts = [(f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
+           for pt in series["data"] if pt["period"].startswith("M")]
+    return f, pts
+
+
 @dataclass
 class StatePolicySpec:
     key: str  # e.g. "KS-HB2117"
@@ -98,6 +235,8 @@ class StatePolicySpec:
     sponsor_name: str | None = None
     signer_party: str | None = None  # public record; audit metadata only
     sponsor_party: str | None = None
+    # Comparison-design outcome metric: "employment" (jobs) or "wage" (avg hourly earnings).
+    metric_kind: str = "employment"
 
 
 # Documented demo state policies (public record). The objective text states the
@@ -166,6 +305,581 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         ),
         enacted_year=2011, enacted_month=6, lag_window_months=48,
         signer_name="Paul LePage", signer_party="R",
+    ),
+    "IN-2013-HEA1001": StatePolicySpec(
+        key="IN-2013-HEA1001",
+        title="Indiana 2013 income tax cut (HEA 1001)",
+        state_fips="18",
+        state_name="Indiana",
+        # Midwest/border states without a comparable 2013 income-tax cut.
+        donor_fips=["17", "26", "27", "42", "19"],  # IL MI MN PA IA
+        source_url="http://iga.in.gov/legislative/2013/bills/house/1001",
+        objective_text=(
+            "Reduce the individual income tax rate (3.4% to 3.23%) and cut other taxes to grow "
+            "Indiana's economy and create jobs (the administration's stated jobs budget)."
+        ),
+        enacted_year=2013, enacted_month=5, lag_window_months=48,
+        signer_name="Mike Pence", signer_party="R",
+    ),
+    "OH-2013-HB59": StatePolicySpec(
+        key="OH-2013-HB59",
+        title="Ohio 2013 income tax cut (HB 59 budget)",
+        state_fips="39",
+        state_name="Ohio",
+        # Regional states without a comparable 2013 income-tax cut.
+        donor_fips=["42", "26", "17", "27", "21"],  # PA MI IL MN KY
+        source_url="https://search-prod.lis.state.oh.us/api/v2/general_assembly_130/legislation/hb59",
+        objective_text=(
+            "Cut individual income tax rates by 10% over three years and deduct small-business "
+            "income to create a more job-friendly tax climate and spur job creation in Ohio."
+        ),
+        enacted_year=2013, enacted_month=6, lag_window_months=48,
+        signer_name="John Kasich", signer_party="R",
+    ),
+    "MO-2014-SB509": StatePolicySpec(
+        key="MO-2014-SB509",
+        title="Missouri 2014 income tax cut (SB 509)",
+        state_fips="29",
+        state_name="Missouri",
+        # Regional states without a comparable 2014 income-tax cut.
+        donor_fips=["17", "19", "21", "31", "27"],  # IL IA KY NE MN
+        source_url="https://senate.mo.gov/14info/BTS_Web/Bill.aspx?SessionType=R&BillID=27723520",
+        objective_text=(
+            "Phase in a cut to the top individual income tax rate (6% to 5.5%) and a business-income "
+            "deduction to stimulate Missouri's economy, help small businesses grow, and create jobs."
+        ),
+        # Enacted over the governor's veto; credit goes to the bill's sponsor, not a signer.
+        enacted_year=2014, enacted_month=5, lag_window_months=48,
+        sponsor_name="Will Kraus", sponsor_party="R",
+    ),
+    "MI-2011-HB4361": StatePolicySpec(
+        key="MI-2011-HB4361",
+        title="Michigan 2011 business tax overhaul (HB 4361, PA 38)",
+        state_fips="26",
+        state_name="Michigan",
+        # Midwest states without a comparable 2011 business/income-tax overhaul.
+        donor_fips=["17", "27", "42", "19", "21"],  # IL MN PA IA KY
+        source_url="https://www.legislature.mi.gov/Bills/Bill?ObjectName=2011-HB-4361",
+        objective_text=(
+            "Replace the Michigan Business Tax with a simpler, lower 6% corporate income tax to "
+            "improve the business climate and create jobs."
+        ),
+        enacted_year=2011, enacted_month=5, lag_window_months=48,
+        signer_name="Rick Snyder", signer_party="R",
+    ),
+    "UT-2022-SB59": StatePolicySpec(
+        key="UT-2022-SB59",
+        title="Utah 2022 income tax cut (SB 59)",
+        state_fips="49",
+        state_name="Utah",
+        donor_fips=["16", "56", "32", "30", "35"],  # ID WY NV MT NM
+        source_url="https://le.utah.gov/~2022/bills/static/SB0059.html",
+        objective_text=(
+            "Cut the individual and corporate income tax rate (4.95% to 4.85%) to return money to "
+            "families and support the economy."
+        ),
+        enacted_year=2022, enacted_month=2, lag_window_months=36,
+        signer_name="Spencer Cox", signer_party="R",
+    ),
+    "KY-2022-HB8": StatePolicySpec(
+        key="KY-2022-HB8",
+        title="Kentucky 2022 income tax cut (HB 8)",
+        state_fips="21",
+        state_name="Kentucky",
+        donor_fips=["47", "54", "39", "29", "18"],  # TN WV OH MO IN
+        source_url="https://apps.legislature.ky.gov/record/22rs/hb8.html",
+        objective_text=(
+            "Cut the individual income tax rate (5% to 4.5%, with triggers toward elimination) to "
+            "grow Kentucky's economy and competitiveness."
+        ),
+        # Enacted over the governor's veto; credit goes to the bill's sponsor, not a signer.
+        enacted_year=2022, enacted_month=4, lag_window_months=36,
+        sponsor_name="Jason Petrie", sponsor_party="R",
+    ),
+    "IA-2018-SF2417": StatePolicySpec(
+        key="IA-2018-SF2417",
+        title="Iowa 2018 income tax cut (SF 2417)",
+        state_fips="19",
+        state_name="Iowa",
+        donor_fips=["27", "17", "31", "46", "21"],  # MN IL NE SD KY
+        source_url="https://www.legis.iowa.gov/legislation/BillBook?ga=87&ba=SF2417",
+        objective_text=(
+            "Cut and simplify individual and corporate income tax rates to grow Iowa's economy "
+            "and create jobs."
+        ),
+        enacted_year=2018, enacted_month=5, lag_window_months=48,
+        signer_name="Kim Reynolds", signer_party="R",
+    ),
+    # --- Minimum-wage increases (metric_kind="wage"): the policy's own stated goal is to
+    # raise workers' wages, measured against the official state average-hourly-earnings
+    # series via synthetic control. Same neutral question, a different objective metric.
+    "CA-2016-SB3": StatePolicySpec(
+        key="CA-2016-SB3",
+        title="California 2016 minimum wage increase (SB 3)",
+        state_fips="06",
+        state_name="California",
+        # Large/diverse states that kept the federal minimum (no comparable $15 increase).
+        donor_fips=["48", "42", "13", "37", "51"],  # TX PA GA NC VA
+        source_url="https://leginfo.legislature.ca.gov/faces/billNavClient.xhtml?bill_id=201520160SB3",
+        objective_text=(
+            "Raise the statewide minimum wage to $15 per hour so that full-time work does not "
+            "leave workers in poverty, raising wages for low-wage workers."
+        ),
+        enacted_year=2016, enacted_month=4, lag_window_months=48,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="wage",
+    ),
+    "MA-2018-H4640": StatePolicySpec(
+        key="MA-2018-H4640",
+        title="Massachusetts 2018 minimum wage increase (H 4640, grand bargain)",
+        state_fips="25",
+        state_name="Massachusetts",
+        # Regional states without a comparable minimum-wage increase in the window.
+        donor_fips=["33", "42", "51", "48", "37"],  # NH PA VA TX NC
+        source_url="https://malegislature.gov/Bills/190/H4640",
+        objective_text=(
+            "Raise the state minimum wage from $11 to $15 per hour over five years to raise "
+            "workers' wages."
+        ),
+        enacted_year=2018, enacted_month=6, lag_window_months=48,
+        signer_name="Charlie Baker", signer_party="R",
+        metric_kind="wage",
+    ),
+    "MD-2019-SB280": StatePolicySpec(
+        key="MD-2019-SB280",
+        title="Maryland 2019 minimum wage increase (SB 280, Fight for Fifteen)",
+        state_fips="24",
+        state_name="Maryland",
+        # Regional states without a comparable minimum-wage increase in the window.
+        donor_fips=["42", "37", "47", "13", "48"],  # PA NC TN GA TX
+        source_url="https://mgaleg.maryland.gov/mgawebsite/Legislation/Details/sb0280?ys=2019RS",
+        objective_text=(
+            "Raise Maryland's minimum wage to $15 per hour (Fight for Fifteen) to raise wages "
+            "for workers."
+        ),
+        # Enacted over the governor's veto; credit goes to the bill's sponsor, not a signer.
+        enacted_year=2019, enacted_month=3, lag_window_months=48,
+        sponsor_name="Cory McCray", sponsor_party="D",
+        metric_kind="wage",
+    ),
+    "NJ-2019-A15": StatePolicySpec(
+        key="NJ-2019-A15",
+        title="New Jersey 2019 minimum wage increase (A15)",
+        state_fips="34",
+        state_name="New Jersey",
+        # Regional states without a comparable minimum-wage increase in the window.
+        donor_fips=["42", "37", "48", "13", "39"],  # PA NC TX GA OH
+        source_url="https://www.njleg.state.nj.us/bill-search/2018/A15",
+        objective_text=(
+            "Raise the state minimum wage to $15 per hour to lift pay for low-wage workers."
+        ),
+        enacted_year=2019, enacted_month=2, lag_window_months=48,
+        signer_name="Phil Murphy", signer_party="D",
+        metric_kind="wage",
+    ),
+    "IL-2019-SB1": StatePolicySpec(
+        key="IL-2019-SB1",
+        title="Illinois 2019 minimum wage increase (SB 1, PA 101-0001)",
+        state_fips="17",
+        state_name="Illinois",
+        donor_fips=["18", "55", "19", "21", "48"],  # IN WI IA KY TX
+        source_url="https://www.ilga.gov/Legislation/PublicActs/View/101-0001",
+        objective_text=(
+            "Raise the state minimum wage to $15 per hour by 2025 to lift pay for low-wage workers "
+            "(Lifting Up Illinois Working Families Act)."
+        ),
+        enacted_year=2019, enacted_month=2, lag_window_months=48,
+        signer_name="J.B. Pritzker", signer_party="D",
+        metric_kind="wage",
+    ),
+    "OR-2016-SB1532": StatePolicySpec(
+        key="OR-2016-SB1532",
+        title="Oregon 2016 minimum wage increase (SB 1532)",
+        state_fips="41",
+        state_name="Oregon",
+        donor_fips=["16", "30", "49", "56", "48"],  # ID MT UT WY TX
+        source_url="https://olis.oregonlegislature.gov/liz/2016R1/Measures/Overview/SB1532",
+        objective_text=(
+            "Raise Oregon's minimum wage on a tiered schedule through 2022 to lift pay for "
+            "low-wage workers."
+        ),
+        enacted_year=2016, enacted_month=3, lag_window_months=48,
+        signer_name="Kate Brown", signer_party="D",
+        metric_kind="wage",
+    ),
+    "MN-2014-HF2091": StatePolicySpec(
+        key="MN-2014-HF2091",
+        title="Minnesota 2014 minimum wage increase (HF 2091)",
+        state_fips="27",
+        state_name="Minnesota",
+        donor_fips=["55", "18", "38", "46", "21"],  # WI IN ND SD KY
+        source_url="https://www.house.mn.gov/bills/billnum.asp?Bill=HF2091&ssn=0&y=2014",
+        objective_text="Raise the state minimum wage (to $9.50 by 2016) to lift pay for low-wage workers.",
+        enacted_year=2014, enacted_month=4, lag_window_months=48,
+        signer_name="Mark Dayton", signer_party="D",
+        metric_kind="wage",
+    ),
+    "NM-2019-SB437": StatePolicySpec(
+        key="NM-2019-SB437",
+        title="New Mexico 2019 minimum wage increase (SB 437)",
+        state_fips="35",
+        state_name="New Mexico",
+        donor_fips=["48", "40", "20", "49", "28"],  # TX OK KS UT MS
+        source_url="https://www.nmlegis.gov/Legislation/Legislation?chamber=S&legType=B&legNo=437&year=19",
+        objective_text="Raise the statewide minimum wage to $12 per hour by 2023 to lift pay for low-wage workers.",
+        enacted_year=2019, enacted_month=4, lag_window_months=36,
+        signer_name="Michelle Lujan Grisham", signer_party="D",
+        metric_kind="wage",
+    ),
+    "NV-2019-AB456": StatePolicySpec(
+        key="NV-2019-AB456",
+        title="Nevada 2019 minimum wage increase (AB 456)",
+        state_fips="32",
+        state_name="Nevada",
+        donor_fips=["49", "16", "48", "40", "30"],  # UT ID TX OK MT
+        source_url="https://www.leg.state.nv.us/App/NELIS/REL/80th2019/Bill/6730/Overview",
+        objective_text="Raise the state minimum wage on an annual schedule (to $12 by 2024) to lift pay for low-wage workers.",
+        enacted_year=2019, enacted_month=6, lag_window_months=36,
+        signer_name="Steve Sisolak", signer_party="D",
+        metric_kind="wage",
+    ),
+    # --- Poverty and income (metric_kind="poverty"): scored on the Census SAIPE state
+    # poverty rate, where a fall is toward the policy's own stated anti-poverty goal. ---
+    "CA-2015-SB80": StatePolicySpec(
+        key="CA-2015-SB80",
+        title="California Earned Income Tax Credit (CalEITC, SB 80)",
+        state_fips="06",
+        state_name="California",
+        # Large states without a comparable refundable state EITC enacted in the window.
+        donor_fips=["48", "12", "13", "37", "42"],  # TX FL GA NC PA
+        source_url="https://leginfo.legislature.ca.gov/faces/billNavClient.xhtml?bill_id=201520160SB80",
+        objective_text=(
+            "Create a refundable California Earned Income Tax Credit whose stated statutory purpose "
+            "is to reduce poverty among California's poorest working families and individuals."
+        ),
+        enacted_year=2015, enacted_month=6, lag_window_months=48,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="poverty",
+    ),
+    # --- Energy and environment (metric_kind="energy"): scored on EIA state CO2 emissions,
+    # where a fall is toward the policy's own stated decarbonization goal. ---
+    "CA-2015-SB350": StatePolicySpec(
+        key="CA-2015-SB350",
+        title="California 2015 Clean Energy and Pollution Reduction Act (SB 350)",
+        state_fips="06",
+        state_name="California",
+        # Large states without a comparable 2015 clean-energy/emissions mandate.
+        donor_fips=["48", "12", "39", "42", "13"],  # TX FL OH PA GA
+        source_url="https://leginfo.legislature.ca.gov/faces/billNavClient.xhtml?bill_id=201520160SB350",
+        objective_text=(
+            "Cut greenhouse gas emissions by raising the renewable electricity share to 50% and "
+            "doubling energy efficiency savings by 2030 (Clean Energy and Pollution Reduction Act)."
+        ),
+        enacted_year=2015, enacted_month=10, lag_window_months=48,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="energy",
+    ),
+    "VA-2020-VCEA": StatePolicySpec(
+        key="VA-2020-VCEA",
+        title="Virginia Clean Economy Act (HB 1526)",
+        state_fips="51",
+        state_name="Virginia",
+        # Large states without a comparable 100% clean-energy / emissions mandate.
+        donor_fips=["48", "12", "13", "37", "47"],  # TX FL GA NC TN
+        source_url="https://lis.virginia.gov/cgi-bin/legp604.exe?201+sum+HB1526",
+        objective_text=(
+            "End carbon dioxide emissions from electricity and require 100% clean energy "
+            "(Virginia Clean Economy Act)."
+        ),
+        enacted_year=2020, enacted_month=4, lag_window_months=24,
+        signer_name="Ralph Northam", signer_party="D",
+        metric_kind="energy",
+    ),
+    "NM-2019-SB489": StatePolicySpec(
+        key="NM-2019-SB489",
+        title="New Mexico 2019 Energy Transition Act (SB 489)",
+        state_fips="35",
+        state_name="New Mexico",
+        donor_fips=["48", "40", "04", "49", "56"],  # TX OK AZ UT WY
+        source_url="https://www.nmlegis.gov/Legislation/Legislation?chamber=S&legType=B&legNo=489&year=19",
+        objective_text=(
+            "Transition to carbon-free electricity (50% renewable by 2030, 100% carbon-free by "
+            "2045) and cut power-sector emissions (Energy Transition Act)."
+        ),
+        enacted_year=2019, enacted_month=3, lag_window_months=36,
+        signer_name="Michelle Lujan Grisham", signer_party="D",
+        metric_kind="energy",
+    ),
+    "CO-2019-HB1261": StatePolicySpec(
+        key="CO-2019-HB1261",
+        title="Colorado 2019 Climate Action Plan (HB 19-1261)",
+        state_fips="08",
+        state_name="Colorado",
+        donor_fips=["48", "40", "49", "56", "20"],  # TX OK UT WY KS
+        source_url="https://leg.colorado.gov/bills/hb19-1261",
+        objective_text=(
+            "Cut statewide greenhouse gas emissions (at least 26% by 2025, 50% by 2030, 90% by "
+            "2050 vs. 2005) (Climate Action Plan to Reduce Pollution)."
+        ),
+        enacted_year=2019, enacted_month=5, lag_window_months=36,
+        signer_name="Jared Polis", signer_party="D",
+        metric_kind="energy",
+    ),
+    "WA-2019-CETA": StatePolicySpec(
+        key="WA-2019-CETA",
+        title="Washington Clean Energy Transformation Act (SB 5116)",
+        state_fips="53",
+        state_name="Washington",
+        # Western/other states without a comparable 100% clean-electricity mandate.
+        donor_fips=["16", "30", "49", "56", "48"],  # ID MT UT WY TX
+        source_url="https://app.leg.wa.gov/billsummary?BillNumber=5116&Year=2019",
+        objective_text=(
+            "Transition to a greenhouse-gas-free electricity supply by 2045 and cut power-sector "
+            "emissions (Clean Energy Transformation Act)."
+        ),
+        enacted_year=2019, enacted_month=5, lag_window_months=36,
+        signer_name="Jay Inslee", signer_party="D",
+        metric_kind="energy",
+    ),
+    # --- Health (metric_kind="uninsured"): scored on the Census SAHIE state uninsured rate,
+    # where a fall is toward the policy's own stated coverage goal. ---
+    "CA-2014-MEDICAID": StatePolicySpec(
+        key="CA-2014-MEDICAID",
+        title="California Affordable Care Act Medicaid (Medi-Cal) expansion (ABX1 1)",
+        state_fips="06",
+        state_name="California",
+        # Large states that did not expand Medicaid in 2014 (clean non-treated controls).
+        donor_fips=["48", "12", "13", "37", "47"],  # TX FL GA NC TN
+        source_url="https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=201320141ABX11",
+        objective_text=(
+            "Expand Medicaid (Medi-Cal) eligibility under the Affordable Care Act to reduce the "
+            "number of uninsured Californians."
+        ),
+        # Evaluated from the coverage effective date (Jan 1, 2014).
+        enacted_year=2014, enacted_month=1, lag_window_months=36,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="uninsured",
+    ),
+    "LA-2016-MEDICAID": StatePolicySpec(
+        key="LA-2016-MEDICAID",
+        title="Louisiana Medicaid expansion (Executive Order JBE 16-01)",
+        state_fips="22",
+        state_name="Louisiana",
+        # Southern states that had not expanded Medicaid (clean non-treated controls).
+        donor_fips=["48", "28", "01", "45", "47"],  # TX MS AL SC TN
+        source_url="https://gov.louisiana.gov/assets/ExecutiveOrders/JBE-16-01.pdf",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act to reduce the number of "
+            "uninsured working Louisianans (effective July 1, 2016)."
+        ),
+        enacted_year=2016, enacted_month=7, lag_window_months=36,
+        signer_name="John Bel Edwards", signer_party="D",
+        metric_kind="uninsured",
+    ),
+    "MT-2016-MEDICAID": StatePolicySpec(
+        key="MT-2016-MEDICAID",
+        title="Montana Medicaid expansion (HELP Act, SB 405)",
+        state_fips="30",
+        state_name="Montana",
+        donor_fips=["56", "46", "20", "48", "28"],  # WY SD KS TX MS
+        source_url="https://leg.mt.gov/bills/2015/billpdf/SB0405.pdf",
+        objective_text=(
+            "Expand Medicaid coverage to low-income adults to reduce the number of uninsured "
+            "Montanans (Montana HELP Act; coverage effective Jan 1, 2016)."
+        ),
+        enacted_year=2016, enacted_month=1, lag_window_months=36,
+        signer_name="Steve Bullock", signer_party="D",
+        metric_kind="uninsured",
+    ),
+    "VA-2019-MEDICAID": StatePolicySpec(
+        key="VA-2019-MEDICAID",
+        title="Virginia Medicaid expansion (2018 budget, HB 5002)",
+        state_fips="51",
+        state_name="Virginia",
+        donor_fips=["37", "47", "13", "45", "48"],  # NC TN GA SC TX
+        source_url="https://lis.virginia.gov/cgi-bin/legp604.exe?181+sum+HB5002",
+        objective_text=(
+            "Expand Medicaid eligibility to low-income adults to reduce the number of uninsured "
+            "Virginians (coverage effective Jan 1, 2019)."
+        ),
+        enacted_year=2019, enacted_month=1, lag_window_months=24,
+        signer_name="Ralph Northam", signer_party="D",
+        metric_kind="uninsured",
+    ),
+    "ID-2020-MEDICAID": StatePolicySpec(
+        key="ID-2020-MEDICAID",
+        title="Idaho Medicaid expansion (Proposition 2)",
+        state_fips="16",
+        state_name="Idaho",
+        donor_fips=["56", "46", "20", "48", "47"],  # WY SD KS TX TN
+        source_url="https://sos.idaho.gov/elect/inits/2018/prop2.pdf",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act (voter Proposition 2) to "
+            "reduce the number of uninsured Idahoans (coverage effective Jan 1, 2020)."
+        ),
+        enacted_year=2020, enacted_month=1, lag_window_months=24,
+        signer_name="Brad Little", signer_party="R",
+        metric_kind="uninsured",
+    ),
+    # --- Health: drug-overdose mortality (metric_kind="overdose"), CDC age-adjusted rate,
+    # where a fall is toward the policy's own stated goal of curbing overdose deaths. ---
+    "FL-2011-PILLMILL": StatePolicySpec(
+        key="FL-2011-PILLMILL",
+        title="Florida 2011 prescription-drug ('pill mill') crackdown (HB 7095)",
+        state_fips="12",
+        state_name="Florida",
+        # Southeastern states without a comparable 2011 pill-mill crackdown.
+        donor_fips=["13", "01", "45", "37", "47"],  # GA AL SC NC TN
+        source_url="https://www.flsenate.gov/Session/Bill/2011/7095",
+        objective_text=(
+            "Crack down on prescription-drug 'pill mills' and over-prescription of controlled "
+            "substances to reduce prescription-drug overdose deaths in Florida (HB 7095)."
+        ),
+        enacted_year=2011, enacted_month=7, lag_window_months=48,
+        signer_name="Rick Scott", signer_party="R",
+        metric_kind="overdose",
+    ),
+    # --- Education: NAEP grade-4 reading (metric_kind="naep_reading4"), where a rise in the
+    # mean scale score is toward the reform's own stated literacy goal. ---
+    "MS-2013-LBPA": StatePolicySpec(
+        key="MS-2013-LBPA",
+        title="Mississippi 2013 Literacy-Based Promotion Act (SB 2347)",
+        state_fips="28",
+        state_name="Mississippi",
+        # Southeastern states without a comparable 2013 early-literacy/retention reform.
+        donor_fips=["01", "22", "05", "47", "45"],  # AL LA AR TN SC
+        source_url="https://billstatus.ls.state.ms.us/2013/pdf/history/SB/SB2347.xml",
+        objective_text=(
+            "Improve early-grade reading achievement through screening, intervention, and a "
+            "third-grade reading gate (Literacy-Based Promotion Act), measured by fourth-grade "
+            "reading proficiency."
+        ),
+        enacted_year=2013, enacted_month=4, lag_window_months=72,
+        signer_name="Phil Bryant", signer_party="R",
+        metric_kind="naep_reading4",
+    ),
+    # --- Additional minimum-wage laws (metric_kind="wage"): scored on the BLS state average
+    # hourly earnings series, where a rise is toward the law's stated wage-raising goal. ---
+    "CT-2019-HB5004": StatePolicySpec(
+        key="CT-2019-HB5004",
+        title="Connecticut minimum wage increase to $15 (Public Act 19-4)",
+        state_fips="09",
+        state_name="Connecticut",
+        # Peer states that kept the federal minimum in the window.
+        donor_fips=["42", "47", "13", "45", "48"],  # PA TN GA SC TX
+        source_url="https://www.cga.ct.gov/2019/act/pa/pdf/2019PA-00004-R00HB-05004-PA.pdf",
+        objective_text=(
+            "Raise Connecticut's minimum wage in steps to $15 by 2023 to increase pay for the "
+            "state's lowest-wage workers (Public Act 19-4; first increase Oct 1, 2019)."
+        ),
+        enacted_year=2019, enacted_month=10, lag_window_months=36,
+        signer_name="Ned Lamont", signer_party="D",
+        metric_kind="wage",
+    ),
+    "VA-2020-HB395": StatePolicySpec(
+        key="VA-2020-HB395",
+        title="Virginia minimum wage increase (HB 395)",
+        state_fips="51",
+        state_name="Virginia",
+        donor_fips=["37", "47", "13", "45", "48"],  # NC TN GA SC TX
+        source_url="https://lis.virginia.gov/cgi-bin/legp604.exe?201+sum+HB395",
+        objective_text=(
+            "Raise Virginia's minimum wage in steps toward $15 to increase pay for the state's "
+            "lowest-wage workers (HB 395; first increase May 1, 2021)."
+        ),
+        enacted_year=2021, enacted_month=5, lag_window_months=24,
+        signer_name="Ralph Northam", signer_party="D",
+        metric_kind="wage",
+    ),
+    "DE-2021-SB15": StatePolicySpec(
+        key="DE-2021-SB15",
+        title="Delaware minimum wage increase to $15 (SB 15)",
+        state_fips="10",
+        state_name="Delaware",
+        donor_fips=["42", "47", "13", "45", "37"],  # PA TN GA SC NC
+        source_url="https://legis.delaware.gov/BillDetail?legislationId=68328",
+        objective_text=(
+            "Raise Delaware's minimum wage in steps to $15 by 2025 to increase pay for the state's "
+            "lowest-wage workers (SB 15; first increase Jan 1, 2022)."
+        ),
+        enacted_year=2022, enacted_month=1, lag_window_months=24,
+        signer_name="John Carney", signer_party="D",
+        metric_kind="wage",
+    ),
+    # --- Child poverty (metric_kind="child_poverty"): an anti-poverty credit measured against
+    # the Census SAIPE under-18 poverty rate, where a fall is toward its stated goal. ---
+    "CA-2015-SB80-CHILD": StatePolicySpec(
+        key="CA-2015-SB80-CHILD",
+        title="California EITC (CalEITC) \u2014 child-poverty outcome (SB 80)",
+        state_fips="06",
+        state_name="California",
+        donor_fips=["48", "12", "13", "37", "42"],  # TX FL GA NC PA
+        source_url="https://leginfo.legislature.ca.gov/faces/billNavClient.xhtml?bill_id=201520160SB80",
+        objective_text=(
+            "Create a refundable California Earned Income Tax Credit whose stated purpose is to "
+            "reduce poverty among California's poorest working families, including children."
+        ),
+        enacted_year=2015, enacted_month=6, lag_window_months=48,
+        signer_name="Edmund G. Brown Jr.", signer_party="D",
+        metric_kind="child_poverty",
+    ),
+    "NE-2020-MEDICAID": StatePolicySpec(
+        key="NE-2020-MEDICAID",
+        title="Nebraska Medicaid expansion (Initiative 427)",
+        state_fips="31",
+        state_name="Nebraska",
+        donor_fips=["20", "56", "46", "48", "47"],  # KS WY SD TX TN
+        source_url="https://sos.nebraska.gov/sites/sos.nebraska.gov/files/doc/elections/2018/Initiative_427.pdf",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act (voter Initiative 427) to "
+            "reduce the number of uninsured Nebraskans (coverage effective Oct 1, 2020)."
+        ),
+        enacted_year=2020, enacted_month=10, lag_window_months=24,
+        metric_kind="uninsured", sponsor_name="Nebraska Initiative 427",
+    ),
+    "MO-2021-MEDICAID": StatePolicySpec(
+        key="MO-2021-MEDICAID",
+        title="Missouri Medicaid expansion (Amendment 2)",
+        state_fips="29",
+        state_name="Missouri",
+        donor_fips=["20", "47", "13", "28", "48"],  # KS TN GA MS TX
+        source_url="https://www.sos.mo.gov/CMSImages/Elections/Petitions/2020-050.pdf",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act (voter Amendment 2) to "
+            "reduce the number of uninsured Missourians (coverage effective July 1, 2021)."
+        ),
+        enacted_year=2021, enacted_month=7, lag_window_months=24,
+        metric_kind="uninsured", sponsor_name="Missouri Amendment 2",
+    ),
+    "NY-2016-MINWAGE": StatePolicySpec(
+        key="NY-2016-MINWAGE",
+        title="New York minimum wage increase toward $15 (S6406C, FY2017 budget)",
+        state_fips="36",
+        state_name="New York",
+        donor_fips=["42", "47", "13", "45", "48"],  # PA TN GA SC TX
+        source_url="https://www.nysenate.gov/legislation/bills/2015/s6406",
+        objective_text=(
+            "Raise New York's minimum wage in steps toward $15 to increase pay for the state's "
+            "lowest-wage workers (first increase Dec 31, 2016)."
+        ),
+        enacted_year=2016, enacted_month=12, lag_window_months=36,
+        signer_name="Andrew M. Cuomo", signer_party="D",
+        metric_kind="wage",
+    ),
+    "KY-2012-HB1": StatePolicySpec(
+        key="KY-2012-HB1",
+        title="Kentucky 2012 prescription-drug ('pill mill') crackdown (HB 1)",
+        state_fips="21",
+        state_name="Kentucky",
+        donor_fips=["47", "51", "13", "01", "29"],  # TN VA GA AL MO
+        source_url="https://apps.legislature.ky.gov/record/12rs/hb1.html",
+        objective_text=(
+            "Crack down on prescription-drug 'pill mills' and over-prescription of controlled "
+            "substances to reduce prescription-drug overdose deaths in Kentucky (HB 1)."
+        ),
+        enacted_year=2012, enacted_month=7, lag_window_months=48,
+        signer_name="Steve Beshear", signer_party="D",
+        metric_kind="overdose",
     ),
 }
 
@@ -249,17 +963,23 @@ class ScoreOutcome:
     reproducible_hash: str | None
 
 
-def _obs_window(enacted: date, lag_months: int) -> tuple[str, str]:
+def _obs_window(enacted: date, lag_months: int, pre_years: int = 3) -> tuple[str, str]:
     """Inclusive ISO bounds for an EU's outcome series, so EUs that share a metric
     (e.g. two laws both scored on nonfarm employment) never pollute each other's
-    observation set — which keeps every score run deterministic and reproducible."""
-    start = f"{enacted.year - 3}-01-01"
+    observation set — which keeps every score run deterministic and reproducible.
+    ``pre_years`` widens the pre-period (annual official series need more years)."""
+    start = f"{enacted.year - pre_years}-01-01"
     end = f"{enacted.year + (lag_months // 12) + 2}-12-31"
     return start, end
 
 
 def _windowed_observations(session: Session, metric_id: int, enacted: date, lag_months: int):
-    start, end = _obs_window(enacted, lag_months)
+    # Derive the pre-window from the metric's series kind so the original score and any
+    # reproduced re-run pull the exact same observation set (annual -> longer pre-window).
+    nsid = session.execute(
+        select(Metric.native_series_id).where(Metric.id == metric_id)
+    ).scalar_one_or_none()
+    start, end = _obs_window(enacted, lag_months, _pre_years_for(nsid))
     rows = session.execute(
         select(Observation.period, Observation.value).where(
             Observation.metric_id == metric_id,
@@ -771,16 +1491,13 @@ def _eu_donor_observations(action: Action) -> tuple[dict[str, list[tuple[str, ob
     prev = os.environ.get("DZ_HTTP_CACHE")
     os.environ["DZ_HTTP_CACHE"] = "1"
     try:
-        sy = spec.enacted_year - 3
+        nsid0 = state_series_id(spec.state_fips, spec.metric_kind)
+        sy = spec.enacted_year - _pre_years_for(nsid0)
         ey = spec.enacted_year + (spec.lag_window_months // 12) + 2
         for dfips in spec.donor_fips:
-            dfetch = bls_adapter.fetch(state_employment_series_id(dfips), start_year=sy, end_year=ey)
+            dfetch, pts = _fetch_state_series_points(state_series_id(dfips, spec.metric_kind), start_year=sy, end_year=ey)
             donor_source_urls.append(dfetch.source_url)
-            dseries = json.loads(dfetch.content)["Results"]["series"][0]
-            donor_observations[dfips] = [
-                (f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
-                for pt in dseries["data"] if pt["period"].startswith("M")
-            ]
+            donor_observations[dfips] = pts
     finally:
         if prev is None:
             os.environ.pop("DZ_HTTP_CACHE", None)
@@ -1238,6 +1955,253 @@ def batch_score_executive_orders(session: Session, limit: int = 25) -> list[Scor
     return results
 
 
+def ingest_executive_actions(
+    session: Session, *, new_limit: int = 400, max_pages: int = 40, per_page: int = 100,
+) -> int:
+    """Activity/record layer for the executive: ingest recent executive orders (Federal
+    Register, keyless) as Action + ExecutiveOrder rows attributed to the signing president,
+    WITHOUT scoring. This makes a president's full term visible (what they acted on) — the
+    analogue of sponsored bills for members. Recency-first, idempotent, capped per run."""
+    import json as _json
+
+    from degreezeor.ingestion.adapters.federalregister import federal_register_adapter
+    from degreezeor.ingestion.http import client as _client
+
+    url = f"{federal_register_adapter.base_url}/documents.json"
+    inserted = 0
+    for page in range(1, max_pages + 1):
+        if inserted >= new_limit:
+            break
+        params = {
+            "conditions[type][]": "PRESDOCU",
+            "conditions[presidential_document_type][]": "executive_order",
+            "order": "newest", "per_page": str(per_page), "page": str(page),
+            "fields[]": ["document_number", "executive_order_number"],
+        }
+        try:
+            content = _client.get_bytes(url, params=params)
+        except Exception:  # noqa: BLE001 - never fatal
+            break
+        results = _json.loads(content).get("results", [])
+        if not results:
+            break
+        for r in results:
+            if inserted >= new_limit:
+                break
+            doc_num = r.get("document_number")
+            eo_num = r.get("executive_order_number")
+            if not doc_num:
+                continue
+            native = f"EO{eo_num}" if eo_num else f"FR{doc_num}"
+            if session.execute(
+                select(Action.id).where(Action.native_identifier == native, Action.type == "eo")
+            ).scalar_one_or_none():
+                continue  # already stored (idempotent; cheap — no per-doc fetch)
+            try:
+                load_executive_order(session, doc_num)
+                inserted += 1
+            except Exception:  # noqa: BLE001 - one bad doc must not abort the batch
+                continue
+        session.flush()
+    return inserted
+
+
+def mark_officials_in_office(session: Session) -> int:
+    """Flag officials who currently hold office: the current-legislators roster plus the
+    sitting president. Display metadata only; never read by scoring. Returns the count flagged."""
+    from degreezeor.core.reference import current_executive_bioguides
+    from degreezeor.ingestion.adapters.congress_legislators import congress_legislators_adapter
+
+    roster_ok = True
+    try:
+        current = congress_legislators_adapter.current_bioguide_ids()
+    except Exception as exc:  # noqa: BLE001 - never fatal
+        log.warning("could not load current legislators roster: %s", exc)
+        current, roster_ok = set(), False
+    # Always include sitting executive officeholders (president + VP), roster or not.
+    current |= current_executive_bioguides()
+    # Only reset all flags when we actually have the roster (so a transient roster failure
+    # can't wipe everyone's in-office status); always (re-)affirm the current set.
+    if roster_ok:
+        session.execute(sa_update(Official).values(in_office=False))
+    if current:
+        session.execute(
+            sa_update(Official).where(Official.bioguide_id.in_(current)).values(in_office=True)
+        )
+    session.flush()
+    return session.execute(
+        select(func.count()).select_from(Official).where(Official.in_office.is_(True))
+    ).scalar() or 0
+
+
+def purge_empty_officials(session: Session) -> int:
+    """Remove official records that carry NO record anywhere — no scored attribution, no
+    sponsored/cosponsored bills, no recorded votes, no signed laws/EOs. These are data
+    artifacts (e.g. vote-derived stubs that never linked). Officials who genuinely held office
+    are kept by design: their record stands regardless of whether they're still in office."""
+    from degreezeor.core.models import (
+        BillCosponsor,
+        ExecutiveOrder,
+        Law,
+        OfficeTerm,
+        VotePosition,
+    )
+
+    referenced: set[int] = set()
+    referenced |= {x for (x,) in session.execute(
+        select(AttributionWeight.official_id).distinct()).all() if x is not None}
+    referenced |= {x for (x,) in session.execute(
+        select(Bill.sponsor_official_id).where(Bill.sponsor_official_id.is_not(None)).distinct()).all()}
+    referenced |= {x for (x,) in session.execute(
+        select(BillCosponsor.official_id).distinct()).all() if x is not None}
+    referenced |= {x for (x,) in session.execute(
+        select(VotePosition.official_id).distinct()).all() if x is not None}
+    referenced |= {x for (x,) in session.execute(
+        select(ExecutiveOrder.signing_official_id).where(
+            ExecutiveOrder.signing_official_id.is_not(None)).distinct()).all()}
+    referenced |= {x for (x,) in session.execute(
+        select(Law.signed_by_official_id).where(Law.signed_by_official_id.is_not(None)).distinct()).all()}
+
+    all_ids = {x for (x,) in session.execute(select(Official.id)).all()}
+    orphans = all_ids - referenced
+    if not orphans:
+        return 0
+    session.execute(sa_delete(OfficeTerm).where(OfficeTerm.official_id.in_(orphans)))
+    session.execute(sa_delete(Official).where(Official.id.in_(orphans)))
+    session.flush()
+    return len(orphans)
+
+
+def backfill_eo_source_urls(session: Session, *, limit: int = 8000) -> int:
+    """Repair executive-order links that point at the bare /documents/<doc> form (which can
+    404) by switching to the Federal Register's guaranteed /d/<doc> permalink."""
+    rows = session.execute(
+        select(Action.id, ExecutiveOrder.fr_doc_number)
+        .join(ExecutiveOrder, ExecutiveOrder.action_id == Action.id)
+        .where(Action.type == "eo", ExecutiveOrder.fr_doc_number.is_not(None),
+               Action.source_url.notlike("%federalregister.gov/d/%"),
+               Action.source_url.notlike("%/documents/2%/%/%"))  # leave canonical date-path URLs
+        .limit(limit)
+    ).all()
+    fixed = 0
+    for aid, doc in rows:
+        session.execute(sa_update(Action).where(Action.id == aid).values(
+            source_url=f"https://www.federalregister.gov/d/{doc}"))
+        fixed += 1
+    session.flush()
+    return fixed
+
+
+def backfill_eo_categories(session: Session, *, limit: int = 6000) -> int:
+    """Re-classify executive orders that still carry the legacy uniform domain (or none) so
+    the executive record groups by topic. Deterministic; uses the EO's title + objective text."""
+    from degreezeor.categories import classify_executive_domain
+
+    rows = session.execute(
+        select(Action.id, Action.title, Action.domain, Objective.text)
+        .join(ExecutiveOrder, ExecutiveOrder.action_id == Action.id)
+        .join(Objective, Objective.action_id == Action.id, isouter=True)
+        .where(Action.type == "eo",
+               Action.domain.in_(["Economics and Public Finance", "Government Operations and Politics"])
+               | Action.domain.is_(None))
+        .limit(limit)
+    ).all()
+    fixed = 0
+    seen: set[int] = set()
+    for aid, title, _domain, otext in rows:
+        if aid in seen:
+            continue
+        seen.add(aid)
+        new_domain = classify_executive_domain(f"{title}. {otext or ''}")
+        if new_domain:
+            session.execute(
+                sa_update(Action).where(Action.id == aid).values(domain=new_domain)
+            )
+            fixed += 1
+    session.flush()
+    return fixed
+
+
+def backfill_vote_categories(session: Session, *, limit: int = 20000) -> int:
+    """Fill in the topic for roll-call votes that were ingested before the bill they reference
+    was in our record. Looks up the bill (congress + bill_number) and applies its category."""
+    from degreezeor.categories import category_for
+    from degreezeor.core.models import Vote
+
+    bill_idx: dict[tuple[int, str], str | None] = {}
+    for congress, bn, domain in session.execute(
+        select(Bill.congress, Bill.bill_number, Action.domain)
+        .join(Action, Action.id == Bill.action_id)
+    ).all():
+        if congress and bn:
+            bill_idx[(congress, bn)] = domain
+    rows = session.execute(
+        select(Vote.id, Vote.congress, Vote.bill_number)
+        .where(Vote.category.is_(None), Vote.bill_number.is_not(None),
+               Vote.roll_call.is_not(None))
+        .limit(limit)
+    ).all()
+    fixed = 0
+    for vid, congress, bn in rows:
+        key = (congress, bn)
+        if key not in bill_idx:
+            continue
+        cat = category_for(bill_idx[key], "bill")
+        session.execute(sa_update(Vote).where(Vote.id == vid).values(category=cat))
+        fixed += 1
+    session.flush()
+    return fixed
+
+
+def backfill_eo_signers(session: Session, *, limit: int = 5000) -> int:
+    """Repair executive orders scored before their president's term was on record (e.g. EOs
+    signed after the last known term started): set the signer from the action date and
+    re-derive the (deterministic) attribution so the EO appears on that president's record.
+
+    The EO composite is signer-independent — only the official rollup changes — so this
+    produces exactly what a fresh scoring run would, without re-scoring or touching the audit
+    chain of scores. Idempotent: once a signer is set the EO is no longer selected."""
+    from degreezeor.core.reference import president_on
+
+    rows = session.execute(
+        select(ExecutiveOrder, Action)
+        .join(Action, Action.id == ExecutiveOrder.action_id)
+        .where(ExecutiveOrder.signing_official_id.is_(None), Action.action_date.is_not(None))
+        .limit(limit)
+    ).all()
+    fixed = 0
+    for eo, action in rows:
+        pres = president_on(session, action.action_date)
+        if pres is None:
+            continue
+        eo.signing_official_id = pres.id
+        for eu in session.execute(
+            select(EvaluationUnit).where(EvaluationUnit.action_id == action.id)
+        ).scalars().all():
+            # Only re-derive for FINALIZED EUs (those already carry attribution rows); leave
+            # insufficient/non-scoreable EUs untouched so nothing un-scored gains attribution.
+            if session.execute(
+                select(AttributionWeight.id).where(AttributionWeight.eu_id == eu.id).limit(1)
+            ).scalar() is None:
+                continue
+            actx = AttributionContext(
+                eu_id=eu.id, action_type=action.type, sponsor_official_id=None,
+                signer_official_id=pres.id, vote_margin=None, member_on_winning_side=None,
+            )
+            attributions = build_attribution(actx)
+            session.execute(sa_delete(AttributionWeight).where(AttributionWeight.eu_id == eu.id))
+            for a in attributions:
+                session.add(AttributionWeight(
+                    eu_id=eu.id, official_id=a.official_id, role=a.role,
+                    authority=q_score(a.authority), pivotality=q_score(a.pivotality),
+                    attribution=q_score(a.attribution), attr_ci_low=q_score(a.attr_ci_low),
+                    attr_ci_high=q_score(a.attr_ci_high), is_residual=a.is_residual,
+                ))
+        fixed += 1
+    session.flush()
+    return fixed
+
+
 def batch_score_regulations(session: Session, limit: int = 25) -> list[ScoreOutcome]:
     """Breadth: ingest + score recent final agency rules (Federal Register, keyless).
     Most land insufficient-evidence (a single federal series can't isolate one rule) —
@@ -1512,6 +2476,305 @@ def ingest_state_policies(session: Session, keys: list[str] | None = None) -> li
     return results
 
 
+def ingest_member_bills(
+    session: Session, congress: int, *, new_limit: int = 1000, max_pages: int = 30,
+    page_size: int = 250, with_cosponsors: bool = True,
+) -> int:
+    """Record the bills members SPONSORED in a Congress as categorized, unscored 'recorded'
+    actions, so an official's full record of WHAT THEY ACTED ON (by topic) is visible even
+    when nothing can be scored. This is the activity/record layer, distinct from the scored
+    outcome layer; it never produces a composite.
+
+    Idempotent + incremental: skips bills already stored and inserts up to ``new_limit`` new
+    ones per call (bounding per-bill detail fetches). The list is newest-updated first, so
+    recent activity is ingested first; repeated cron runs fill in the rest. Sponsors are
+    resolved to officials with their real names (so this also repairs vote-derived stubs)."""
+    from degreezeor.core.reference import ensure_party_term, ensure_us_federal
+    from degreezeor.ingestion.adapters.congress import congress_adapter
+
+    ensure_source(session, name=congress_adapter.name, tier=congress_adapter.tier,
+                  base_url=congress_adapter.base_url)
+    src_id = session.execute(
+        select(DataSource.id).where(DataSource.name == congress_adapter.name)
+    ).scalar_one()
+    jur = ensure_us_federal(session)
+
+    def _resolve_member(member: dict) -> Official | None:
+        """Get-or-create an official from a Congress.gov member dict (sponsor or cosponsor),
+        upgrading a vote-derived name stub to a real name and recording party (audit only)."""
+        bio = member.get("bioguideId")
+        if not bio:
+            return None
+        name = " ".join(x for x in [member.get("firstName"), member.get("lastName")] if x).strip() \
+            or member.get("fullName") or bio
+        official = session.execute(
+            select(Official).where(Official.bioguide_id == bio)
+        ).scalar_one_or_none()
+        if official is None:
+            official = Official(full_name=name, bioguide_id=bio)
+            session.add(official)
+            session.flush()
+        elif official.full_name and (
+            len(official.full_name.split()) <= 1 or "(" in official.full_name or "[" in official.full_name
+        ):
+            official.full_name = name
+        if member.get("party"):
+            ensure_party_term(session, official, member["party"])
+        return official
+
+    inserted = 0
+    for page in range(max_pages):
+        if inserted >= new_limit:
+            break
+        lf = congress_adapter.fetch_bill_list(congress, limit=page_size, offset=page * page_size)
+        items = json.loads(lf.content).get("bills", [])
+        if not items:
+            break
+        for it in items:
+            if inserted >= new_limit:
+                break
+            btype = (it.get("type") or "").lower()
+            num = it.get("number")
+            if not btype or num is None:
+                continue
+            native = f"bill/{congress}/{btype}/{num}"
+            if session.execute(
+                select(Action.id).where(Action.native_identifier == native)
+            ).scalar_one_or_none():
+                continue  # already recorded (idempotent)
+            try:
+                df = congress_adapter.fetch_bill(congress, btype, int(num))
+            except Exception:  # noqa: BLE001 - one bad bill must not abort the batch
+                continue
+            bill = json.loads(df.content).get("bill", {})
+            sponsors = bill.get("sponsors") or []
+            if not sponsors or not sponsors[0].get("bioguideId"):
+                continue
+            land(session, df)
+            official = _resolve_member(sponsors[0])
+            if official is None:
+                continue
+            intro = bill.get("introducedDate")
+            action = Action(
+                type="bill", title=bill.get("title") or native,
+                action_date=date.fromisoformat(intro) if intro else None,
+                jurisdiction_id=jur.id, source_id=src_id, source_url=df.source_url,
+                native_identifier=native, content_hash=df.content_hash,
+                domain=(bill.get("policyArea") or {}).get("name"),
+            )
+            session.add(action)
+            session.flush()
+            session.add(Bill(action_id=action.id, congress=congress,
+                             bill_number=f"{btype.upper()}{num}", sponsor_official_id=official.id,
+                             status="introduced"))
+            # Cosponsors: who else backed it (best-effort; the bill is recorded either way).
+            if with_cosponsors:
+                try:
+                    cf = congress_adapter.fetch_bill_cosponsors(congress, btype, int(num))
+                    seen_co: set[int] = set()
+                    for co in json.loads(cf.content).get("cosponsors", []):
+                        cofficial = _resolve_member(co)
+                        if cofficial is None or cofficial.id == official.id or cofficial.id in seen_co:
+                            continue
+                        seen_co.add(cofficial.id)
+                        session.add(BillCosponsor(action_id=action.id, official_id=cofficial.id))
+                except Exception:  # noqa: BLE001 - cosponsors are best-effort
+                    pass
+            inserted += 1
+        session.flush()
+    return inserted
+
+
+def _norm_legis_num(legis_num: str) -> str | None:
+    """Normalize a Clerk ``legis-num`` ('H R 1', 'H RES 5') to our bill_number ('HR1', 'HRES5').
+    Returns None for non-bill votes (QUORUM, MOTION, journal, etc.)."""
+    norm = (legis_num or "").replace(" ", "").replace(".", "").upper()
+    if not norm or not any(ch.isdigit() for ch in norm) or not norm[0].isalpha():
+        return None
+    return norm
+
+
+def ingest_house_votes(
+    session: Session, year: int, *, new_limit: int = 250, max_roll: int = 900,
+) -> int:
+    """Activity/record layer: every House recorded (roll-call) vote for a calendar year, as
+    Vote + VotePosition rows (the full member record). Keyless (clerk.house.gov), idempotent
+    on the roll-call URL, resumable (skips rolls already stored), capped per run. Votes are
+    categorized via the bill they reference when that bill is in our record."""
+    import re
+
+    from degreezeor.categories import category_for
+    from degreezeor.core.models import Vote, VotePosition
+    from degreezeor.ingestion.adapters.house_clerk import house_clerk_adapter, parse_house_vote
+
+    congress = (year - 1789) // 2 + 1
+    prefix = f"https://clerk.house.gov/evs/{year}/roll"
+    done: set[int] = set()
+    for (q,) in session.execute(select(Vote.question).where(Vote.question.like(prefix + "%"))).all():
+        m = re.search(r"/roll(\d+)\.xml", q or "")
+        if m:
+            done.add(int(m.group(1)))
+
+    # Bill (congress, bill_number) -> (action_id, domain) for categorizing votes by topic.
+    bill_idx: dict[str, tuple[int, str | None]] = {}
+    for bn, aid, domain in session.execute(
+        select(Bill.bill_number, Bill.action_id, Action.domain)
+        .join(Action, Action.id == Bill.action_id)
+        .where(Bill.congress == congress)
+    ).all():
+        if bn:
+            bill_idx[bn] = (aid, domain)
+
+    inserted = 0
+    misses = 0
+    for roll in range(1, max_roll + 1):
+        if inserted >= new_limit:
+            break
+        if roll in done:
+            continue
+        url = f"{prefix}{roll:03d}.xml"
+        try:
+            vf = house_clerk_adapter.fetch(url)
+        except Exception:  # noqa: BLE001 - a 404 means we've passed the last roll of the year
+            misses += 1
+            if misses >= 2:
+                break
+            continue
+        misses = 0
+        try:
+            hv = parse_house_vote(vf.content)
+        except Exception:  # noqa: BLE001 - one malformed file must not abort the batch
+            continue
+        if not hv.positions:
+            continue
+        land(session, vf)
+        bn = _norm_legis_num(hv.legis_num)
+        linked = bill_idx.get(bn) if bn else None
+        category = category_for(linked[1], "bill") if linked else None
+        vote = Vote(
+            action_id=linked[0] if linked else None, chamber="house", question=url,
+            vote_date=hv.vote_date, yea=hv.yea, nay=hv.nay, present=hv.present,
+            not_voting=hv.not_voting, result=hv.result or None,
+            congress=hv.congress or congress, roll_call=hv.rollcall_num or roll,
+            bill_number=bn, category=category,
+        )
+        session.add(vote)
+        session.flush()
+        seen_v: set[int] = set()
+        for mv in hv.positions:
+            if not mv.bioguide_id:
+                continue
+            official = session.execute(
+                select(Official).where(Official.bioguide_id == mv.bioguide_id)
+            ).scalar_one_or_none()
+            if official is None:
+                official = Official(full_name=mv.name or mv.bioguide_id, bioguide_id=mv.bioguide_id)
+                session.add(official)
+                session.flush()
+            if official.id in seen_v:
+                continue
+            seen_v.add(official.id)
+            session.add(VotePosition(vote_id=vote.id, official_id=official.id, position=mv.position))
+        inserted += 1
+    session.flush()
+    return inserted
+
+
+def ingest_senate_votes(
+    session: Session, year: int, *, new_limit: int = 250, max_vote: int = 800,
+) -> int:
+    """Activity/record layer: every Senate recorded (roll-call) vote for a calendar year, as
+    Vote + VotePosition rows. Keyless (senate.gov); senators key on ``lis_member_id`` so we
+    resolve each to a Bioguide-keyed Official via the crosswalk. Idempotent on the roll-call
+    URL, resumable, capped per run, categorized via the referenced bill when in our record."""
+    import re
+
+    from degreezeor.categories import category_for
+    from degreezeor.core.models import Vote, VotePosition
+    from degreezeor.ingestion.adapters.congress_legislators import congress_legislators_adapter
+    from degreezeor.ingestion.adapters.senate import parse_senate_vote, senate_rollcall_adapter
+
+    congress = (year - 1789) // 2 + 1
+    sess = year - (1789 + 2 * (congress - 1)) + 1  # 1 = first (odd) year, 2 = second (even)
+    base = "https://www.senate.gov/legislative/LIS/roll_call_votes"
+    prefix = f"{base}/vote{congress}{sess}/vote_{congress}_{sess}_"
+    done: set[int] = set()
+    for (q,) in session.execute(select(Vote.question).where(Vote.question.like(prefix + "%"))).all():
+        m = re.search(r"_(\d+)\.xml", q or "")
+        if m:
+            done.add(int(m.group(1)))
+
+    bill_idx: dict[str, tuple[int, str | None]] = {}
+    for bn, aid, domain in session.execute(
+        select(Bill.bill_number, Bill.action_id, Action.domain)
+        .join(Action, Action.id == Bill.action_id)
+        .where(Bill.congress == congress)
+    ).all():
+        if bn:
+            bill_idx[bn] = (aid, domain)
+
+    lis_map = congress_legislators_adapter.lis_to_bioguide()
+    inserted = 0
+    misses = 0
+    for n in range(1, max_vote + 1):
+        if inserted >= new_limit:
+            break
+        if n in done:
+            continue
+        url = f"{prefix}{n:05d}.xml"
+        try:
+            vf = senate_rollcall_adapter.fetch(url)
+            sv = parse_senate_vote(vf.content)
+        except Exception:  # noqa: BLE001 - a missing vote (301/redirect) ends the session
+            misses += 1
+            if misses >= 2:
+                break
+            continue
+        if not sv.positions:
+            misses += 1
+            if misses >= 2:
+                break
+            continue
+        misses = 0
+        land(session, vf)
+        bn = _norm_legis_num(sv.document)
+        linked = bill_idx.get(bn) if bn else None
+        category = category_for(linked[1], "bill") if linked else None
+        vote = Vote(
+            action_id=linked[0] if linked else None, chamber="senate", question=url,
+            vote_date=sv.vote_date, yea=sv.yea, nay=sv.nay, present=sv.present,
+            not_voting=sv.not_voting, result=sv.result,
+            congress=sv.congress or congress, roll_call=sv.vote_number or n,
+            bill_number=bn, category=category,
+        )
+        session.add(vote)
+        session.flush()
+        seen_v: set[int] = set()
+        for mv in sv.positions:
+            bio = lis_map.get(mv.lis_member_id)
+            if not bio:
+                continue
+            official = session.execute(
+                select(Official).where(Official.bioguide_id == bio)
+            ).scalar_one_or_none()
+            name = " ".join(x for x in [mv.first_name, mv.last_name] if x).strip() or bio
+            if official is None:
+                official = Official(full_name=name, bioguide_id=bio)
+                session.add(official)
+                session.flush()
+            elif official.full_name and (
+                len(official.full_name.split()) <= 1 or "(" in official.full_name
+            ):
+                official.full_name = name
+            if official.id in seen_v:
+                continue
+            seen_v.add(official.id)
+            session.add(VotePosition(vote_id=vote.id, official_id=official.id, position=mv.position))
+        inserted += 1
+    session.flush()
+    return inserted
+
+
 def refresh_all(
     session: Session, *, budget_fiscal_year: int = 2024, congress: int = 117,
     law_limit: int = 25, eo_limit: int = 15,
@@ -1522,39 +2785,115 @@ def refresh_all(
     creating duplicates. Returns a per-stage count of evaluation units produced.
     """
     counts: dict[str, int] = {}
-    counts["defc_delivery"] = len(ingest_defc_delivery(session))
+
+    def _safe_rollback() -> None:
+        # Reset a session left broken by a dropped/recycled DB connection (e.g. a free-tier
+        # AdminShutdown), so the next stage can start a fresh transaction instead of cascading.
+        with contextlib.suppress(Exception):
+            session.rollback()
+
+    def _safe_commit(name: str) -> None:
+        try:
+            session.commit()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("commit after %s failed: %s", name, exc)
+            _safe_rollback()
+
+    # Commit after each stage so partial progress is DURABLE and VISIBLE during a long run,
+    # and a dropped connection / late failure / cron time limit never discards earlier work.
+    def _stage(name: str, fn) -> None:
+        try:
+            counts[name] = fn()
+            _safe_commit(name)
+        except Exception as exc:  # noqa: BLE001 - a stage failure must not abort the whole run
+            log.warning("refresh stage %s failed: %s", name, exc)
+            counts.setdefault(name, 0)
+            _safe_rollback()
+
+    # Activity/record layer FIRST so the recent, broad record of what members sponsored +
+    # cosponsored appears early each run. Recency-first, capped per run (sponsor + cosponsor
+    # calls per bill respect the per-key budget); repeated runs fill in the rest.
+    def _member_bills() -> int:
+        total = 0
+        for c in (119, 118, 117, 116):
+            cap = 700 if c >= 118 else 400
+            try:
+                total += ingest_member_bills(session, c, new_limit=cap)
+                _safe_commit(f"member bills {c}")
+            except Exception as exc:  # noqa: BLE001 - never fatal
+                log.warning("member-bill ingestion for congress %s skipped: %s", c, exc)
+                _safe_rollback()
+        return total
+    _stage("member_bills", _member_bills)
+
+    # Roll-call votes: how members voted, recency-first, capped per run. Keyless.
+    def _chamber_votes(fn, label: str) -> int:
+        total = 0
+        this_year = date.today().year
+        for y in range(this_year, this_year - 4, -1):
+            try:
+                total += fn(session, y, new_limit=200)
+                _safe_commit(f"{label} votes {y}")
+            except Exception as exc:  # noqa: BLE001 - never fatal
+                log.warning("%s-vote ingestion for %s skipped: %s", label, y, exc)
+                _safe_rollback()
+        return total
+    _stage("house_votes", lambda: _chamber_votes(ingest_house_votes, "house"))
+    _stage("senate_votes", lambda: _chamber_votes(ingest_senate_votes, "senate"))
+
+    _stage("defc_delivery", lambda: len(ingest_defc_delivery(session)))
+
     # All toptier agencies, across the last few fiscal years: execution rate is reliable and
-    # commensurable by construction (obligated/outlayed <= resources), so this is the platform's
-    # broadest source of high-integrity verifiable scores. Each agency-year is a distinct action.
-    be = 0
-    for fy in (budget_fiscal_year, budget_fiscal_year - 1, budget_fiscal_year - 2):
-        be += len(ingest_budget_execution(session, fy, all_agencies=True))
-    counts["budget_execution"] = be
-    counts["state_policies"] = len(ingest_state_policies(session))
-    counts["court_survival"] = sum(
+    # commensurable by construction (obligated/outlayed <= resources). Each agency-year is distinct.
+    def _budget() -> int:
+        be = 0
+        for fy in (budget_fiscal_year, budget_fiscal_year - 1, budget_fiscal_year - 2):
+            try:
+                be += len(ingest_budget_execution(session, fy, all_agencies=True))
+                _safe_commit(f"budget FY{fy}")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("budget execution FY%s skipped: %s", fy, exc)
+                _safe_rollback()
+        return be
+    _stage("budget_execution", _budget)
+
+    _stage("state_policies", lambda: len(ingest_state_policies(session)))
+    _stage("court_survival", lambda: sum(
         1 for spec in COURT_SURVIVAL_SPECS.values()
         if _isolated(session, lambda spec=spec: score_court_survival(session, spec),
-                     label=f"court survival {spec.key}")
-    )
-    counts["curated_targets"] = sum(
+                     label=f"court survival {spec.key}")))
+    _stage("curated_targets", lambda: sum(
         1 for key in ("CARES-DELIVERY", "IIJA-DELIVERY", "UKRAINE-2022-DELIVERY")
         if _isolated(session, lambda key=key: score_target(session, TARGET_SPECS[key]),
-                     label=f"curated target {key}")
-    )
-    counts["laws"] = len(batch_score_laws(session, congress, limit=law_limit))
-    counts["executive_orders"] = len(batch_score_executive_orders(session, limit=eo_limit))
-    counts["regulations"] = len(batch_score_regulations(session, limit=eo_limit))
-    # Best-effort name enrichment (bounded by Congress.gov throughput).
-    try:
-        from degreezeor.ingestion.loader import enrich_official_names
-        counts["names_enriched"] = enrich_official_names(session)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("name enrichment skipped: %s", exc)
+                     label=f"curated target {key}")))
+    _stage("laws", lambda: len(batch_score_laws(session, congress, limit=law_limit)))
+    _stage("executive_actions", lambda: ingest_executive_actions(session))
+    _stage("executive_orders", lambda: len(batch_score_executive_orders(session, limit=eo_limit)))
+    _stage("eo_signers_backfilled", lambda: backfill_eo_signers(session))
+    _stage("eo_sources_backfilled", lambda: backfill_eo_source_urls(session))
+    _stage("eo_categories_backfilled", lambda: backfill_eo_categories(session))
+    _stage("vote_categories_backfilled", lambda: backfill_vote_categories(session))
+    _stage("regulations", lambda: len(batch_score_regulations(session, limit=eo_limit)))
 
-    # Self-validate: the nightly pass must leave the append-only audit chain intact.
-    # A break here means history was altered out-of-band — surfaced loudly, never hidden.
-    session.flush()
-    chain_ok, broken_id = audit.verify_chain(session)
+    # Best-effort name enrichment (bounded by Congress.gov throughput).
+    def _enrich() -> int:
+        from degreezeor.ingestion.loader import enrich_official_names
+        return enrich_official_names(session)
+    _stage("names_enriched", _enrich)
+
+    # Flag who currently holds office (display only), then drop empty official artifacts.
+    _stage("officials_in_office", lambda: mark_officials_in_office(session))
+    _stage("officials_purged", lambda: purge_empty_officials(session))
+
+    # Self-validate: the nightly pass must leave the append-only audit chain intact. Guarded so a
+    # dropped connection at the very end reports unknown rather than crashing the whole command.
+    _safe_rollback()
+    try:
+        chain_ok, broken_id = audit.verify_chain(session)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("audit chain verification skipped (session/connection issue): %s", exc)
+        counts["audit_chain_ok"] = 0
+        return counts
     counts["audit_chain_ok"] = 1 if chain_ok else 0
     if not chain_ok:
         log.error("AUDIT CHAIN BROKEN after refresh (first broken record id=%s)", broken_id)
@@ -1659,8 +2998,14 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     This is the path that can legitimately clear the confidence gate and produce a
     composite, because a donor pool addresses the confounding a single series cannot.
     """
+    from degreezeor.ingestion.loader import ensure_census_source, ensure_eia_source
+
     ensure_bls_source(session)
-    sign_goal = 1  # "create jobs" => higher employment is toward the stated goal
+    kind = spec.metric_kind
+    descr = STATE_METRIC_KINDS.get(kind, STATE_METRIC_KINDS["employment"])
+    # sign_goal is fixed at pre-registration and depends on the metric: more jobs/wages/income
+    # is toward the goal (+1); less poverty/uninsured/CO2 is toward the goal (-1).
+    sign_goal = int(descr["sign"])
 
     # --- Tier-0 action provenance: fetch the official state source URL ---
     fetch = generic_url_adapter.fetch(spec.source_url, label=spec.key)
@@ -1690,18 +3035,29 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     if sponsor and spec.sponsor_party:
         ensure_party_term(session, sponsor, spec.sponsor_party)
 
-    # Treated-state employment metric (get-or-create).
+    # Treated-state outcome metric (get-or-create), per the policy's comparison-design kind.
+    nsid = state_series_id(spec.state_fips, kind)
+    if nsid.startswith("CENSUS|"):
+        src_id = ensure_census_source(session).id
+    elif nsid.startswith("EIA|"):
+        src_id = ensure_eia_source(session).id
+    elif nsid.startswith("CDC|"):
+        from degreezeor.ingestion.loader import ensure_cdc_source
+        src_id = ensure_cdc_source(session).id
+    elif nsid.startswith("NAEP|"):
+        from degreezeor.ingestion.loader import ensure_naep_source
+        src_id = ensure_naep_source(session).id
+    else:
+        src_id = session.execute(select(DataSource.id).where(DataSource.name == "BLS")).scalar_one()
     metric = session.execute(
-        select(Metric).where(Metric.code == f"state_nonfarm_employment_{spec.state_fips}")
+        select(Metric).where(Metric.code == f"{descr['code']}_{spec.state_fips}")
     ).scalar_one_or_none()
     if metric is None:
         metric = Metric(
-            code=f"state_nonfarm_employment_{spec.state_fips}",
-            name=f"{spec.state_name} Total Nonfarm Employment (SA)",
-            unit="thousands of jobs", direction_good="up",
-            source_id=session.execute(select(DataSource.id).where(DataSource.name == "BLS")).scalar_one(),
-            native_series_id=state_employment_series_id(spec.state_fips),
-            domain="Economics and Public Finance",
+            code=f"{descr['code']}_{spec.state_fips}",
+            name=f"{spec.state_name} {descr['name']}",
+            unit=str(descr["unit"]), direction_good=str(descr["direction_good"]),
+            source_id=src_id, native_series_id=nsid, domain=str(descr["domain"]),
         )
         session.add(metric)
         session.flush()
@@ -1740,7 +3096,8 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
         lag_window_months=spec.lag_window_months, masked_objective=mask_party_and_name(spec.objective_text)[:280],
     )
 
-    start_year = spec.enacted_year - 3
+    pre_years = _pre_years_for(nsid)
+    start_year = spec.enacted_year - pre_years
     end_year = spec.enacted_year + (spec.lag_window_months // 12) + 2
     load_observations(session, metric, start_year, end_year)
     observations = _windowed_observations(
@@ -1748,18 +3105,15 @@ def score_state_policy(session: Session, spec: StatePolicySpec) -> ScoreOutcome:
     )
     event_period = f"{spec.enacted_year}-{spec.enacted_month:02d}-01"
 
-    # Donor (control) states: land for provenance + build in-memory series for the design.
+    # Donor (control) states: land for provenance + build in-memory series for the design,
+    # via the adapter that matches this metric kind (BLS / Census / EIA).
     donor_observations: dict[str, list[tuple[str, object]]] = {}
     donor_source_urls: list[str] = []
     for dfips in spec.donor_fips:
-        dfetch = bls_adapter.fetch(state_employment_series_id(dfips), start_year=start_year, end_year=end_year)
+        dfetch, pts = _fetch_state_series_points(state_series_id(dfips, kind), start_year, end_year)
         land(session, dfetch)
         donor_source_urls.append(dfetch.source_url)
-        dseries = json.loads(dfetch.content)["Results"]["series"][0]
-        donor_observations[dfips] = [
-            (f"{pt['year']}-{int(pt['period'][1:]):02d}-01", pt["value"])
-            for pt in dseries["data"] if pt["period"].startswith("M")
-        ]
+        donor_observations[dfips] = pts
 
     comp = compute_outcome(
         observations, event_period=event_period, lag_window_months=spec.lag_window_months,

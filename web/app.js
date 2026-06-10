@@ -23,23 +23,54 @@ const el = (tag, attrs = {}, ...kids) => {
 };
 const fmt = (x, d = 2) => (x === null || x === undefined ? "n/a" : Number(x).toFixed(d));
 
-// Consistent official name formatting: "Last, First (Party)". Strips honorifics and any
-// embedded "[D-CT-2]" junk; handles single-token names and Jr./Sr./III suffixes. Pass
-// party to append it (use null/"" -> "(Unknown)"); omit party to show just the name.
-function formatName(name, party) {
-  if (!name) return "Unknown";
-  // Use RegExp(string) rather than /literals/ so the static paren-balance guard parses cleanly.
-  let s = String(name)
-    .replace(new RegExp("\\[[^\\]]*\\]", "g"), "")
+// Strip honorifics and embedded "[D-CT-2]" junk; collapse whitespace.
+// Use RegExp(string) rather than /literals/ so the static paren-balance guard parses cleanly.
+function cleanName(name) {
+  if (!name) return "";
+  return String(name)
+    .replace(new RegExp("\\[[^\\]]*\\]", "g"), "")   // strip "[D-CT-2]" style tags
+    .replace(new RegExp("\\([^)]*\\)", "g"), "")        // strip "(CA)" / "(D-NJ)" style tags
     .replace(new RegExp("\\b(Rep|Sen|Gov|President|Senator|Representative|Dr)\\.?\\s+", "gi"), "")
     .replace(new RegExp("\\s+", "g"), " ").trim();
+}
+
+// A trailing 2-letter state code in parens, kept to tell apart vote-derived last-name-only
+// entries (e.g. "Bishop (GA)" vs "Bishop (UT)") until name enrichment fills in first names.
+function stateSuffix(name) {
+  const m = String(name || "").match(new RegExp("\\(([A-Z]{2})\\)"));
+  return m ? m[1] : "";
+}
+
+// Natural order "First Last" for headlines and prose (we talk about people naturally).
+// Lists and tables use formatName() -> "Last, First" for scanning.
+function formatNameNatural(name) {
+  const s = cleanName(name);
+  if (!s) return "Unknown";
+  if (s.includes(",")) {
+    const idx = s.indexOf(",");
+    const last = s.slice(0, idx).trim();
+    const rest = s.slice(idx + 1).trim();
+    return rest ? `${rest} ${last}` : last;
+  }
+  // Last-name-only: keep the state code so people are still distinguishable.
+  const st = stateSuffix(name);
+  return st && s.split(" ").length === 1 ? `${s} (${st})` : s;
+}
+
+// Consistent official name formatting: "Last, First (Party)". Handles single-token names
+// and Jr./Sr./III suffixes. Pass party to append it (null/"" -> "(Unknown)"); omit to show name only.
+function formatName(name, party) {
+  if (!name) return "Unknown";
+  const s = cleanName(name);
+  const st = stateSuffix(name);
   let formatted;
   if (s.includes(",")) {
     formatted = s.replace(new RegExp("\\s*,\\s*"), ", ");
   } else {
     const parts = s.split(" ");
     if (parts.length <= 1) {
-      formatted = s;
+      // Last-name-only: keep the state code so people are still distinguishable.
+      formatted = st ? `${s} (${st})` : s;
     } else {
       const suffixes = ["Jr.", "Sr.", "Jr", "Sr", "II", "III", "IV"];
       let last = parts[parts.length - 1];
@@ -129,10 +160,10 @@ async function sensitivityCard(euId, unit) {
       el("th", { class: "right" }, `delta toward goal (${unit})`),
       el("th", { class: "right" }, "std. effect z"), el("th", {}, "distinguishable?"))),
     el("tbody", {}, ...s.points.map((p) =>
-      el("tr", { style: p.is_registered ? "background:rgba(79,156,249,.10)" : "" },
+      el("tr", { style: p.is_registered ? "background:var(--accent-soft)" : "" },
         el("td", {}, `${p.lag_months}${p.is_registered ? " (registered)" : ""}`),
         el("td", {}, p.eval_period),
-        el("td", { class: "right mono", style: `color:${p.delta_toward_goal >= 0 ? "var(--good)" : "var(--bad)"}` }, fmt(p.delta_toward_goal, 1)),
+        el("td", { class: "right mono" }, fmt(p.delta_toward_goal, 1)),
         el("td", { class: "right mono" }, fmt(p.z, 2)),
         el("td", {}, p.significant ? el("span", { class: "badge scored" }, "yes") : el("span", { class: "pill" }, "within noise")))))));
   card.appendChild(el("p", { class: "muted", style: "font-size:12px" },
@@ -223,52 +254,73 @@ function spinner(msg = "Loading…") {
       "First load can take a moment while the server wakes up."));
 }
 
+// Collapsible section that lazily builds its body the first time it is opened, so deep
+// panels (and any async fetches) stay off the initial render and out of the way.
+function disclosure(title, buildFn) {
+  const body = el("div", { class: "disc-body" });
+  const det = el("details", { class: "disc" }, el("summary", {}, title), body);
+  let built = false;
+  det.addEventListener("toggle", async () => {
+    if (!det.open || built) return;
+    built = true;
+    body.appendChild(el("div", { class: "muted", style: "font-size:13px" }, "Loading…"));
+    try {
+      const node = await buildFn();
+      body.innerHTML = "";
+      if (node) body.appendChild(node);
+    } catch (e) { body.innerHTML = ""; body.appendChild(el("div", { class: "muted" }, "Unavailable.")); }
+  });
+  return det;
+}
+
 async function renderLanding() {
   const app = $("#app");
   app.innerHTML = "";
-  const hero = el("div", { class: "hero" },
+  const search = el("input", { class: "hero-search", type: "text", autocomplete: "off",
+    placeholder: "Search an official by name\u2026", "aria-label": "Search an official by name" });
+  const go = () => {
+    const q = search.value.trim();
+    location.hash = "#/officials" + (q ? "?q=" + encodeURIComponent(q) : "");
+  };
+  search.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  app.appendChild(el("div", { class: "hero" },
     el("img", { class: "mark", src: "/logo.png", alt: "DegreeZero" }),
-    el("h1", {}, "DegreeZero"),
-    el("div", { class: "sub" },
-      "Did a public action meet the goal it set for itself? We measure the outcome against each " +
-      "policy's own stated objective, with sources you can check."),
+    el("div", { class: "sub" }, "Nonpartisan. Data-driven. Open source."),
+    el("div", { class: "hero-search-wrap" }, search,
+      el("button", { class: "cta", type: "button", onclick: go }, "Search")),
     el("div", { class: "ctas" },
-      el("a", { class: "cta", href: "#/officials" }, "Explore officials"),
-      el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"),
-      el("a", { class: "cta ghost", href: "#/about" }, "How it works")));
-  app.appendChild(hero);
+      el("a", { class: "cta ghost", href: "#/officials" }, "Browse officials"),
+      el("a", { class: "cta ghost", href: "#/compare" }, "Compare two"),
+      el("a", { class: "cta ghost", href: "#/actions" }, "Browse actions"))));
+  search.focus();
 
-  // Real credibility stats (skipped quietly if the API is still waking up).
-  try {
-    const s = await getJSON("/api/stats");
-    hero.appendChild(el("div", { class: "statbar" },
-      el("div", { class: "s" }, el("div", { class: "n" }, String(s.scored)), el("div", { class: "l" }, "actions scored")),
-      el("div", { class: "s" }, el("div", { class: "n" }, String(s.officials)), el("div", { class: "l" }, "officials tracked")),
-      el("div", { class: "s" }, el("div", { class: "n" }, String(s.sources)), el("div", { class: "l" }, "official sources")),
-      el("div", { class: "s" }, el("div", { class: "n" }, String(s.actions_considered)), el("div", { class: "l" }, "actions considered"))));
-    if (s.last_updated) {
-      hero.appendChild(el("div", { class: "freshness" }, "Data last updated " + s.last_updated.slice(0, 10)));
+  // "What's new": the most recently scored actions, so returning voters see fresh results.
+  const newWrap = el("div", { class: "whatsnew" });
+  app.appendChild(newWrap);
+  getJSON("/api/recent-scored?limit=6").then((items) => {
+    if (!items || !items.length) return;
+    newWrap.appendChild(el("div", { class: "filter-label", style: "text-align:center" }, "Recently scored"));
+    const list = el("div", { class: "whatsnew-list" });
+    for (const it of items) {
+      list.appendChild(el("a", { class: "whatsnew-item", href: `#/eu/${it.eu_id}` },
+        el("span", { class: "wn-badge scored" }, fmt(it.composite, 0)),
+        el("span", { class: "wn-main" },
+          el("span", { class: "wn-title" }, it.title),
+          el("span", { class: "wn-meta" }, [it.official_name ? formatNameNatural(it.official_name) : actionTypeLabel(it.action_type), it.category_label].filter(Boolean).join(" \u00b7 ")))));
     }
-  } catch (e) { /* stats are best-effort */ }
-
-  // Three-step gist.
-  hero.appendChild(el("div", { class: "steps" },
-    el("div", { class: "step" }, el("span", { class: "num" }, "1"), el("b", {}, "A policy sets a goal"),
-      el("p", {}, "We take the objective the law, order, or budget stated for itself.")),
-    el("div", { class: "step" }, el("span", { class: "num" }, "2"), el("b", {}, "We measure the result"),
-      el("p", {}, "Official data versus a defensible baseline, with the credit shared by causal role.")),
-    el("div", { class: "step" }, el("span", { class: "num" }, "3"), el("b", {}, "We score it, or abstain"),
-      el("p", {}, "A 0 to 100 score with confidence and sources, or \u201Cinsufficient evidence\u201D when we cannot tell."))));
+    newWrap.appendChild(list);
+  }).catch(() => { /* non-essential */ });
 }
 
 async function renderSources() {
   const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
+  const rows = await getJSON("/api/sources");
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Sources"));
   app.appendChild(el("p", { class: "muted" },
     "Every source that feeds a score, with its provenance tier. Tier 0 is the action record, " +
     "Tier 1 is official statistics, Tier 2 is official analysis, Tier 3 is a verified mirror."));
-  const rows = await getJSON("/api/sources");
   app.appendChild(el("div", { class: "card" },
     el("table", {},
       el("thead", {}, el("tr", {}, el("th", {}, "source"), el("th", {}, "tier"), el("th", {}, "endpoint"))),
@@ -286,6 +338,15 @@ const GLOSSARY = [
   ["Coverage", TIPS.coverage, "coverage = scored actions / total attributable actions"],
   ["Confidence", TIPS.confidence, "confidence = design x data x attribution x model x sensitivity"],
   ["Insufficient evidence", TIPS.insufficient, null],
+  ["Category", "A topic grouping (jobs and economy, cost and spending, health, public safety, energy and " +
+    "environment, poverty and income, education). It is derived only from each action's official subject " +
+    "area and the metric it was measured against, and plays no part in scoring.", null],
+  ["Office", "The position shown for an official (President, Governor, Senator, Representative), derived " +
+    "from the public record. Party is never shown in the product; it is used only in the audit-only " +
+    "Integrity monitor.", null],
+  ["Descriptive context", "A neutral note placing a scored result next to the typical scored result for " +
+    "its action type or category. It is descriptive, never a ranking or a value judgment, and is shown " +
+    "only when the sample is large enough to be meaningful.", null],
   ["Baseline", "What the metric would likely have done without the action, used to net out other forces.", null],
   ["Pre-registration", "The metric and method are fixed and hashed before outcomes are fetched, so results cannot be cherry-picked.", null],
 ];
@@ -302,8 +363,71 @@ async function renderGlossary() {
   }
 }
 
-const NAV = [["#/officials", "Officials"], ["#/actions", "Actions"], ["#/coverage", "Coverage"],
-             ["#/integrity", "Integrity"], ["#/about", "About"]];
+async function renderOptout() {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Analytics on this device"));
+  const status = el("p", { class: "muted" });
+  const card = el("div", { class: "card" }, status);
+  app.appendChild(card);
+
+  const setStatus = () => {
+    status.textContent = isOptedOut()
+      ? "This device is EXCLUDED from analytics. Your visits are not counted."
+      : "This device is currently counted in analytics (anonymous \u2014 no account, no PII).";
+  };
+  const btns = el("div", { class: "doc-downloads" });
+  const optOut = el("button", { class: "cta", type: "button" }, "Exclude this device + delete its data");
+  const optIn = el("button", { class: "cta ghost", type: "button" }, "Re-enable counting on this device");
+  optOut.addEventListener("click", async () => {
+    try { localStorage.setItem("dz_optout", "1"); } catch (e) { /* ignore */ }
+    try {
+      await fetch(API + "/api/collect/forget", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visitor_id: visitorId() }) });
+    } catch (e) { /* best-effort */ }
+    setStatus();
+  });
+  optIn.addEventListener("click", () => {
+    try { localStorage.removeItem("dz_optout"); } catch (e) { /* ignore */ }
+    setStatus();
+  });
+  btns.appendChild(optOut); btns.appendChild(optIn);
+  card.appendChild(btns);
+  card.appendChild(el("p", { class: "muted", style: "font-size:13px;margin-top:10px" },
+    "Use this on each of your own devices (phone, laptop) so your testing doesn't contaminate the " +
+    "visitor metrics. \u201cExclude\u201d also deletes this device's past anonymous events. The setting " +
+    "is stored only in this browser; clearing site data resets it."));
+  setStatus();
+}
+
+async function renderContact() {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Contact"));
+  app.appendChild(el("p", { class: "muted" },
+    "DegreeZero is an open, source-anchored project. Every score links to its official sources, " +
+    "and the full method is public \u2014 so any number here can be checked or challenged directly."));
+  const email = (window.DZ_CONTACT_EMAIL || "").trim();
+  const card = el("div", { class: "card" });
+  if (email) {
+    card.appendChild(el("h3", {}, "Corrections & questions"));
+    card.appendChild(el("p", { style: "margin:0 0 10px" },
+      "Spotted something that looks off, or have a question about the method? Email ",
+      el("a", { href: "mailto:" + email + "?subject=" + encodeURIComponent("DegreeZero feedback") }, email), "."));
+    card.appendChild(el("a", { class: "cta", href: "mailto:" + email + "?subject=" + encodeURIComponent("DegreeZero feedback") }, "Email us"));
+  } else {
+    card.appendChild(el("h3", {}, "How to check or challenge a number"));
+    card.appendChild(el("ul", { style: "margin:0;padding-left:18px;line-height:1.7" },
+      el("li", {}, "Open any official or action and follow the ", el("b", {}, "source"), " links to the originating government record."),
+      el("li", {}, "Read the ", el("a", { href: "#/methodology" }, "Methodology"), " for exactly how each score is derived."),
+      el("li", {}, "Use ", el("a", { href: "#/integrity" }, "Integrity"), " to see the audit chain and reproducibility self-check."),
+      el("li", {}, "Every published score is re-derivable bit-for-bit from its pinned inputs.")));
+  }
+  app.appendChild(card);
+}
+
+const NAV = [["#/officials", "Officials"], ["#/compare", "Compare"], ["#/actions", "Actions"],
+             ["#/coverage", "Coverage"], ["#/integrity", "Integrity"], ["#/about", "About"]];
 function renderNav() {
   const nav = $("#nav");
   if (!nav) return;
@@ -321,7 +445,8 @@ async function renderAuditStatus() {
   if (!node) return;
   try {
     const a = await getJSON("/api/audit/verify");
-    node.textContent = a.audit_chain_ok ? "✓ Audit chain verified" : "✕ Audit chain broken";
+    node.textContent = a.audit_chain_ok ? "✓ Audit verified" : "✕ Audit broken";
+    node.title = a.audit_chain_ok ? "Append-only audit hash chain verified" : "Audit hash chain broken";
     node.className = "audit-badge " + (a.audit_chain_ok ? "ok" : "bad");
   } catch (e) {
     node.textContent = "";
@@ -333,27 +458,171 @@ function statusBadge(status) {
   return el("span", { class: "badge " + status }, status.replaceAll("_", " "));
 }
 
+const ACTION_TYPE_LABELS = {
+  eo: "Executive order", law: "Law", budget: "Budget", regulation: "Regulation",
+  bill: "Bill", vote: "Vote", court: "Court ruling",
+};
+function actionTypeLabel(t) {
+  if (!t) return "Action";
+  return ACTION_TYPE_LABELS[t] || (t.charAt(0).toUpperCase() + t.slice(1));
+}
+
+
+function actionStatus(u) {
+  if (u.composite !== null && u.status === "scored") return "scored";
+  if (u.status === "insufficient_evidence") return "insufficient";
+  return "non";
+}
+
+function actionRow(u) {
+  const st = actionStatus(u);
+  const right = st === "scored"
+    ? el("span", { class: "badge scored" }, "composite " + fmt(u.composite, 1))
+    : (st === "insufficient"
+        ? el("span", { class: "badge insufficient_evidence" }, "insufficient evidence")
+        : el("span", { class: "badge non_scoreable" }, "not scoreable"));
+  const sub = [u.category_label, u.public_law ? "PL " + u.public_law : null].filter(Boolean).join(" · ");
+  return el("div", { class: "list-item", onclick: () => { location.hash = `#/eu/${u.id}`; } },
+    el("div", { class: "li-main" },
+      el("div", { class: "title" }, u.title),
+      el("div", { class: "muted mono" }, sub)),
+    el("div", { class: "li-side" }, right));
+}
+
 async function renderList() {
   const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  let cats = [];
+  try { cats = (await getJSON("/api/categories")).categories; } catch (e) { /* best-effort */ }
+  const units = await getJSON("/api/evaluation-units");
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Actions"));
-  app.appendChild(el("p", { class: "muted" },
-    "Each row is a public action (a law, executive order, rule, or budget) scored against the goal it " +
-    "set for itself. Click any to see the full breakdown and sources. When we cannot separate the " +
-    "policy's effect from everything else at the time, we mark it \u201Cinsufficient evidence\u201D " +
-    "rather than guess."));
-  const units = await getJSON("/api/evaluation-units");
-  for (const u of units) {
-    app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/eu/${u.id}`; } },
-      el("div", {},
-        el("div", { class: "title" }, u.title),
-        el("div", { class: "muted mono" }, (u.public_law ? `Public Law ${u.public_law}` : `Action #${u.id}`))),
-      el("div", { style: "text-align:right" },
-        statusBadge(u.status),
-        el("div", { class: "muted", style: "margin-top:6px;font-size:12px" },
-          `confidence ${u.confidence === null ? "n/a" : (u.confidence * 100).toFixed(1) + "%"}`,
-          u.composite !== null ? ` · composite ${fmt(u.composite, 1)}` : " · composite suppressed"))));
+  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
+    "Public actions, each measured against the goal it set for itself. Filter by topic or result, "
+    + "or open any action for the full breakdown."));
+  const order = cats.map((c) => c.key);
+  const labelOf = (k) => (cats.find((c) => c.key === k) || {}).label || k;
+  const present = new Set(units.map((u) => u.category));
+
+  const state = { cat: params.get("category") || "", status: params.get("status") || "",
+                  mode: params.get("mode") === "recent" ? "recent" : "scored", started: false };
+
+  const modeBar = el("div", { class: "chipbar" });
+  const catBar = el("div", { class: "chipbar" });
+  const statusBar = el("div", { class: "chipbar" });
+  const statusLabel = el("div", { class: "filter-label" }, "Result");
+  const countEl = el("div", { class: "muted mono", style: "margin:6px 0" });
+  const listEl = el("div", {});
+
+  function chip(bar, val, label, count, key) {
+    const active = state[key] === val;
+    const c = el("button", { type: "button", class: "fchip" + (active ? " active" : "") },
+      label, count !== null ? el("span", { class: "chip-n" }, String(count)) : null);
+    c.addEventListener("click", () => {
+      state.started = true;
+      state[key] = state[key] === val ? "" : val;
+      for (const ch of bar.children) ch.classList.remove("active");
+      if (state[key] === val) c.classList.add("active");
+      else bar.firstChild.classList.add("active");  // re-activate "All"
+      render();
+    });
+    return c;
   }
+
+  // Status filter (counts computed once).
+  const counts = { scored: 0, insufficient: 0, non: 0 };
+  for (const u of units) counts[actionStatus(u)]++;
+  statusBar.appendChild(chip(statusBar, "", "All results", units.length, "status"));
+  statusBar.appendChild(chip(statusBar, "scored", "Scored", counts.scored, "status"));
+  statusBar.appendChild(chip(statusBar, "insufficient", "Insufficient evidence", counts.insufficient, "status"));
+  statusBar.appendChild(chip(statusBar, "non", "Not scoreable", counts.non, "status"));
+
+  // Category filter (topics present in scored EUs OR with recorded bills, so the recent
+  // feed can be filtered by topic too).
+  const catKeysPresent = new Set([...present, ...cats.filter((c) => c.recorded > 0).map((c) => c.key)]);
+  catBar.appendChild(chip(catBar, "", "All topics", null, "cat"));
+  for (const c of cats) if (catKeysPresent.has(c.key)) catBar.appendChild(chip(catBar, c.key, c.label, null, "cat"));
+
+  // Mode toggle: scored outcomes vs. the recent record of what members sponsored.
+  const modeChip = (val, label) => {
+    const c = el("button", { type: "button", class: "fchip" + (state.mode === val ? " active" : "") }, label);
+    c.addEventListener("click", () => {
+      state.started = true;
+      state.mode = val;
+      for (const ch of modeBar.children) ch.classList.toggle("active", ch === c);
+      statusLabel.style.display = statusBar.style.display = val === "recent" ? "none" : "";
+      render();
+    });
+    return c;
+  };
+  modeBar.appendChild(modeChip("scored", "Scored results"));
+  modeBar.appendChild(modeChip("recent", "Recent activity"));
+
+  function recentRow(b) {
+    return el("div", { class: "list-item", onclick: b.official_id ? () => { location.hash = `#/official/${b.official_id}`; } : null },
+      el("div", { class: "li-main" },
+        el("div", { class: "title" }, b.title),
+        el("div", { class: "muted mono" }, [b.category_label, b.bill_number, b.date ? b.date.slice(0, 10) : null].filter(Boolean).join(" · "))),
+      el("div", { class: "li-side" }, b.official_name ? el("span", { class: "pill" }, formatName(b.official_name)) : null));
+  }
+
+  async function render() {
+    listEl.innerHTML = "";
+    if (state.mode === "recent") {
+      listEl.appendChild(spinner());
+      let bills = [];
+      try { bills = await getJSON("/api/recent-activity?limit=150" + (state.cat ? "&category=" + state.cat : "")); }
+      catch (e) { /* handled below */ }
+      listEl.innerHTML = "";
+      countEl.textContent = `${bills.length} recent bill(s)`;
+      if (!bills.length) {
+        listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+          el("p", {}, "No recent bills yet. These load during the nightly refresh; check back after it runs.")));
+        return;
+      }
+      for (const b of bills) listEl.appendChild(recentRow(b));
+      return;
+    }
+    // Don't dump the entire list by default: ask the reader to pick a result type or topic
+    // first (a category/status deep-link or any chip click reveals the list).
+    if (!state.started && !state.cat && !state.status) {
+      countEl.textContent = "";
+      listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+        el("p", { style: "margin:0 0 4px;color:var(--text);font-weight:600" }, "Pick a result type or topic to begin"),
+        el("p", { style: "margin:0;font-size:13px" }, "Use the filters above \u2014 e.g. \u201cScored\u201d to see graded actions, or a topic like Health \u2014 or switch to \u201cRecent activity\u201d.")));
+      return;
+    }
+    let rows = units;
+    if (state.cat) rows = rows.filter((u) => u.category === state.cat);
+    if (state.status) rows = rows.filter((u) => actionStatus(u) === state.status);
+    countEl.textContent = "";
+    if (!rows.length) {
+      listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+        el("p", {}, "No actions match these filters."))); return;
+    }
+    const byCat = new Map();
+    for (const u of rows) { if (!byCat.has(u.category)) byCat.set(u.category, []); byCat.get(u.category).push(u); }
+    const groups = [...byCat.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+    const rank = { scored: 0, insufficient: 1, non: 2 };
+    for (const [key, list] of groups) {
+      list.sort((a, b) => (b.date || "").localeCompare(a.date || "") || rank[actionStatus(a)] - rank[actionStatus(b)]);
+      listEl.appendChild(el("h3", { class: "group-h" }, labelOf(key),
+        el("span", { class: "muted", style: "font-weight:400;margin-left:8px" }, String(list.length))));
+      for (const u of list) listEl.appendChild(actionRow(u));
+    }
+  }
+
+  app.appendChild(el("div", { class: "filter-label" }, "View"));
+  app.appendChild(modeBar);
+  app.appendChild(statusLabel);
+  app.appendChild(statusBar);
+  app.appendChild(el("div", { class: "filter-label" }, "Topic"));
+  app.appendChild(catBar);
+  app.appendChild(countEl);
+  app.appendChild(listEl);
+  if (state.mode === "recent") { statusLabel.style.display = statusBar.style.display = "none"; }
+  render();
 }
 
 function componentBar(c) {
@@ -445,41 +714,76 @@ async function renderDetail(id) {
   app.appendChild(el("h2", { style: "margin:6px 0" }, card.action.title));
   app.appendChild(el("div", { class: "muted mono" },
     [card.action.type, card.action.public_law_number ? "Public Law " + card.action.public_law_number : null,
-     card.action.domain, card.action.enacted_date ? "enacted " + card.action.enacted_date : null]
+     card.action.enacted_date ? "enacted " + card.action.enacted_date : null]
       .filter(Boolean).join(" · ")));
-  app.appendChild(el("div", { style: "margin:10px 0" }, statusBadge(card.evaluation_unit.status)));
+  app.appendChild(el("div", { class: "meta-chips" },
+    statusBadge(card.evaluation_unit.status),
+    card.action.category_label
+      ? el("a", { class: "badge cat-chip", href: "#/actions?category=" + card.action.category },
+          card.action.category_label)
+      : null));
 
+  // Top line: the result + the plain explanation.
   app.appendChild(gateBanner(card));
-
-  // Narrative
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Why this scored this way"),
+    el("h3", {}, "What this measured"),
     el("div", { class: "narrative" }, card.narrative)));
 
-  // Components vector
-  if (card.components.length) {
+  // Descriptive peer-group context (non-ranking; shown only with a sufficient sample).
+  if (card.descriptive_context && card.descriptive_context.length) {
     app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Score breakdown", tip("composite")),
-      ...card.components.map(componentBar)));
+      ...card.descriptive_context.map((c) => el("div", { class: "hint" }, c))));
   }
 
-  // Objective + metric
+  // Who is credited: promoted up because voters care who is responsible. Names link out.
+  // Long rosters (e.g. every roll-call voter) collapse behind "show all".
+  if (card.attribution.length) {
+    const attribRow = (a) => el("tr", {},
+      el("td", {}, a.is_residual ? el("span", { class: "pill" }, a.role.replaceAll("_", " ")) : a.role.replaceAll("_", " ")),
+      el("td", {}, a.official_name
+        ? (a.official_id
+            ? el("a", { href: `#/official/${a.official_id}` }, formatName(a.official_name))
+            : formatName(a.official_name))
+        : "n/a"),
+      el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"));
+    const CAP = 6;
+    const tbody = el("tbody", {}, ...card.attribution.slice(0, CAP).map(attribRow));
+    const card3 = el("div", { class: "card" },
+      el("h3", {}, "Who is credited", tip("attribution")),
+      el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+        "Most of any outcome stays unattributed to any one person; the rest is shared by role."),
+      el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "role"), el("th", {}, "who"), el("th", { class: "right" }, "share"))), tbody));
+    if (card.attribution.length > CAP) {
+      let expanded = false;
+      const btn = el("button", { class: "linkbtn", onclick: () => {
+        expanded = !expanded;
+        tbody.innerHTML = "";
+        (expanded ? card.attribution : card.attribution.slice(0, CAP)).forEach((a) => tbody.appendChild(attribRow(a)));
+        btn.textContent = expanded ? "Show fewer" : `Show all ${card.attribution.length} credited`;
+      } }, `Show all ${card.attribution.length} credited`);
+      card3.appendChild(btn);
+    }
+    app.appendChild(card3);
+  }
+
+  // Everything deeper lives in collapsible sections so the top stays clean.
+  const details = el("div", { class: "discs" });
+  details.appendChild(el("h3", { class: "group-h", style: "margin-top:18px" }, "Full details, methodology, and sources"));
+
   if (card.objective) {
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Stated objective (the goal this action set for itself)"),
+    details.appendChild(disclosure("Stated objective and metric", () => el("div", {},
       el("div", { class: "row" }, el("span", { class: "k" }, "objective level"), el("span", { class: "v" }, card.objective.level)),
-      el("p", { class: "muted", style: "max-height:160px;overflow:auto" }, card.objective.text.slice(0, 1200) + (card.objective.text.length > 1200 ? "…" : "")),
+      el("p", { class: "muted", style: "max-height:200px;overflow:auto" }, card.objective.text.slice(0, 1500) + (card.objective.text.length > 1500 ? "…" : "")),
       el("div", { class: "src" }, el("a", { href: card.objective.source_url, target: "_blank" }, "official source ↗")),
-      card.metric ? el("div", { class: "row", style: "margin-top:10px" },
-        el("span", { class: "k" }, "mapped metric"),
-        el("span", { class: "v" }, `${card.metric.name} (${card.metric.unit}; better = ${card.metric.direction_good}) · ${card.metric.native_series_id}`)) : null));
+      card.metric ? el("div", { class: "row", style: "margin-top:10px" }, el("span", { class: "k" }, "mapped metric"),
+        el("span", { class: "v" }, `${card.metric.name} (${card.metric.unit}; better = ${card.metric.direction_good})`)) : null)));
   }
-
-  // Outcome + baseline ensemble
+  if (card.components.length) {
+    details.appendChild(disclosure("Score breakdown", () => el("div", {}, ...card.components.map(componentBar))));
+  }
   if (card.outcome) {
     const o = card.outcome;
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Outcome vs. counterfactual baseline"),
+    details.appendChild(disclosure("Outcome vs. counterfactual baseline", () => el("div", {},
       el("div", { class: "kpi" },
         el("div", { class: "item" }, el("div", { class: "n" }, fmt(o.observed, 0)), el("div", { class: "l" }, "observed")),
         el("div", { class: "item" }, el("div", { class: "n" }, fmt(o.baseline_pooled, 0)), el("div", { class: "l" }, "baseline (pooled)")),
@@ -491,151 +795,353 @@ async function renderDetail(id) {
         el("thead", {}, el("tr", {}, el("th", {}, "baseline method"), el("th", { class: "right" }, "value"), el("th", { class: "right" }, "95% CI"))),
         el("tbody", {}, ...card.baselines.map((b) =>
           el("tr", {}, el("td", {}, b.method), el("td", { class: "right mono" }, fmt(b.baseline_value, 1)),
-            el("td", { class: "right mono" }, `[${fmt(b.ci_low, 1)}, ${fmt(b.ci_high, 1)}]`)))))));
+            el("td", { class: "right mono" }, `[${fmt(b.ci_low, 1)}, ${fmt(b.ci_high, 1)}]`))))))));
   }
-
-  // Attribution
-  if (card.attribution.length) {
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Attribution (always leaves a large unattributable residual)", tip("attribution")),
-      el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "role"), el("th", {}, "who"), el("th", { class: "right" }, "attribution"), el("th", { class: "right" }, "95% band"))),
-        el("tbody", {}, ...card.attribution.map((a) =>
-          el("tr", {},
-            el("td", {}, a.is_residual ? el("span", { class: "pill" }, a.role.replaceAll("_", " ")) : a.role),
-            el("td", {}, a.official_name ? formatName(a.official_name) : "n/a"),
-            el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
-            el("td", { class: "right mono" }, `[${(a.ci_low * 100).toFixed(0)}, ${(a.ci_high * 100).toFixed(0)}]%`)))))));
-  }
-
-  // User value weights (composite path demo, gate-respecting)
-  if (card.components.length) {
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "Your value weights (optional · default = neutral)"),
-      valueWeightPanel(card)));
-  }
-
-  // Sensitivity analysis (robustness across alternative lag windows)
   if (card.metric && card.outcome) {
-    app.appendChild(await sensitivityCard(card.evaluation_unit.id, card.metric.unit));
+    details.appendChild(disclosure("Robustness across evaluation horizons", () => sensitivityCard(card.evaluation_unit.id, card.metric.unit)));
   }
-
-  // Challenge / appeal (dispute workflow)
-  app.appendChild(await disputesCard(card.evaluation_unit.id));
-
-  // What would change the score
+  if (card.components.length) {
+    details.appendChild(disclosure("Your value weights (optional, default neutral)", () => valueWeightPanel(card)));
+  }
   if (card.what_would_change_the_score && card.what_would_change_the_score.length) {
-    app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "What would change this score"),
-      ...card.what_would_change_the_score.map((h) => el("div", { class: "hint" }, h))));
+    details.appendChild(disclosure("What would change this score", () => el("div", {},
+      ...card.what_would_change_the_score.map((h) => el("div", { class: "hint" }, h)))));
   }
-
-  // Reproducibility + pre-registration
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Reproducibility & pre-registration (audit this)"),
-    el("div", { class: "row" }, el("span", { class: "k" }, "pre-registration hash (committed before outcomes fetched)"), el("span", { class: "v mono" }, (card.evaluation_unit.prereg_hash || "n/a").slice(0, 24) + "…")),
+  details.appendChild(disclosure("Reproducibility and pre-registration", () => el("div", {},
+    el("div", { class: "row" }, el("span", { class: "k" }, "pre-registration hash"), el("span", { class: "v mono" }, (card.evaluation_unit.prereg_hash || "n/a").slice(0, 24) + "…")),
     el("div", { class: "row" }, el("span", { class: "k" }, "pre-registered at"), el("span", { class: "v mono" }, card.evaluation_unit.prereg_at || "n/a")),
     card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "reproducible run hash"), el("span", { class: "v mono" }, (card.run.reproducible_hash || "n/a").slice(0, 24) + "…")) : null,
-    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "data snapshot id"), el("span", { class: "v mono" }, card.run.data_snapshot_id.slice(0, 24) + "…")) : null,
-    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "methodology version · seed · git"), el("span", { class: "v mono" }, `${card.run.methodology_version} · ${card.run.seed} · ${(card.run.code_git_sha || "n/a").slice(0, 8)}`)) : null));
+    card.run ? el("div", { class: "row" }, el("span", { class: "k" }, "methodology version · seed · git"), el("span", { class: "v mono" }, `${card.run.methodology_version} · ${card.run.seed} · ${(card.run.code_git_sha || "n/a").slice(0, 8)}`)) : null)));
+  details.appendChild(disclosure("Source trail (official bytes + content hash)", () => el("table", { class: "src" },
+    el("thead", {}, el("tr", {}, el("th", {}, "source"), el("th", {}, "sha256"), el("th", {}, "retrieved"))),
+    el("tbody", {}, ...card.source_trail.map((s) =>
+      el("tr", {},
+        el("td", {}, el("a", { href: s.source_url, target: "_blank" }, (s.native_identifier || s.source_url).slice(0, 48) + " ↗")),
+        el("td", { class: "mono" }, s.content_hash.slice(0, 16) + "…"),
+        el("td", { class: "mono" }, (s.retrieved_at || "").slice(0, 19))))))));
+  details.appendChild(disclosure("Challenge or appeal this score", () => disputesCard(card.evaluation_unit.id)));
+  app.appendChild(details);
+}
 
-  // Source trail
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Source trail (every datum → official bytes + content hash)"),
-    el("table", { class: "src" },
-      el("thead", {}, el("tr", {}, el("th", {}, "source"), el("th", {}, "sha256"), el("th", {}, "retrieved"))),
-      el("tbody", {}, ...card.source_trail.map((s) =>
-        el("tr", {},
-          el("td", {}, el("a", { href: s.source_url, target: "_blank" }, (s.native_identifier || s.source_url).slice(0, 48) + " ↗")),
-          el("td", { class: "mono" }, s.content_hash.slice(0, 16) + "…"),
-          el("td", { class: "mono" }, (s.retrieved_at || "").slice(0, 19))))))));
+// Forgiving name match: full substring, all query tokens present, or the surname (last
+// token) present, so "Nancy Pelosi" still finds a row stored only as "Pelosi".
+function matchOfficial(blob, q) {
+  if (!q) return true;
+  if (blob.includes(q)) return true;
+  const toks = q.split(" ").filter((t) => t.length >= 2);
+  if (!toks.length) return false;
+  if (toks.every((t) => blob.includes(t))) return true;
+  return blob.includes(toks[toks.length - 1]);
+}
+
+function officialRow(o) {
+  const titleRow = el("div", { class: "title" }, formatName(o.name));
+  if (o.position) titleRow.appendChild(el("span", { class: "pill", style: "margin-left:8px" }, o.position));
+  if (o.in_office) titleRow.appendChild(el("span", { class: "pill inoffice", style: "margin-left:6px" }, "In office"));
+  const parts = [];
+  if (o.scored_actions > 0) parts.push(`${o.scored_actions} scored`);
+  if (o.sponsored) parts.push(`${o.sponsored} sponsored`);
+  if (o.cosponsored) parts.push(`${o.cosponsored} cosponsored`);
+  if (!parts.length) parts.push(`${o.total_actions} action(s)`);
+  const acted = (o.sponsored || 0) + (o.cosponsored || 0);
+  const badge = o.scored_actions > 0
+    ? el("span", { class: "badge scored" }, `${o.scored_actions} scored`)
+    : (acted
+        ? el("span", { class: "badge non_scoreable" }, `${acted} bills`)
+        : el("span", { class: "badge insufficient_evidence" }, "no record yet"));
+  return el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
+    el("div", {}, titleRow, el("div", { class: "muted mono" }, parts.join(" · "))),
+    el("div", { style: "text-align:right" }, badge));
 }
 
 async function renderOfficials() {
   const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
+  let index = [];
+  try { index = await getJSON("/api/officials-index"); } catch (e) { /* handled below */ }
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Officials"));
-  // Short, neutral framing; the depth lives in About and the per-official drill-down.
-  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 6px" },
-    "How well an official's actions met the goals those actions set, weighted by their share of credit ",
-    tip("composite"),
-    ". Shown with coverage ", tip("coverage"), ". Search or filter to begin."));
+  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
+    "Search a name or jump by letter. Open anyone for their record, or ",
+    el("a", { href: "#/compare" }, "compare two"), "."));
 
-  // Search/filter panel — labels left, inputs right.
-  const params = new URLSearchParams(location.hash.split("?")[1] || "");
-  const search = el("input", { type: "text", placeholder: "type a name…", value: params.get("q") || "" });
-  const partySel = selectEl(
-    [["", "All parties"], ["D", "Democratic"], ["R", "Republican"], ["I", "Independent"], ["ID", "Independent Dem."]],
-    params.get("party") || "");
-  const typeSel = selectEl(
-    [["", "All action types"], ["law", "Laws"], ["eo", "Executive orders"], ["regulation", "Regulations"], ["budget", "Budget execution"]],
-    params.get("action_type") || "");
-  const scoredOnly = el("input", { type: "checkbox" });
-  if (params.get("scored_only") === "1") scoredOnly.checked = true;
-  const showAll = el("input", { type: "checkbox" });
-  if (params.get("all") === "1") showAll.checked = true;
-
-  const apply = () => {
-    const p = new URLSearchParams();
-    if (search.value.trim()) p.set("q", search.value.trim());
-    if (partySel.value) p.set("party", partySel.value);
-    if (typeSel.value) p.set("action_type", typeSel.value);
-    if (scoredOnly.checked) p.set("scored_only", "1");
-    if (showAll.checked) p.set("all", "1");
-    location.hash = "#/officials" + (p.toString() ? "?" + p.toString() : "");
-  };
-  search.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
-  for (const ctl of [partySel, typeSel, scoredOnly, showAll]) ctl.addEventListener("change", apply);
-
-  const frow = (label, control, extra) => el("div", { class: "frow" },
-    el("div", { class: "flabel" }, label, extra || null), control);
-  app.appendChild(el("div", { class: "filters" },
-    frow("Official", search),
-    frow("Party", partySel),
-    frow("Action type", typeSel),
-    frow("Options", el("div", { class: "opts" },
-      el("label", {}, scoredOnly, "scored only"),
-      el("label", {}, showAll, "show all",
-        tip("By default we hide officials whose only tie to a scored action is a negligible role " +
-            "(e.g. one vote in a lopsided roll-call, <0.5%). 'Show all' includes them.")))),
-    el("div", { class: "fbtns" },
-      el("button", { onclick: apply }, "Search"),
-      el("a", { class: "cta ghost", href: "#/officials", style: "padding:8px 14px;border-radius:6px" }, "Clear"))));
-
-  // Do not list everyone by default. Show results only once a search or filter is applied.
-  const hasQuery = ["q", "party", "action_type", "scored_only"].some((k) => params.get(k));
-  if (!hasQuery) {
+  if (!index.length) {
     app.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
-      el("p", {}, "Search by name, or pick a party or action type, to see officials."),
-      el("p", { style: "font-size:13px" },
-        "Tip: try ", el("a", { href: "#/officials?scored_only=1" }, "officials with a scored action"),
-        " to see who has a result.")));
+      el("p", {}, "The directory could not load. The server may be waking up."),
+      el("button", { onclick: () => renderOfficials() }, "Retry")));
     return;
   }
 
-  const qs = new URLSearchParams();
-  if (params.get("q")) qs.set("q", params.get("q"));
-  if (params.get("party")) qs.set("party", params.get("party"));
-  if (params.get("action_type")) qs.set("action_type", params.get("action_type"));
-  if (params.get("scored_only")) qs.set("scored_only", "true");
-  // Hide negligible (<0.5%) involvement by default; "show all" turns the floor off.
-  if (params.get("all") !== "1") qs.set("min_involvement", "0.005");
-  const officials = await getJSON("/api/officials" + (qs.toString() ? "?" + qs.toString() : ""));
-  app.appendChild(el("div", { class: "muted mono", style: "margin-bottom:8px" },
-    `${officials.length} result(s)` + (params.get("all") === "1" ? ", including negligible-role ties" : "")));
-  for (const o of officials) {
-    const scoredText = o.composite !== null
-      ? `composite ${fmt(o.composite, 1)} · confidence ${(o.confidence * 100).toFixed(0)}%`
-      : "insufficient evidence";
-    const meta = `${o.scored_actions}/${o.total_actions} scored · ` +
-      `coverage ${(o.coverage * 100).toFixed(0)}% · role share ${(o.involvement * 100).toFixed(1)}%`;
-    app.appendChild(el("div", { class: "list-item", onclick: () => { location.hash = `#/official/${o.id}`; } },
-      el("div", {}, el("div", { class: "title" }, formatName(o.name, o.party)),
-        el("div", { class: "muted mono" }, meta)),
-      el("div", { style: "text-align:right" },
-        o.composite !== null ? el("span", { class: "badge scored" }, scoredText)
-          : el("span", { class: "badge insufficient_evidence" }, scoredText))));
+  // Precompute a lowercase search blob (covers 'Last, First', 'First Last', raw) + last initial.
+  for (const o of index) {
+    o._blob = `${formatName(o.name)} ${formatNameNatural(o.name)} ${o.name || ""}`.toLowerCase();
+    const ln = formatName(o.name);
+    o._initial = (ln[0] || "#").toUpperCase();
+    if (!new RegExp("[A-Z]").test(o._initial)) o._initial = "#";
   }
+
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const state = {
+    q: (params.get("q") || "").toLowerCase(),
+    letter: "",
+    scoredOnly: params.get("scored_only") === "1",
+  };
+
+  // --- Controls ---
+  const search = el("input", { type: "text", placeholder: "Search an official by name…",
+    autocomplete: "off", "aria-label": "Search officials", value: params.get("q") || "" });
+  const drop = el("div", { class: "typeahead" });
+  const searchWrap = el("div", { class: "search-wrap" }, search, drop);
+
+  const letters = ["All", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("")];
+  const azBar = el("div", { class: "azbar" });
+
+  const scoredOnly = el("input", { type: "checkbox" });
+  scoredOnly.checked = state.scoredOnly;
+
+  const countEl = el("div", { class: "muted mono", style: "margin:8px 0" });
+  const listEl = el("div", {});
+
+  const blobOf = (o) => o._blob || `${formatName(o.name)} ${formatNameNatural(o.name)} ${o.name || ""}`.toLowerCase();
+  const initialOf = (o) => {
+    if (o._initial) return o._initial;
+    const c = (formatName(o.name)[0] || "#").toUpperCase();
+    return new RegExp("[A-Z]").test(c) ? c : "#";
+  };
+
+  // The "scored only" filter runs server-side (reliable); name + letter narrow client-side.
+  let serverCache = { key: null, rows: null };
+  async function sourceRows() {
+    if (!state.scoredOnly) return index;
+    if (serverCache.key === "scored") return serverCache.rows;
+    const rows = await getJSON("/api/officials?scored_only=true&min_involvement=0.005");
+    serverCache = { key: "scored", rows };
+    return rows;
+  }
+
+  async function renderList() {
+    const browsing = !state.q && !state.letter && !state.scoredOnly;
+    if (browsing) {
+      listEl.innerHTML = ""; countEl.textContent = "";
+      listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+        el("p", {}, "Search a name, or jump by letter, to see officials."),
+        el("p", { style: "font-size:13px" }, "There are ", el("b", {}, String(index.length)), " officials in the directory.")));
+      return;
+    }
+    listEl.innerHTML = ""; listEl.appendChild(spinner("Loading…")); countEl.textContent = "";
+    let rows;
+    try { rows = await sourceRows(); }
+    catch (e) { listEl.innerHTML = ""; listEl.appendChild(el("div", { class: "card", style: "color:var(--muted)" }, "Could not load officials. Retry in a moment.")); return; }
+    if (state.q) rows = rows.filter((o) => matchOfficial(blobOf(o), state.q));
+    if (state.letter && state.letter !== "All") rows = rows.filter((o) => initialOf(o) === state.letter);
+    // Always list alphabetically by last name (so same-surname people sit together).
+    rows = rows.slice().sort((a, b) => formatName(a.name).localeCompare(formatName(b.name)));
+    listEl.innerHTML = "";
+    countEl.textContent = `${rows.length} result(s)`;
+    if (!rows.length) {
+      listEl.appendChild(el("div", { class: "card", style: "text-align:center;color:var(--muted)" },
+        el("p", {}, "No officials match. Try a different name, letter, or topic.")));
+      return;
+    }
+    for (const o of rows) listEl.appendChild(officialRow(o));
+  }
+
+  let dropMatches = [];
+  let activeIdx = -1;
+  function highlight() {
+    for (let i = 0; i < drop.children.length; i++) drop.children[i].classList.toggle("active", i === activeIdx);
+    if (activeIdx >= 0 && drop.children[activeIdx]) drop.children[activeIdx].scrollIntoView({ block: "nearest" });
+  }
+  function renderDrop() {
+    drop.innerHTML = "";
+    activeIdx = -1;
+    if (!state.q) { drop.style.display = "none"; return; }
+    dropMatches = index.filter((o) => matchOfficial(o._blob, state.q)).slice(0, 8);
+    if (!dropMatches.length) { drop.style.display = "none"; return; }
+    drop.style.display = "block";
+    dropMatches.forEach((o) => {
+      drop.appendChild(el("div", { class: "ta-item", onmousedown: (e) => { e.preventDefault(); location.hash = `#/official/${o.id}`; } },
+        el("span", {}, formatName(o.name)),
+        o.position ? el("span", { class: "pill" }, o.position) : null,
+        o.scored_actions > 0 ? el("span", { class: "ta-scored" }, `${o.scored_actions} scored`) : null));
+    });
+  }
+
+  search.addEventListener("input", () => { state.q = search.value.trim().toLowerCase(); renderDrop(); renderList(); });
+  search.addEventListener("focus", renderDrop);
+  search.addEventListener("blur", () => { setTimeout(() => { drop.style.display = "none"; }, 150); });
+  search.addEventListener("keydown", (e) => {
+    const open = drop.style.display === "block" && dropMatches.length;
+    if (e.key === "ArrowDown" && open) { e.preventDefault(); activeIdx = Math.min(activeIdx + 1, dropMatches.length - 1); highlight(); }
+    else if (e.key === "ArrowUp" && open) { e.preventDefault(); activeIdx = Math.max(activeIdx - 1, 0); highlight(); }
+    else if (e.key === "Enter") {
+      const pick = activeIdx >= 0 ? dropMatches[activeIdx] : dropMatches[0];
+      if (pick) { e.preventDefault(); location.hash = `#/official/${pick.id}`; }
+    } else if (e.key === "Escape") { drop.style.display = "none"; }
+  });
+
+  for (const L of letters) {
+    const b = el("button", { class: "azbtn" + (L === "All" ? " active" : ""), type: "button" }, L);
+    b.addEventListener("click", () => {
+      state.letter = L === "All" ? "" : L;
+      for (const c of azBar.children) c.classList.toggle("active", c.textContent === L);
+      renderList();
+    });
+    azBar.appendChild(b);
+  }
+  scoredOnly.addEventListener("change", () => { state.scoredOnly = scoredOnly.checked; renderList(); });
+  // Keyboard: type to focus the search from anywhere on the page.
+  azBar.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const btns = [...azBar.children];
+    const i = btns.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    const next = e.key === "ArrowRight" ? Math.min(i + 1, btns.length - 1) : Math.max(i - 1, 0);
+    btns[next].focus();
+  });
+
+  app.appendChild(searchWrap);
+  app.appendChild(azBar);
+  app.appendChild(el("div", { class: "off-filters" },
+    el("label", { class: "chk" }, scoredOnly, " scored only")));
+  app.appendChild(countEl);
+  app.appendChild(listEl);
+  renderList();
+}
+
+function howMeasuredModal(note) {
+  openModal("How this is measured", el("div", {},
+    el("p", { class: "narrative" }, TIPS.composite),
+    el("div", { class: "eq" }, "official composite = sum(share_i x action_composite_i) / sum(share_i)\n   over the official's scored actions"),
+    el("div", { class: "eq" }, "action composite = confidence x achievement\n   achievement = how fully the action's stated goal was met (0 to 100)"),
+    el("p", { style: "font-size:13px" }, el("b", {}, "Attribution (share of credit). "), TIPS.attribution),
+    el("p", { style: "font-size:13px" }, el("b", {}, "Coverage. "), TIPS.coverage),
+    el("p", { style: "font-size:13px" }, el("b", {}, "Confidence. "), TIPS.confidence),
+    el("p", { style: "font-size:13px" }, el("b", {}, "Insufficient evidence. "), TIPS.insufficient),
+    el("p", { class: "muted", style: "font-size:12px" }, note || "")));
+}
+
+function officialActionRow(a) {
+  const meta = [a.category_label, a.date ? a.date.slice(0, 4) : null, a.role && a.role.replaceAll("_", " ")]
+    .filter(Boolean).join(" · ");
+  return el("div", { class: "list-item", onclick: () => { location.hash = `#/eu/${a.eu_id}`; } },
+    el("div", {},
+      el("div", { class: "title" }, a.action_title || `Action ${a.eu_id}`),
+      el("div", { class: "muted mono" }, meta)),
+    el("div", { style: "text-align:right" },
+      a.composite !== null
+        ? el("span", { class: "badge scored" }, "composite " + fmt(a.composite, 1))
+        : statusBadge(a.status || "pending")));
+}
+
+function card_executive(card) {
+  const e = card.executive || {};
+  if (!e.total) return null;
+  const who = formatNameNatural(card.official.name);
+  const out = el("div", {},
+    el("p", { class: "muted", style: "font-size:13px;margin-top:0" },
+      `Executive orders ${who} signed (${e.total}). The record of what they acted on, not a score.`));
+  const cats = (e.by_category || []).filter((c) => c.category && c.category !== "other");
+  if (cats.length) {
+    out.appendChild(el("div", { class: "group-h" }, "By topic"));
+    const maxc = Math.max(...cats.map((c) => c.count), 1);
+    for (const c of cats) out.appendChild(el("div", { class: "bar-wrap" },
+      el("div", { class: "comp-name" }, c.category_label),
+      el("div", { class: "bar" }, el("span", { style: `width:${Math.round((c.count / maxc) * 100)}%` })),
+      el("div", { class: "right mono" }, String(c.count))));
+  }
+  if ((e.recent || []).length) {
+    const items = e.recent.map((a) => el("div", {
+      class: "list-item", onclick: a.source_url ? () => window.open(a.source_url, "_blank", "noopener") : null },
+      el("div", { class: "li-main" },
+        el("div", { class: "title" }, a.title || ("Executive Order " + (a.eo_number || ""))),
+        el("div", { class: "muted mono" }, [a.eo_number ? ("EO " + a.eo_number) : null, a.date ? a.date.slice(0, 10) : null].filter(Boolean).join(" \u00b7 "))),
+      el("div", { class: "li-side" }, a.source_url ? el("a", { href: a.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+    out.appendChild(disclosure(`Recent (${e.recent.length})`, () => el("div", {}, ...items)));
+  }
+  return out;
+}
+
+const VOTE_LABEL = { yea: "Yea", nay: "Nay", present: "Present", nv: "No vote" };
+
+function card_votes(card) {
+  const v = card.votes || {};
+  if (!v.total) return null;
+  const who = formatNameNatural(card.official.name);
+  const bp = v.by_position || {};
+  const out = el("div", {},
+    el("p", { class: "muted", style: "font-size:13px;margin-top:0" },
+      `${who}'s recorded roll-call votes (${v.total}). The record of how they voted, not a score.`));
+  const chips = el("div", { class: "chips" });
+  for (const k of ["yea", "nay", "present", "nv"]) {
+    if (bp[k]) chips.appendChild(el("span", { class: "chip" }, VOTE_LABEL[k] + " ", el("b", {}, String(bp[k]))));
+  }
+  out.appendChild(chips);
+  const cats = (v.by_category || []).filter((c) => c.category);
+  if (cats.length) {
+    out.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, "By topic (yea\u2013nay)"));
+    const maxc = Math.max(...cats.map((c) => c.total), 1);
+    for (const c of cats) out.appendChild(el("div", { class: "bar-wrap" },
+      el("div", { class: "comp-name" }, c.category_label),
+      el("div", { class: "bar" }, el("span", { style: `width:${Math.round((c.total / maxc) * 100)}%` })),
+      el("div", { class: "right mono" }, `${c.yea}\u2013${c.nay}`)));
+  }
+  if ((v.recent || []).length) {
+    const items = v.recent.map((r) => el("div", {
+      class: "list-item", onclick: r.source_url ? () => window.open(r.source_url, "_blank", "noopener") : null },
+      el("div", { class: "li-main" },
+        el("div", { class: "title" }, [r.bill_number, r.category_label].filter(Boolean).join(" \u00b7 ") || "Roll-call vote"),
+        el("div", { class: "muted mono" }, [r.date ? r.date.slice(0, 10) : null, r.result].filter(Boolean).join(" \u00b7 "))),
+      el("div", { class: "li-side" },
+        el("span", { class: "vbadge " + r.position }, VOTE_LABEL[r.position] || r.position),
+        r.source_url ? el("a", { href: r.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+    out.appendChild(disclosure(`Recent votes (${v.recent.length})`, () => el("div", {}, ...items)));
+  }
+  return out;
+}
+
+function activityCard(activity) {
+  const series = (activity && activity.by_year) || [];
+  const counts = {};
+  for (const d of series) counts[d.year] = d.count;
+  const ys = Object.keys(counts).map(Number).sort((a, b) => a - b);
+  if (ys.length < 2) return null;
+  const all = [];
+  for (let y = ys[0]; y <= ys[ys.length - 1]; y++) all.push([y, counts[y] || 0]);
+  const max = Math.max(...all.map((d) => d[1]), 1);
+  const spark = el("div", { class: "spark" });
+  for (const [y, n] of all) {
+    spark.appendChild(el("div", { class: "spark-col", title: `${y}: ${n} action(s)` },
+      el("div", { class: "spark-bar", style: `height:${Math.round((n / max) * 46) + 2}px` }),
+      el("div", { class: "spark-yr" }, "\u2019" + String(y).slice(2))));
+  }
+  return el("div", { class: "card" },
+    el("h3", {}, "Activity over time"),
+    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" }, "Actions per year \u2014 bills sponsored, cosponsored, and scored actions (when and how often they act)."),
+    el("div", { class: "spark-wrap" }, spark));
+}
+
+async function officialChallengeSection(card) {
+  // An official's score is the roll-up of their actions, so challenges target a specific
+  // result; each resolves via the same deterministic, audit-logged re-run as on the action page.
+  const scored = (card.actions || []).filter((a) => a.composite !== null);
+  if (!scored.length) return null;
+  const sel = selectEl(scored.map((a) => [String(a.eu_id), a.action_title || ("Action " + a.eu_id)]), String(scored[0].eu_id));
+  sel.className = "full-select";
+  const holder = el("div", {});
+  async function load() { holder.innerHTML = ""; holder.appendChild(spinner("Loading…")); const c = await disputesCard(Number(sel.value)); holder.innerHTML = ""; holder.appendChild(c); }
+  sel.addEventListener("change", load);
+  const wrap = el("div", {});
+  wrap.appendChild(el("div", { class: "card" },
+    el("h3", {}, "Challenge or appeal a result"),
+    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
+      "This official's score is built from their scored actions. Pick a result to challenge; we " +
+      "re-run it deterministically and publish whether it changed."),
+    el("label", { class: "muted", style: "display:block;font-size:13px" }, "Result to review ", sel)));
+  wrap.appendChild(holder);
+  await load();
+  return wrap;
 }
 
 async function renderOfficialDetail(id) {
@@ -647,66 +1153,254 @@ async function renderOfficialDetail(id) {
 
   const r = card.rollup;
   const o = card.official;
+  const act = card.activity || {};
   const scored = r.composite !== null;
+  const rec = card.record || { sponsored_total: 0, by_category: [], recent: [] };
+  const exe = card.executive || { total: 0, recent: [] };
+  const votes = card.votes || { total: 0 };
   const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(0) + "%");
+  const who = formatNameNatural(o.name);
+  setTitle(who);
   const plain = scored
-    ? `Across the ${r.scored_actions} of ${o.name}'s ${r.total_actions} attributable action(s) we could ` +
-      `score, the goals those actions set were met to ${fmt(r.composite, 1)} out of 100, weighted by confidence. ` +
-      `This reflects only the actions we could score.`
-    : `None of ${o.name}'s ${r.total_actions} attributable action(s) could be isolated yet, so we ` +
-      `report no score. We mark this "insufficient evidence" rather than guess.`;
+    ? `On the ${r.scored_actions} of ${r.total_actions} actions we could measure, ${who}'s actions met their own ` +
+      `stated goals to ${fmt(r.composite, 1)} out of 100 on average (weighted by our confidence).`
+    : (r.total_actions > 0
+        ? `We could not yet isolate the effect of any of ${who}'s ${r.total_actions} measurable action(s), so we ` +
+          `report insufficient evidence rather than guess. Their record of what they acted on is below.`
+        : ((rec.sponsored_total > 0 || rec.cosponsored_total > 0)
+            ? `${who} has sponsored ${rec.sponsored_total} and cosponsored ${rec.cosponsored_total} bill(s). ` +
+              `None has an isolatable, scoreable outcome yet, so we show the record of what they acted on, by topic, below.`
+            : (exe.total > 0
+                ? `${who} has signed ${exe.total} executive order(s). Most can't be isolated to a single ` +
+                  `measured outcome, so we show the record of what they acted on below.`
+                : `No record for ${who} yet.`)));
+  const period = act.first_year
+    ? (act.first_year === act.last_year ? `${act.first_year}` : `${act.first_year}\u2013${act.last_year}`)
+    : null;
 
-  // Headline: name + big composite + plain-language summary + secondary chips.
+  // Headline: name + office + one big neutral number + one plain sentence + how-measured link.
   app.appendChild(el("div", { class: "headline" },
-    el("p", { class: "name" }, formatName(o.name, o.party)),
-    el("div", { class: "submeta" },
-      o.bioguide_id ? `Bioguide ${o.bioguide_id}` : "Official record"),
+    el("p", { class: "name" }, who),
+    el("div", { class: "submeta" }, o.position || "Official record",
+      o.in_office ? el("span", { class: "pill inoffice", style: "margin-left:8px" }, "In office") : null),
     el("div", { class: "big" },
       scored
         ? el("span", { class: "bignum scored" }, fmt(r.composite, 1))
-        : el("span", { class: "bignum none" }, "Insufficient evidence"),
+        : el("span", { class: "bignum none" }, r.total_actions > 0 ? "Insufficient evidence" : "No scored actions yet"),
       scored ? el("span", { class: "ofmax" }, "/ 100 composite") : null,
       tip("composite")),
     el("p", { class: "plain" }, plain),
-    el("div", { class: "chips" },
-      el("span", { class: "chip" }, "coverage ", el("b", {}, pct(r.coverage)), tip("coverage")),
-      el("span", { class: "chip" }, "confidence ", el("b", {}, r.confidence !== null ? pct(r.confidence) : "n/a"), tip("confidence")),
-      el("span", { class: "chip" }, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`))),
-    el("div", { style: "margin-top:12px" },
-      el("a", { href: "#", onclick: (e) => {
-        e.preventDefault();
-        openModal("How this is calculated", el("div", {},
-          el("p", { class: "narrative" }, TIPS.composite),
-          el("div", { class: "eq" }, "official composite = sum(share_i x action_composite_i) / sum(share_i)\n   over the official's scored actions"),
-          el("div", { class: "eq" }, "action composite = confidence x achievement\n   achievement = how fully the action's stated goal was met (0 to 100)"),
-          el("p", { style: "font-size:13px" }, el("b", {}, "Attribution (share of credit). "), TIPS.attribution),
-          el("div", { class: "eq" }, "share = authority x pivotality,  normalized so\n   sum(people) + unattributable residual = 1"),
-          el("p", { style: "font-size:13px" }, el("b", {}, "Coverage. "), TIPS.coverage),
-          el("div", { class: "eq" }, "coverage = scored actions / total attributable actions"),
-          el("p", { style: "font-size:13px" }, el("b", {}, "Confidence. "), TIPS.confidence),
-          el("div", { class: "eq" }, "confidence = design x data x attribution x model x sensitivity"),
-          el("p", { style: "font-size:13px" }, el("b", {}, "Insufficient evidence. "), TIPS.insufficient),
-          el("p", { class: "muted", style: "font-size:12px" }, r.note)));
-      } }, "How is this calculated? →"))));
+    scored ? el("div", { style: "margin-top:12px" },
+      el("a", { href: "#", onclick: (e) => { e.preventDefault(); howMeasuredModal(r.note); } }, "How is this measured? →")) : null));
 
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Their attributable actions"),
-    el("p", { class: "muted", style: "font-size:13px;margin-top:-4px" },
-      "Every action this official is credited on. Click any row to open its full, source-anchored scorecard (outcome vs. baseline, attribution, confidence, sources)."),
-    el("table", {},
-      el("thead", {}, el("tr", {}, el("th", {}, "action"), el("th", {}, "role"),
-        el("th", { class: "right" }, "attribution", tip("attribution")), el("th", {}, "status"),
-        el("th", { class: "right" }, "composite", tip("composite")))),
-      el("tbody", {}, ...card.actions.map((a) =>
-        el("tr", {},
-          el("td", {}, el("a", { href: `#/eu/${a.eu_id}` }, a.action_title || `EU ${a.eu_id}`)),
-          el("td", {}, a.role),
-          el("td", { class: "right mono" }, (a.attribution * 100).toFixed(1) + "%"),
-          el("td", {}, statusBadge(a.status || "pending")),
-          el("td", { class: "right mono" }, a.composite !== null ? fmt(a.composite, 1) : "n/a")))))));
+  // At a glance: the three most relevant numbers (the big composite already leads when scored).
+  const statCandidates = [];
+  if (r.total_actions > 0) {
+    statCandidates.push(["Coverage", pct(r.coverage)]);
+    statCandidates.push(["Scored actions", `${r.scored_actions}/${r.total_actions}`]);
+  }
+  if (rec.sponsored_total) statCandidates.push(["Bills sponsored", String(rec.sponsored_total)]);
+  if (rec.cosponsored_total) statCandidates.push(["Cosponsored", String(rec.cosponsored_total)]);
+  if (votes.total) statCandidates.push(["Votes cast", String(votes.total)]);
+  if (exe.total) statCandidates.push(["Executive orders", String(exe.total)]);
+  if (period) statCandidates.push(["Active", period]);
+  if (card.most_active_category) statCandidates.push(["Most active in", card.most_active_category]);
+  const stats = statCandidates.slice(0, 3);
+  if (stats.length) {
+    app.appendChild(el("div", { class: "kpi glance" }, ...stats.map(([label, val]) =>
+      el("div", { class: "item" }, el("div", { class: "n" }, val), el("div", { class: "l" }, label)))));
+  }
+
+  // Everything else lives behind collapsed disclosures so the default view stays digestible.
+  // 1) What they've acted on (sponsored + cosponsored bills, by topic).
+  if (rec.sponsored_total || rec.cosponsored_total) {
+    app.appendChild(disclosure(
+      `What they've acted on \u2014 ${(rec.sponsored_total || 0) + (rec.cosponsored_total || 0)} bills`,
+      () => recordBody(card, who)));
+  }
+  // 2) How they voted (roll-call record).
+  if (votes.total) {
+    app.appendChild(disclosure(`How they voted \u2014 ${votes.total} roll-calls`, () => card_votes(card)));
+  }
+  // 3) Executive actions (orders signed).
+  if (exe.total) {
+    app.appendChild(disclosure(`Executive actions \u2014 ${exe.total} orders`, () => card_executive(card)));
+  }
+  // 4) Activity over time (kept inline as a compact visual overview).
+  const actCard = activityCard(card.activity || {});
+  if (actCard) app.appendChild(actCard);
+  // 5) Scored record by category.
+  if (card.by_category && card.by_category.length) {
+    app.appendChild(disclosure("Record by category", () => scoredByCategoryBody(card)));
+  }
+  renderOfficialActions(app, card);
+  const chal = await officialChallengeSection(card);
+  if (chal) app.appendChild(chal);
 }
 
-const NODE_COLORS = { official: "#4f9cf9", action: "#2ecc71", jurisdiction: "#f1c40f", metric: "#a06fd0" };
+// Body builders for the official-page disclosures (built lazily when opened).
+function recordBody(card, who) {
+  const rec = card.record || { sponsored_total: 0, by_category: [], recent: [] };
+  const body = el("div", {},
+    el("p", { class: "muted", style: "font-size:13px;margin-top:0" },
+      `Bills ${who} sponsored or cosponsored, by topic. The record of what they acted on, not a score.`));
+  if (rec.by_category.length) {
+    const maxc = Math.max(...rec.by_category.map((c) => c.count), 1);
+    body.appendChild(el("div", { class: "group-h" }, `Sponsored (${rec.sponsored_total})`));
+    for (const c of rec.by_category) body.appendChild(el("div", { class: "bar-wrap" },
+      el("div", { class: "comp-name" }, c.category_label),
+      el("div", { class: "bar" }, el("span", { style: `width:${Math.round((c.count / maxc) * 100)}%` })),
+      el("div", { class: "right mono" }, String(c.count))));
+  }
+  if (rec.cosponsored_total) {
+    body.appendChild(el("div", { class: "group-h", style: "margin-top:12px" }, `Cosponsored (${rec.cosponsored_total})`));
+    const chips = el("div", { class: "chips" });
+    for (const c of (rec.cosponsored_by_category || [])) chips.appendChild(el("span", { class: "chip" }, c.category_label, " ", el("b", {}, String(c.count))));
+    body.appendChild(chips);
+  }
+  if (rec.recent.length) {
+    for (const b of rec.recent) body.appendChild(el("div", {
+      class: "list-item", onclick: b.source_url ? () => window.open(b.source_url, "_blank", "noopener") : null },
+      el("div", { class: "li-main" }, el("div", { class: "title" }, b.title),
+        el("div", { class: "muted mono" }, [b.category_label, b.bill_number, b.date ? b.date.slice(0, 10) : null].filter(Boolean).join(" · "))),
+      el("div", { class: "li-side" }, b.source_url ? el("a", { href: b.source_url, target: "_blank", rel: "noopener" }, "source \u2197") : null)));
+  }
+  return body;
+}
+
+function scoredByCategoryBody(card) {
+  const bars = card.by_category.map((b) => {
+    const has = b.composite !== null;
+    const w = has ? Math.max(0, Math.min(100, Number(b.composite))) : 0;
+    return el("div", { class: "bar-wrap" },
+      el("div", { class: "comp-name" }, b.category_label,
+        el("small", {}, `${b.scored_actions}/${b.total_actions} scored` +
+          (b.coverage !== null ? ` · coverage ${(b.coverage * 100).toFixed(0)}%` : ""))),
+      el("div", { class: "bar" }, has ? el("span", { style: `width:${w}%` }) : null),
+      el("div", { class: "right mono" }, has ? fmt(b.composite, 1) : "n/a"));
+  });
+  return el("div", {},
+    el("p", { class: "muted", style: "font-size:13px;margin-top:0" }, "The same measure, split by topic. Descriptive, not a ranking."),
+    ...bars);
+}
+
+function renderOfficialActions(app, card) {
+  // Actions list: most recent first (descending by date), then by attribution as a tiebreak.
+  const actions = (card.actions || []).slice().sort((a, b) =>
+    (b.date || "").localeCompare(a.date || "") || (b.attribution - a.attribution));
+  if (!actions.length) return;
+  app.appendChild(disclosure(`All scored & attributable actions \u2014 ${actions.length}`, () => {
+    const wrap = el("div", {});
+    for (const a of actions) wrap.appendChild(officialActionRow(a));
+    return wrap;
+  }));
+}
+
+// Reusable keyboard typeahead for picking an official (used by Compare).
+function officialPicker(index, { placeholder, initialId, onPick }) {
+  const input = el("input", { type: "text", autocomplete: "off", placeholder: placeholder || "Search an official…", "aria-label": placeholder });
+  const drop = el("div", { class: "typeahead" });
+  const wrap = el("div", { class: "search-wrap" }, input, drop);
+  if (initialId) { const o = index.find((x) => String(x.id) === String(initialId)); if (o) input.value = formatName(o.name); }
+  let matches = [], active = -1;
+  const hl = () => { for (let i = 0; i < drop.children.length; i++) drop.children[i].classList.toggle("active", i === active); };
+  const choose = (o) => { input.value = formatName(o.name); drop.style.display = "none"; onPick(o.id); };
+  function render() {
+    drop.innerHTML = ""; active = -1;
+    const q = input.value.trim().toLowerCase();
+    if (!q) { drop.style.display = "none"; return; }
+    matches = index
+      .filter((o) => matchOfficial(`${formatName(o.name)} ${formatNameNatural(o.name)} ${o.name || ""}`.toLowerCase(), q))
+      .sort((a, b) => formatName(a.name).localeCompare(formatName(b.name))).slice(0, 8);
+    if (!matches.length) { drop.style.display = "none"; return; }
+    drop.style.display = "block";
+    matches.forEach((o) => drop.appendChild(el("div", { class: "ta-item", onmousedown: (e) => { e.preventDefault(); choose(o); } },
+      el("span", {}, formatName(o.name)), o.position ? el("span", { class: "pill" }, o.position) : null)));
+  }
+  input.addEventListener("input", render);
+  input.addEventListener("focus", render);
+  input.addEventListener("blur", () => setTimeout(() => { drop.style.display = "none"; }, 150));
+  input.addEventListener("keydown", (e) => {
+    const open = drop.style.display === "block" && matches.length;
+    if (e.key === "ArrowDown" && open) { e.preventDefault(); active = Math.min(active + 1, matches.length - 1); hl(); }
+    else if (e.key === "ArrowUp" && open) { e.preventDefault(); active = Math.max(active - 1, 0); hl(); }
+    else if (e.key === "Enter" && open) { e.preventDefault(); choose(matches[active >= 0 ? active : 0]); }
+    else if (e.key === "Escape") { drop.style.display = "none"; }
+  });
+  return wrap;
+}
+
+async function renderCompare() {
+  const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
+  let index = [];
+  try { index = await getJSON("/api/officials-index"); } catch (e) { /* handled below */ }
+  app.innerHTML = "";
+  app.appendChild(el("a", { class: "back", href: "#/officials" }, "← officials"));
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Compare two officials"));
+  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 10px" },
+    "A side-by-side of two records. Descriptive only, never a ranking or a judgment."));
+
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  let aId = params.get("a") || "", bId = params.get("b") || "";
+  const nav = () => { if (aId && bId) location.hash = `#/compare?a=${aId}&b=${bId}`; };
+  app.appendChild(el("div", { class: "cmp-pick" },
+    el("label", {}, "Official A", officialPicker(index, { placeholder: "Type a name…", initialId: aId, onPick: (id) => { aId = id; nav(); } })),
+    el("label", {}, "Official B", officialPicker(index, { placeholder: "Type a name…", initialId: bId, onPick: (id) => { bId = id; nav(); } }))));
+
+  const panel = el("div", {});
+  app.appendChild(panel);
+
+  const a = params.get("a"), b = params.get("b");
+  if (!a || !b) {
+    panel.appendChild(el("div", { class: "card", style: "color:var(--muted);text-align:center" },
+      el("p", {}, "Pick two officials to compare.")));
+    return;
+  }
+  panel.appendChild(spinner());
+  let ca, cb;
+  try { [ca, cb] = await Promise.all([getJSON(`/api/officials/${a}`), getJSON(`/api/officials/${b}`)]); }
+  catch (e) { panel.innerHTML = ""; panel.appendChild(el("div", { class: "card muted" }, "Could not load one of the officials.")); return; }
+  panel.innerHTML = "";
+
+  const col = (c) => {
+    const r = c.rollup, o = c.official, act = c.activity || {};
+    const period = act.first_year ? (act.first_year === act.last_year ? `${act.first_year}` : `${act.first_year}\u2013${act.last_year}`) : "n/a";
+    return el("div", { class: "cmp-col" },
+      el("div", { class: "cmp-name" }, formatNameNatural(o.name)),
+      el("div", { class: "muted", style: "font-size:13px" }, o.position || "Official record"),
+      r.composite !== null
+        ? el("div", { class: "cmp-num scored" }, fmt(r.composite, 1), el("span", { class: "ofmax" }, " / 100"))
+        : el("div", { class: "cmp-num none" }, "Insufficient evidence"),
+      el("div", { class: "cmp-stats" },
+        el("div", {}, "coverage ", el("b", {}, r.coverage !== null ? (r.coverage * 100).toFixed(0) + "%" : "n/a")),
+        el("div", {}, "scored ", el("b", {}, `${r.scored_actions}/${r.total_actions}`)),
+        el("div", {}, "active ", el("b", {}, period))));
+  };
+  panel.appendChild(el("div", { class: "cmp" }, col(ca), col(cb)));
+
+  // Per-category side-by-side (descriptive).
+  const catMap = (c) => Object.fromEntries((c.by_category || []).map((x) => [x.category, x]));
+  const ma = catMap(ca), mb = catMap(cb);
+  const keys = [...new Set([...Object.keys(ma), ...Object.keys(mb)])];
+  if (keys.length) {
+    const cell = (x) => x && x.composite !== null ? fmt(x.composite, 1) : (x ? "insufficient" : "—");
+    panel.appendChild(el("div", { class: "card" },
+      el("h3", {}, "By category"),
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "category"),
+          el("th", { class: "right" }, formatNameNatural(ca.official.name)),
+          el("th", { class: "right" }, formatNameNatural(cb.official.name)))),
+        el("tbody", {}, ...keys.map((k) =>
+          el("tr", {},
+            el("td", {}, (ma[k] || mb[k]).category_label),
+            el("td", { class: "right mono", style: ma[k] && ma[k].composite !== null ? "color:var(--score)" : "" }, cell(ma[k])),
+            el("td", { class: "right mono", style: mb[k] && mb[k].composite !== null ? "color:var(--score)" : "" }, cell(mb[k]))))))));
+  }
+}
+
+// Neutral categorical hues for node types (no party blue, no judgment red/green).
+const NODE_COLORS = { official: "#c4a7e7", action: "#8a93a6", jurisdiction: "#c79a6a", metric: "#6f6391" };
 const COLUMN_ORDER = ["official", "action", "jurisdiction", "metric"];
 
 async function renderGraph() {
@@ -803,16 +1497,16 @@ async function renderGraph() {
 
 async function renderCoverage() {
   const app = $("#app");
-  app.innerHTML = "";
+  app.innerHTML = ""; app.appendChild(spinner());
   const c = await getJSON("/api/coverage");
+  app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Coverage"));
   app.appendChild(el("p", { class: "muted" },
-    "Every action the platform has considered, including those it could not score. " +
-    "\u201CInsufficient evidence\u201D is honest abstention, not a low score. The scored subset is not " +
-    "a complete or representative record of any official."));
+    "Every action considered, including those we could not score. \u201CInsufficient evidence\u201D is " +
+    "honest abstention, not a low score."));
   app.appendChild(el("div", { class: "kpi" },
     el("div", { class: "item" }, el("div", { class: "n" }, String(c.total_evaluation_units)), el("div", { class: "l" }, "actions considered")),
-    el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--good)" }, String(c.scored)), el("div", { class: "l" }, "scored")),
+    el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--score)" }, String(c.scored)), el("div", { class: "l" }, "scored")),
     el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--gate)" }, String(c.insufficient_evidence)), el("div", { class: "l" }, "insufficient evidence")),
     el("div", { class: "item" }, el("div", { class: "n", style: "color:var(--muted)" }, String(c.non_scoreable)), el("div", { class: "l" }, "non-scoreable")),
     el("div", { class: "item" }, el("div", { class: "n" }, (c.scored_share * 100).toFixed(1) + "%"), el("div", { class: "l" }, "scored share"))));
@@ -820,7 +1514,7 @@ async function renderCoverage() {
   const rows = Object.entries(c.by_action_type).map(([atype, statuses]) => {
     const tot = Object.values(statuses).reduce((a, b) => a + b, 0);
     return el("tr", {},
-      el("td", {}, atype),
+      el("td", {}, actionTypeLabel(atype)),
       el("td", { class: "right mono" }, String(statuses.scored || 0)),
       el("td", { class: "right mono" }, String(statuses.insufficient_evidence || 0)),
       el("td", { class: "right mono" }, String(tot - (statuses.scored || 0) - (statuses.insufficient_evidence || 0))),
@@ -832,55 +1526,109 @@ async function renderCoverage() {
       el("thead", {}, el("tr", {}, el("th", {}, "type"), el("th", { class: "right" }, "scored"),
         el("th", { class: "right" }, "insufficient"), el("th", { class: "right" }, "non-scoreable"), el("th", { class: "right" }, "total"))),
       el("tbody", {}, ...rows))));
+
+  // By category: honest coverage per topic (links to that category's actions).
+  let catMeta = [];
+  try { catMeta = (await getJSON("/api/categories")).categories; } catch (e) { /* best-effort */ }
+  const catLabel = (k) => (catMeta.find((m) => m.key === k) || {}).label || k;
+  const catOrder = catMeta.map((m) => m.key);
+  const catRows = Object.entries(c.by_category || {})
+    .filter(([, statuses]) => Object.values(statuses).reduce((a, b) => a + b, 0) > 0)
+    .sort((a, b) => catOrder.indexOf(a[0]) - catOrder.indexOf(b[0]))
+    .map(([cat, statuses]) => {
+      const tot = Object.values(statuses).reduce((a, b) => a + b, 0);
+      return el("tr", {},
+        el("td", {}, el("a", { href: "#/actions?category=" + cat }, catLabel(cat))),
+        el("td", { class: "right mono" }, String(statuses.scored || 0)),
+        el("td", { class: "right mono" }, String(statuses.insufficient_evidence || 0)),
+        el("td", { class: "right mono" }, String(tot - (statuses.scored || 0) - (statuses.insufficient_evidence || 0))),
+        el("td", { class: "right mono" }, String(tot)));
+    });
+  if (catRows.length) {
+    app.appendChild(el("div", { class: "card" },
+      el("h3", {}, "By category"),
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "category"), el("th", { class: "right" }, "scored"),
+          el("th", { class: "right" }, "insufficient"), el("th", { class: "right" }, "non-scoreable"), el("th", { class: "right" }, "total"))),
+        el("tbody", {}, ...catRows))));
+  }
   app.appendChild(el("p", { class: "muted", style: "font-size:12px" }, c.note));
 }
 
 async function renderAbout() {
   const app = $("#app");
   app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "About DegreeZero"));
+  app.appendChild(el("div", { class: "doc-downloads" },
+    el("a", { class: "cta", href: "/DegreeZero-Whitepaper.pdf", target: "_blank", rel: "noopener" }, "Download white paper (PDF)"),
+    el("a", { class: "cta ghost", href: "/DegreeZero-Methodology.pdf", target: "_blank", rel: "noopener" }, "Download methodology (PDF)")));
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "What it does"),
+    el("p", { class: "narrative" },
+      "DegreeZero looks at what officials actually did, the laws they passed, the orders they " +
+      "signed, the budgets they ran, and asks one simple thing. Did the action do what it said it " +
+      "would do?")));
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "How it works, in plain terms"),
+    el("p", {},
+      "Every action sets its own goal. A jobs bill says it will create jobs. A tax cut says it " +
+      "will grow the economy. A clean energy law says it will cut emissions. We take that stated " +
+      "goal, find the official government number that tracks it, and look at what happened after, " +
+      "compared to what was likely to happen anyway."),
+    el("p", {},
+      "Then we share the credit honestly. Most outcomes have many causes, so we only give a small, " +
+      "clearly labeled share to any one person and leave most of it unassigned."),
+    el("p", {},
+      "When the data cannot tell a clear story, we say so. We mark it insufficient evidence instead " +
+      "of guessing. That is not a bad grade. It just means we will not pretend to know.")));
+
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "What you will not find here"),
+    el("p", {},
+      "No left or right rating. No opinion. No single good or bad score for a person. Just what " +
+      "they worked on, how it turned out, and a link to the source behind every number. The same " +
+      "question is asked of every official, the same way."),
+    el("p", { class: "muted", style: "font-size:13px" },
+      "Want the math behind the numbers? Read the ",
+      el("a", { href: "#/methodology" }, "methodology"), ".")));
+}
+
+async function renderMethodology() {
+  const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
   let m = {};
   try { m = await getJSON("/api/methodology"); } catch (e) { /* fall back to static copy */ }
+  app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Methodology"));
+  app.appendChild(el("p", { class: "muted", style: "margin:2px 0 6px" },
+    "The technical detail behind the numbers. For a plain-language overview, see ",
+    el("a", { href: "#/about" }, "About"), "."));
+  app.appendChild(el("div", { class: "doc-downloads" },
+    el("a", { class: "cta", href: "/DegreeZero-Methodology.pdf", target: "_blank", rel: "noopener" }, "Download methodology (PDF)"),
+    el("a", { class: "cta ghost", href: "/DegreeZero-Whitepaper.pdf", target: "_blank", rel: "noopener" }, "Download white paper (PDF)")));
 
-  app.appendChild(el("h2", { style: "margin:6px 0" }, "What this is, and what it is not"));
-
-  // The neutral framing, in plain language (the credibility spine of the platform).
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "The one question it answers"),
+    el("h3", {}, "The question, precisely"),
     el("p", { class: "narrative" },
       "For each public action, DegreeZero asks one factual question: did the measurable outcome " +
       "tied to the action's own stated objective move, relative to a defensible baseline, and how " +
       "much of that movement is credibly attributable to this official, with what confidence? " +
       "Every number links back to an official government source."),
-    el("p", { class: "muted", style: "font-size:13px" },
-      "The yardstick is the policy's own stated goal (statutory purpose, official summary, or its " +
-      "own committed target). That makes the question party-symmetric: a jobs bill and a tax cut " +
-      "are each asked the same neutral thing.")));
-
-  app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "What it deliberately avoids"),
-    el("ul", { style: "line-height:1.7" },
-      el("li", {}, el("b", {}, "No default \u201Cgood or bad\u201D number. "),
-        "A single composite would require a hidden value function (weighing liberty, equality, " +
-        "growth, and so on), which is an ideology. The default output is a decomposed, " +
-        "source-linked vector; a composite is opt-in, value-laden, and shown only with a watermark."),
-      el("li", {}, el("b", {}, "Not an ideology scorer, fact-checker, or pundit. "),
-        "No left/right axis, no editorial labels, only numbers, intervals, and sources."),
-      el("li", {}, el("b", {}, "\u201CInsufficient evidence\u201D is never a low score. "),
-        "When a defensible baseline cannot separate the policy from other forces, the composite is " +
-        "withheld and the action is marked insufficient evidence, which is honest abstention."))));
+    el("div", { class: "eq" }, "composite = confidence x achievement of the stated goal"),
+    el("div", { class: "eq" }, "official composite = attribution-weighted mean over their scored actions")));
 
   if (m.philosophy) {
     app.appendChild(el("div", { class: "card" },
       el("h3", {}, "Scoring philosophy"),
       el("p", { class: "narrative" }, m.philosophy)));
   }
-
   if (Array.isArray(m.bias_controls) && m.bias_controls.length) {
     app.appendChild(el("div", { class: "card" },
-      el("h3", {}, "How bias is minimized (adversarial neutrality)"),
+      el("h3", {}, "How bias is minimized"),
       el("ul", { style: "line-height:1.7" }, ...m.bias_controls.map((b) => el("li", {}, b)))));
   }
-
   const factual = m.components_factual || [];
   const valueLaden = m.components_value_laden_off_by_default || [];
   if (factual.length || valueLaden.length) {
@@ -888,7 +1636,7 @@ async function renderAbout() {
       el("h3", {}, "Factual vs. value-laden components"),
       el("p", { class: "muted", style: "font-size:13px" },
         "Factual components are combined by default; value-laden lenses are off unless you turn " +
-        "them on (and any non-neutral weighting is watermarked)."),
+        "them on, and any non-neutral weighting is watermarked."),
       el("div", { class: "row" }, el("span", { class: "k" }, "factual (default)"),
         el("span", { class: "v mono" }, factual.join(", ") || "none")),
       el("div", { class: "row" }, el("span", { class: "k" }, "value-laden (opt-in)"),
@@ -898,64 +1646,48 @@ async function renderAbout() {
             el("span", { class: "v mono" }, `${(m.confidence_publish_threshold * 100).toFixed(0)}%, below this the composite is withheld`))
         : null));
   }
-
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "The three things that can never be fully empirical"),
     el("p", { class: "muted", style: "font-size:13px" },
-      "These residues are labeled, never hidden: (1) which metric operationalizes the objective, " +
-      "(2) which counterfactual baseline is right, (3) how to assign causal credit among many " +
-      "actors. We shrink them (pre-registration, baseline ensembles, attribution intervals, and a " +
-      "large unattributable residual) but never to zero. When a residue dominates, the answer is " +
+      "These residues are labeled, never hidden: which metric operationalizes the objective, which " +
+      "counterfactual baseline is right, and how to assign causal credit among many actors. We " +
+      "shrink them with pre-registration, baseline ensembles, attribution intervals, and a large " +
+      "unattributable residual, but never to zero. When a residue dominates, the answer is " +
       "\u201Cinsufficient evidence\u201D.")));
-
   app.appendChild(el("p", { class: "muted", style: "font-size:12px" },
-    "Every published score is independently reproducible (see the Integrity tab) and the full " +
-    "method is open source."));
+    "Every published score is independently reproducible. See the Integrity page to re-derive them."));
 }
 
 async function renderIntegrity() {
   const app = $("#app");
+  app.innerHTML = ""; app.appendChild(spinner());
+  let audit = { audit_chain_ok: null };
+  try { audit = await getJSON("/api/audit/verify"); } catch (e) { /* shown as unknown */ }
   app.innerHTML = "";
   app.appendChild(el("h2", { style: "margin:6px 0" }, "Integrity"));
   app.appendChild(el("p", { class: "muted" },
-    "Scoring is provably party-blind (the formula never reads party). This page reads party for " +
-    "audit only, to watch the distribution of scored outcomes. A flagged gap prompts a human review " +
-    "of metric and baseline choices. It never triggers an automated correction or changes any score."));
-  const r = await getJSON("/api/integrity/party-symmetry");
+    "Three guarantees make every number here checkable: scoring is party-blind by construction, " +
+    "the record is tamper-evident, and every score is independently reproducible."));
 
-  const banner = el("div", { class: "gate-banner " + (r.review_required ? "gated" : "scored") },
-    r.review_required
-      ? "Review flagged: a systematic gap exceeded a review threshold (see reasons below)."
-      : "No systematic gap exceeds the review thresholds on the current scored set.");
-  app.appendChild(banner);
-
+  // 1) Party-blind by construction.
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Party-level distribution of scored outcomes (audit only)"),
-    el("table", {},
-      el("thead", {}, el("tr", {},
-        el("th", {}, "party"), el("th", { class: "right" }, "attributed EUs"),
-        el("th", { class: "right" }, "scored EUs"), el("th", { class: "right" }, "scored share"),
-        el("th", { class: "right" }, "mean composite"), el("th", { class: "right" }, "mean confidence"))),
-      el("tbody", {}, ...r.parties.map((p) =>
-        el("tr", {},
-          el("td", {}, p.abbrev),
-          el("td", { class: "right mono" }, String(p.attributed_eus)),
-          el("td", { class: "right mono" }, String(p.scored_eus)),
-          el("td", { class: "right mono" }, (p.scored_share * 100).toFixed(0) + "%"),
-          el("td", { class: "right mono" }, p.mean_composite !== null ? fmt(p.mean_composite, 1) : "n/a"),
-          el("td", { class: "right mono" }, p.mean_confidence !== null ? (p.mean_confidence * 100).toFixed(0) + "%" : "n/a")))))));
+    el("h3", {}, "Party-blind by construction"),
+    el("p", { style: "margin:0", class: "muted" },
+      "The scoring formula never reads party affiliation \u2014 enforced by automated tests (a static " +
+      "guard that no scoring code imports party, and a behavioural test that swapping an official's " +
+      "party cannot change any stored score). Actions are measured only against their own stated goals.")));
 
+  // 2) Tamper-evident audit chain.
+  const ok = audit.audit_chain_ok;
   app.appendChild(el("div", { class: "card" },
-    el("h3", {}, "Gap checks (vs. review thresholds)"),
-    el("div", { class: "row" }, el("span", { class: "k" }, "mean-composite gap"),
-      el("span", { class: "v mono" }, (r.composite_gap !== null ? fmt(r.composite_gap, 1) : "n/a (need ≥2 comparable parties)") + ` (threshold ${fmt(r.composite_gap_threshold, 0)})`)),
-    el("div", { class: "row" }, el("span", { class: "k" }, "scored-share gap"),
-      el("span", { class: "v mono" }, (r.scored_share_gap !== null ? (r.scored_share_gap * 100).toFixed(0) + "%" : "n/a") + ` (threshold ${(r.scored_share_gap_threshold * 100).toFixed(0)}%)`)),
-    ...(r.review_reasons.length
-      ? r.review_reasons.map((reason) => el("div", { class: "hint" }, reason))
-      : [el("div", { class: "muted", style: "font-size:13px;margin-top:8px" }, "No review reasons flagged.")])));
-
-  app.appendChild(el("p", { class: "muted", style: "font-size:12px" }, r.disclaimer));
+    el("h3", {}, "Tamper-evident audit chain"),
+    el("div", { class: "gate-banner " + (ok === false ? "gated" : "scored") },
+      ok === null ? "Audit chain status unavailable right now."
+        : ok ? "\u2713 Append-only audit hash chain verified \u2014 history has not been altered."
+             : "\u2715 Audit hash chain broken \u2014 investigate immediately."),
+    el("p", { class: "muted", style: "margin:8px 0 0;font-size:13px" },
+      "Every score run, dispute, and methodology change is appended to a hash-chained log; any " +
+      "out-of-band edit to history breaks the chain and is surfaced here and in the header.")));
 
   // Reproducibility self-audit (on-demand: it re-runs every published score).
   const repro = el("div", { class: "card" });
@@ -995,10 +1727,45 @@ async function renderIntegrity() {
   app.appendChild(repro);
 }
 
+function setTitle(part) {
+  document.title = part ? `${part} \u2014 DegreeZero` : "DegreeZero";
+}
+
+const PAGE_TITLES = {
+  "#/officials": "Officials", "#/compare": "Compare", "#/actions": "Actions",
+  "#/coverage": "Coverage", "#/integrity": "Integrity", "#/about": "About",
+  "#/methodology": "Methodology", "#/sources": "Sources", "#/glossary": "Glossary",
+  "#/contact": "Contact",
+};
+
+// First-party analytics: an anonymous, client-generated visitor id (no PII) + the page path.
+function visitorId() {
+  try {
+    let v = localStorage.getItem("dz_vid");
+    if (!v) { v = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)); localStorage.setItem("dz_vid", v); }
+    return v;
+  } catch (e) { return "anon"; }
+}
+function isOptedOut() {
+  try { return localStorage.getItem("dz_optout") === "1"; } catch (e) { return false; }
+}
+function trackView() {
+  if (isOptedOut()) return;  // this device is excluded from metrics (owner opt-out)
+  try {
+    const body = JSON.stringify({ visitor_id: visitorId(), path: (location.hash || "#/").split("?")[0] });
+    fetch(API + "/api/collect", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true })
+      .catch(() => {});
+  } catch (e) { /* analytics is best-effort, never blocks the app */ }
+}
+
 async function route() {
   renderNav();
+  trackView();
   const eu = location.hash.match(/#\/eu\/(\d+)/);
   const off = location.hash.match(/#\/official\/(\d+)/);
+  // Default page title from the route; detail views refine it after their data loads.
+  const key = Object.keys(PAGE_TITLES).find((k) => (location.hash || "").startsWith(k));
+  setTitle(key ? PAGE_TITLES[key] : null);
   // Show a spinner immediately so navigation (and cold starts) never look frozen.
   const isLanding = !location.hash || location.hash === "#/" || location.hash === "#";
   if (!isLanding) { $("#app").innerHTML = ""; $("#app").appendChild(spinner()); }
@@ -1006,13 +1773,17 @@ async function route() {
   try {
     if (eu) await renderDetail(eu[1]);
     else if (off) await renderOfficialDetail(off[1]);
+    else if (location.hash.startsWith("#/compare")) await renderCompare();
     else if (location.hash.startsWith("#/officials")) await renderOfficials();
     else if (location.hash.startsWith("#/graph")) await renderGraph();
     else if (location.hash.startsWith("#/coverage")) await renderCoverage();
     else if (location.hash.startsWith("#/integrity")) await renderIntegrity();
     else if (location.hash.startsWith("#/about")) await renderAbout();
+    else if (location.hash.startsWith("#/methodology")) await renderMethodology();
     else if (location.hash.startsWith("#/sources")) await renderSources();
     else if (location.hash.startsWith("#/glossary")) await renderGlossary();
+    else if (location.hash.startsWith("#/contact")) await renderContact();
+    else if (location.hash.startsWith("#/optout")) await renderOptout();
     else if (location.hash.startsWith("#/actions")) await renderList();
     else await renderLanding();  // default = welcoming landing/hero
   } catch (e) {
@@ -1024,18 +1795,78 @@ async function route() {
 function showSplash() {
   if (document.getElementById("splash")) return;
   document.body.appendChild(el("div", { class: "splash", id: "splash" },
-    el("img", { src: "/logo.png", alt: "" }),
-    el("div", { class: "title" }, "DegreeZero"),
+    el("img", { src: "/logo.png", alt: "DegreeZero" }),
     el("div", { class: "spinner" }),
-    el("div", { class: "sub" }, "Loading. First load can take a moment while the server wakes up.")));
+    el("div", { class: "sub" }, "Loading latest data\u2026")));
 }
 function hideSplash() {
   const s = document.getElementById("splash");
   if (s) { s.classList.add("fade"); setTimeout(() => s.remove(), 400); }
 }
 
+function wireHeaderSearch() {
+  const h = $("#hsearch");
+  if (!h) return;
+  h.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const q = h.value.trim();
+    h.value = "";
+    location.hash = "#/officials" + (q ? "?q=" + encodeURIComponent(q) : "");
+  });
+}
+
+function toast(msg) {
+  const t = el("div", { class: "toast" }, msg);
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 2200);
+}
+
+function shareUrlForCurrentPage() {
+  // Per-official / per-comparison pages get a crawler-readable share URL so link previews work.
+  const off = (location.hash || "").match(/#\/official\/(\d+)/);
+  if (off) return new URL("/share/official/" + off[1], location.origin).href;
+  const cmp = (location.hash || "").match(/#\/compare\?a=(\d+)&b=(\d+)/);
+  if (cmp) return new URL(`/share/compare/${cmp[1]}/${cmp[2]}`, location.origin).href;
+  return location.href;
+}
+
+async function shareCurrentPage() {
+  const url = shareUrlForCurrentPage();
+  const title = document.title || "DegreeZero";
+  const text = "DegreeZero \u2014 what your officials did, and whether it worked.";
+  try {
+    if (navigator.share) { await navigator.share({ title, text, url }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; /* fall through to copy */ }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Link copied to clipboard");
+  } catch (e) {
+    toast(url);
+  }
+}
+
+function wireShare() {
+  const b = $("#share-btn");
+  if (b) b.addEventListener("click", shareCurrentPage);
+}
+
+// Footer freshness indicator so it's always visible that data is current/updating.
+async function showDataFreshness() {
+  const node = $("#foot-updated");
+  if (!node) return;
+  try {
+    const h = await getJSON("/api/health");
+    const when = h.last_updated || h.last_scored;
+    if (when) node.textContent = "· Data updated " + new Date(when).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  } catch (e) { /* non-essential */ }
+}
+
 window.addEventListener("hashchange", route);
 window.addEventListener("DOMContentLoaded", () => {
   showSplash();
+  wireHeaderSearch();
+  wireShare();
+  showDataFreshness();
   route().finally(hideSplash);
 });

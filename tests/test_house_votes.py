@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from degreezeor.core.interfaces import AttributionContext
 from degreezeor.ingestion.adapters.house_clerk import parse_house_vote
+from degreezeor.pipeline import _norm_legis_num
 from degreezeor.scoring.attribution import DecisiveVoteChannel, build_attribution
 
 _XML = b"""<?xml version="1.0"?>
@@ -33,6 +36,33 @@ def test_parse_house_vote_counts_and_ids() -> None:
     assert {p.bioguide_id for p in v.positions} == {"A000001", "B000002", "C000003", "D000004"}
     yea_ids = {p.bioguide_id for p in v.positions if p.position == "yea"}
     assert yea_ids == {"A000001", "C000003"}
+
+
+_XML_META = b"""<?xml version="1.0"?>
+<rollcall-vote><vote-metadata>
+  <congress>119</congress><rollcall-num>16</rollcall-num>
+  <legis-num>H R 30</legis-num><vote-question>On Passage</vote-question>
+  <vote-result>Failed</vote-result><action-date>16-Jan-2025</action-date>
+</vote-metadata><vote-data>
+  <recorded-vote><legislator name-id="A000001" unaccented-name="Alpha">Alpha</legislator><vote>Yea</vote></recorded-vote>
+</vote-data></rollcall-vote>"""
+
+
+def test_parse_house_vote_extracts_congress_roll_and_date() -> None:
+    v = parse_house_vote(_XML_META)
+    assert v.congress == 119
+    assert v.rollcall_num == 16
+    assert v.vote_date == date(2025, 1, 16)
+    assert v.result == "Failed"
+
+
+def test_norm_legis_num_maps_to_bill_number_or_none() -> None:
+    assert _norm_legis_num("H R 1") == "HR1"
+    assert _norm_legis_num("H RES 5") == "HRES5"
+    assert _norm_legis_num("H J RES 7") == "HJRES7"
+    assert _norm_legis_num("S 1") == "S1"
+    assert _norm_legis_num("QUORUM") is None
+    assert _norm_legis_num("") is None
 
 
 def test_decisive_vote_attribution_is_sorted_and_pivotality_weighted() -> None:

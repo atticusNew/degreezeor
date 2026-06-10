@@ -65,6 +65,9 @@ class Official(Base):
     fec_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
     full_name: Mapped[str] = mapped_column(String(200))
     dob: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Currently holds office (set during refresh from the current-legislators roster +
+    # the sitting president). Descriptive metadata only; never read by scoring.
+    in_office: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class Office(Base):
@@ -163,10 +166,38 @@ class ExecutiveOrder(Base):
     fr_doc_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
+class AnalyticsEvent(Base):
+    """First-party, privacy-light usage event: an anonymous client-generated visitor id
+    (random UUID in localStorage — no PII, no IP) + the page path + a timestamp. Powers
+    DAU/WAU/MAU/retention without any third-party tracker."""
+
+    __tablename__ = "analytics_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    visitor_id: Mapped[str] = mapped_column(String(40), index=True)
+    path: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class BillCosponsor(Base):
+    """Activity/record layer: a member who cosponsored a bill (what they backed).
+    Unscored; never feeds the scored composite."""
+
+    __tablename__ = "bill_cosponsors"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    action_id: Mapped[int] = mapped_column(ForeignKey("actions.id"), index=True)
+    official_id: Mapped[int] = mapped_column(ForeignKey("officials.id"), index=True)
+    __table_args__ = (
+        UniqueConstraint("action_id", "official_id", name="uq_bill_cosponsor"),
+    )
+
+
 class Vote(Base):
     __tablename__ = "votes"
     id: Mapped[int] = mapped_column(primary_key=True)
-    action_id: Mapped[int] = mapped_column(ForeignKey("actions.id"))
+    # Nullable: comprehensive roll-call ingestion records every recorded vote, including
+    # procedural votes and votes on bills not (yet) in our action table.
+    action_id: Mapped[int | None] = mapped_column(ForeignKey("actions.id"), nullable=True)
     chamber: Mapped[str] = mapped_column(String(20))  # house|senate
     question: Mapped[str | None] = mapped_column(Text, nullable=True)
     vote_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -175,13 +206,17 @@ class Vote(Base):
     present: Mapped[int] = mapped_column(Integer, default=0)
     not_voting: Mapped[int] = mapped_column(Integer, default=0)
     result: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    congress: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    roll_call: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bill_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class VotePosition(Base):
     __tablename__ = "vote_positions"
     id: Mapped[int] = mapped_column(primary_key=True)
-    vote_id: Mapped[int] = mapped_column(ForeignKey("votes.id"))
-    official_id: Mapped[int] = mapped_column(ForeignKey("officials.id"))
+    vote_id: Mapped[int] = mapped_column(ForeignKey("votes.id"), index=True)
+    official_id: Mapped[int] = mapped_column(ForeignKey("officials.id"), index=True)
     position: Mapped[str] = mapped_column(String(10))  # yea|nay|present|nv
 
 

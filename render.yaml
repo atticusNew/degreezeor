@@ -6,8 +6,9 @@
 #   - Static site         : the zero-build SPA (web/), points at the API
 #   - Cron job            : nightly idempotent ingestion/scoring (off the request path)
 #
-# Set the API keys (DZ_CONGRESS_API_KEY, DZ_BLS_API_KEY, optional DZ_COURTLISTENER_TOKEN)
-# as secret env vars in the Render dashboard (sync: false) — never commit them.
+# Set the API keys (DZ_CONGRESS_API_KEY, DZ_BLS_API_KEY, DZ_CENSUS_API_KEY, DZ_EIA_API_KEY,
+# optional DZ_COURTLISTENER_TOKEN / DZ_FBI_API_KEY) as secret env vars in the Render dashboard
+# (sync: false) on BOTH the web service and the cron — never commit them.
 
 databases:
   - name: degreezeor-db
@@ -23,7 +24,7 @@ services:
     name: degreezeor-api
     runtime: python
     plan: starter
-    buildCommand: "pip install -e ."
+    buildCommand: "pip install -e . && python scripts/build_docs_pdf.py"  # regenerate branded PDFs from latest docs
     preDeployCommand: "degreezeor migrate"          # apply migrations before each deploy
     startCommand: "uvicorn degreezeor.api.app:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /api/health
@@ -47,6 +48,10 @@ services:
       - key: DZ_CENSUS_API_KEY
         sync: false
       - key: DZ_EIA_API_KEY
+        sync: false
+      - key: DZ_FBI_API_KEY
+        sync: false
+      - key: DZ_METRICS_TOKEN  # gate for /api/metrics (web service only)
         sync: false
 
   # NOTE: The SPA is served by the API web service itself (FastAPI mounts web/ at "/"),
@@ -83,4 +88,6 @@ services:
       - key: DZ_CENSUS_API_KEY
         sync: false
       - key: DZ_EIA_API_KEY
+        sync: false
+      - key: DZ_FBI_API_KEY
         sync: false

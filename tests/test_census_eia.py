@@ -12,7 +12,9 @@ from degreezeor.scoring.objective import select_metrics
 
 def test_census_encoding_and_parse() -> None:
     nsid = "CENSUS|timeseries/poverty/saipe|SAEPOVRTALL_PT"
-    assert census_enc(nsid) == ("timeseries/poverty/saipe", "SAEPOVRTALL_PT")
+    # National default geography, plus an optional per-state geography for comparison designs.
+    assert census_enc(nsid) == ("timeseries/poverty/saipe", "SAEPOVRTALL_PT", "us:*")
+    assert census_enc(nsid + "|state:06") == ("timeseries/poverty/saipe", "SAEPOVRTALL_PT", "state:06")
     content = b'[["SAEPOVRTALL_PT","time","us"],["12.5","2003","00"],["11.3","2000","00"],["x","2001","00"]]'
     series = census_adapter.parse_series(content, nsid)
     assert series == [("2000", "11.3"), ("2001", "x"), ("2003", "12.5")]  # sorted by year
@@ -20,7 +22,10 @@ def test_census_encoding_and_parse() -> None:
 
 def test_eia_encoding_and_parse() -> None:
     nsid = "EIA|total-energy|TETCEUS"
-    assert eia_enc(nsid) == ("total-energy", "TETCEUS")
+    # Legacy national series resolves to an msn facet; generic key=val facets are also supported.
+    assert eia_enc(nsid) == ("total-energy", {"msn": "TETCEUS"})
+    assert eia_enc("EIA|co2-emissions/co2-emissions-aggregates|stateId=CA;sectorId=TT;fuelId=TO") == (
+        "co2-emissions/co2-emissions-aggregates", {"stateId": "CA", "sectorId": "TT", "fuelId": "TO"})
     content = (b'{"response":{"data":['
                b'{"period":"2001","value":5930.1},{"period":"2000","value":6007.5},'
                b'{"period":"2002","value":null}]}}')

@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from degreezeor import __version__
 from degreezeor.api import presentation
@@ -74,8 +74,19 @@ async def _cache_headers(request: Request, call_next):
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "version": __version__,
-            "confidence_publish_threshold": float(settings.confidence_publish_threshold)}
+    """Liveness + data freshness: `last_updated` is the most recent official-data fetch and
+    `last_scored` the most recent score run, so you can confirm the cron is keeping it current."""
+    from degreezeor.core.models import RawLanding, ScoreRun
+
+    with session_scope() as s:
+        last_updated = s.execute(select(func.max(RawLanding.retrieved_at))).scalar()
+        last_scored = s.execute(select(func.max(ScoreRun.started_at))).scalar()
+    return {
+        "status": "ok", "version": __version__,
+        "confidence_publish_threshold": float(settings.confidence_publish_threshold),
+        "last_updated": last_updated.isoformat() if last_updated else None,
+        "last_scored": last_scored.isoformat() if last_scored else None,
+    }
 
 
 @app.get("/api/evaluation-units")
@@ -263,6 +274,17 @@ def collect(payload: CollectIn) -> dict:
     with session_scope() as s:
         ok = record_event(s, visitor_id=payload.visitor_id, path=payload.path)
     return {"ok": ok}
+
+
+@app.post("/api/collect/forget")
+def collect_forget(payload: CollectIn) -> dict:
+    """Delete this device's anonymous events (per-device analytics opt-out). Lets the owner
+    exclude their own phone/laptop from the metrics, retroactively and going forward."""
+    from degreezeor.analytics import forget_visitor
+
+    with session_scope() as s:
+        n = forget_visitor(s, visitor_id=payload.visitor_id)
+    return {"ok": True, "deleted": n}
 
 
 @app.get("/api/metrics")

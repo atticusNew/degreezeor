@@ -363,6 +363,43 @@ async function renderGlossary() {
   }
 }
 
+async function renderOptout() {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.appendChild(el("h2", { style: "margin:6px 0" }, "Analytics on this device"));
+  const status = el("p", { class: "muted" });
+  const card = el("div", { class: "card" }, status);
+  app.appendChild(card);
+
+  const setStatus = () => {
+    status.textContent = isOptedOut()
+      ? "This device is EXCLUDED from analytics. Your visits are not counted."
+      : "This device is currently counted in analytics (anonymous \u2014 no account, no PII).";
+  };
+  const btns = el("div", { class: "doc-downloads" });
+  const optOut = el("button", { class: "cta", type: "button" }, "Exclude this device + delete its data");
+  const optIn = el("button", { class: "cta ghost", type: "button" }, "Re-enable counting on this device");
+  optOut.addEventListener("click", async () => {
+    try { localStorage.setItem("dz_optout", "1"); } catch (e) { /* ignore */ }
+    try {
+      await fetch(API + "/api/collect/forget", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visitor_id: visitorId() }) });
+    } catch (e) { /* best-effort */ }
+    setStatus();
+  });
+  optIn.addEventListener("click", () => {
+    try { localStorage.removeItem("dz_optout"); } catch (e) { /* ignore */ }
+    setStatus();
+  });
+  btns.appendChild(optOut); btns.appendChild(optIn);
+  card.appendChild(btns);
+  card.appendChild(el("p", { class: "muted", style: "font-size:13px;margin-top:10px" },
+    "Use this on each of your own devices (phone, laptop) so your testing doesn't contaminate the " +
+    "visitor metrics. \u201cExclude\u201d also deletes this device's past anonymous events. The setting " +
+    "is stored only in this browser; clearing site data resets it."));
+  setStatus();
+}
+
 async function renderContact() {
   const app = $("#app");
   app.innerHTML = "";
@@ -1709,7 +1746,11 @@ function visitorId() {
     return v;
   } catch (e) { return "anon"; }
 }
+function isOptedOut() {
+  try { return localStorage.getItem("dz_optout") === "1"; } catch (e) { return false; }
+}
 function trackView() {
+  if (isOptedOut()) return;  // this device is excluded from metrics (owner opt-out)
   try {
     const body = JSON.stringify({ visitor_id: visitorId(), path: (location.hash || "#/").split("?")[0] });
     fetch(API + "/api/collect", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true })
@@ -1742,6 +1783,7 @@ async function route() {
     else if (location.hash.startsWith("#/sources")) await renderSources();
     else if (location.hash.startsWith("#/glossary")) await renderGlossary();
     else if (location.hash.startsWith("#/contact")) await renderContact();
+    else if (location.hash.startsWith("#/optout")) await renderOptout();
     else if (location.hash.startsWith("#/actions")) await renderList();
     else await renderLanding();  // default = welcoming landing/hero
   } catch (e) {
@@ -1809,10 +1851,22 @@ function wireShare() {
   if (b) b.addEventListener("click", shareCurrentPage);
 }
 
+// Footer freshness indicator so it's always visible that data is current/updating.
+async function showDataFreshness() {
+  const node = $("#foot-updated");
+  if (!node) return;
+  try {
+    const h = await getJSON("/api/health");
+    const when = h.last_updated || h.last_scored;
+    if (when) node.textContent = "· Data updated " + new Date(when).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  } catch (e) { /* non-essential */ }
+}
+
 window.addEventListener("hashchange", route);
 window.addEventListener("DOMContentLoaded", () => {
   showSplash();
   wireHeaderSearch();
   wireShare();
+  showDataFreshness();
   route().finally(hideSplash);
 });

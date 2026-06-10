@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from degreezeor.analytics import compute_metrics, record_event
+from degreezeor.analytics import compute_metrics, forget_visitor, record_event
 from degreezeor.core.models import AnalyticsEvent
 
 
@@ -27,3 +27,14 @@ def test_metrics_count_distinct_visitors_and_pageviews(session) -> None:
     assert m["pageviews_30d"] == 5  # all five events
     assert 0.0 <= m["stickiness_dau_mau"] <= 1.0
     assert len(m["daily_visitors_14d"]) == 14
+
+
+def test_forget_visitor_removes_own_device_from_unique_visitors(session) -> None:
+    for vid in ("owner", "owner", "real_user"):
+        record_event(session, visitor_id=vid, path="#/")
+    session.flush()
+    assert compute_metrics(session)["total_visitors"] == 2
+    deleted = forget_visitor(session, visitor_id="owner")
+    session.flush()
+    assert deleted == 2  # both of the owner's events removed
+    assert compute_metrics(session)["total_visitors"] == 1  # only the real user remains

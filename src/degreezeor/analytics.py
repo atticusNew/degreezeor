@@ -25,6 +25,18 @@ def record_event(session: Session, *, visitor_id: str, path: str | None) -> bool
     return True
 
 
+def forget_visitor(session: Session, *, visitor_id: str) -> int:
+    """Delete all events for one anonymous visitor id (used by the per-device opt-out, so the
+    owner's own phone/laptop can be excluded — both going forward and retroactively)."""
+    from sqlalchemy import delete
+
+    vid = (visitor_id or "").strip()[:40]
+    if not vid:
+        return 0
+    res = session.execute(delete(AnalyticsEvent).where(AnalyticsEvent.visitor_id == vid))
+    return res.rowcount or 0
+
+
 def _distinct_visitors_since(session: Session, since: datetime) -> int:
     return session.execute(
         select(func.count(func.distinct(AnalyticsEvent.visitor_id)))

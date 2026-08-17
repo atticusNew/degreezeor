@@ -41,6 +41,19 @@ def test_top_pages_rank_by_pageviews_with_unique_visitors(session) -> None:
     assert {"#/", "#/official/5"} <= paths
 
 
+def test_referrer_capture_surfaces_citing_hosts(session) -> None:
+    record_event(session, visitor_id="a", path="#/", referrer="https://www.niskanencenter.org/post")
+    record_event(session, visitor_id="b", path="#/", referrer="https://www.niskanencenter.org/other")
+    record_event(session, visitor_id="c", path="#/", referrer="https://news.ycombinator.com/item?id=1")
+    record_event(session, visitor_id="d", path="#/officials", referrer=None)  # direct visit
+    session.flush()
+    top = compute_metrics(session)["top_referrers_30d"]
+    hosts = {t["host"]: t for t in top}
+    assert hosts["www.niskanencenter.org"]["visits"] == 2
+    assert hosts["news.ycombinator.com"]["visits"] == 1
+    assert all(t["host"] for t in top)  # direct (None) visits never appear
+
+
 def test_forget_visitor_removes_own_device_from_unique_visitors(session) -> None:
     for vid in ("owner", "owner", "real_user"):
         record_event(session, visitor_id=vid, path="#/")

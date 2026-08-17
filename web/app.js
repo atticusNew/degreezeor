@@ -721,7 +721,8 @@ async function renderDetail(id) {
     card.action.category_label
       ? el("a", { class: "badge cat-chip", href: "#/actions?category=" + card.action.category },
           card.action.category_label)
-      : null));
+      : null,
+    citeButton(() => scoreCitation(card))));
 
   // Top line: the result + the plain explanation.
   app.appendChild(gateBanner(card));
@@ -1063,6 +1064,65 @@ function card_executive(card) {
   return out;
 }
 
+// --- Citations: one-tap, self-contained, point-in-time-stamped reference text. ---
+// Design: the copied text carries the figures themselves + "retrieved <date>" + the official
+// upstream sources + a stable URL, so the quote stays honest even as nightly data updates.
+// Pure client-side (composes from already-loaded data); nothing is tracked or stored.
+function citeDate() {
+  return new Date().toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+async function copyCitation(text) {
+  try { await navigator.clipboard.writeText(text); toast("Citation copied"); }
+  catch (e) { toast(text.slice(0, 120) + "\u2026"); }
+}
+function citeButton(buildText) {
+  return el("button", { class: "cite-btn", type: "button", title: "Copy a ready-to-paste citation",
+    onclick: () => copyCitation(buildText()) }, "Cite this \u29c9");
+}
+
+function officialCitation(card) {
+  const o = card.official, r = card.rollup;
+  const rec = card.record || {}, votes = card.votes || {}, exe = card.executive || {};
+  const who = formatNameNatural(o.name) + (o.position ? ` (${o.position})` : "");
+  const facts = [];
+  if (r.composite !== null && r.composite !== undefined) {
+    facts.push(`composite score ${fmt(r.composite, 1)}/100 across ${r.scored_actions} of ${r.total_actions} measurable actions`);
+  } else if (r.total_actions > 0) {
+    facts.push(`insufficient evidence for a composite score (${r.total_actions} measurable action(s); honest abstention)`);
+  }
+  if (votes.total) {
+    const bp = votes.by_position || {};
+    facts.push(`${votes.total} recorded roll-call votes${bp.yea || bp.nay ? ` (${bp.yea || 0} yea, ${bp.nay || 0} nay)` : ""}`);
+  }
+  if (rec.sponsored_total) facts.push(`${rec.sponsored_total} bills sponsored`);
+  if (rec.cosponsored_total) facts.push(`${rec.cosponsored_total} bills cosponsored`);
+  if (exe.total) facts.push(`${exe.total} executive orders signed`);
+  const sources = [];
+  if (rec.sponsored_total || rec.cosponsored_total || votes.total) sources.push("Congress.gov", "House Clerk", "Senate.gov");
+  if (exe.total) sources.push("Federal Register");
+  const srcNote = sources.length ? ` Compiled from official sources (${[...new Set(sources)].join("; ")}).` : "";
+  const url = `${location.origin}/share/official/${o.id}`;
+  return `${who}: ${facts.join("; ")}.${srcNote} DegreeZero, retrieved ${citeDate()}. ${url}`;
+}
+
+function scoreCitation(card) {
+  const s = card.score, run = card.run || {};
+  const title = card.action.title;
+  let verdict;
+  if (s && !s.gated && s.composite !== null && s.composite !== undefined) {
+    verdict = `score ${fmt(s.composite, 1)}/100 (confidence ${(s.confidence * 100).toFixed(0)}%), ` +
+      "measured against the action's own stated goal";
+  } else if (s && s.gated) {
+    verdict = "insufficient evidence \u2014 no score issued (confidence below the publication threshold)";
+  } else {
+    verdict = `not scoreable (${card.evaluation_unit.status.replaceAll("_", " ")})`;
+  }
+  const method = run.methodology_version ? `, methodology v${run.methodology_version}` : "";
+  const hash = run.reproducible_hash ? `, reproducible run ${run.reproducible_hash.slice(0, 8)}` : "";
+  const url = `${location.origin}/#/eu/${card.evaluation_unit.id}`;
+  return `\u201c${title}\u201d: ${verdict}. DegreeZero${method}${hash}, retrieved ${citeDate()}. ${url}`;
+}
+
 const VOTE_LABEL = { yea: "Yea", nay: "Nay", present: "Present", nv: "No vote" };
 
 function card_votes(card) {
@@ -1190,8 +1250,9 @@ async function renderOfficialDetail(id) {
       scored ? el("span", { class: "ofmax" }, "/ 100 composite") : null,
       tip("composite")),
     el("p", { class: "plain" }, plain),
-    scored ? el("div", { style: "margin-top:12px" },
-      el("a", { href: "#", onclick: (e) => { e.preventDefault(); howMeasuredModal(r.note); } }, "How is this measured? →")) : null));
+    el("div", { style: "margin-top:12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap" },
+      citeButton(() => officialCitation(card)),
+      scored ? el("a", { href: "#", onclick: (e) => { e.preventDefault(); howMeasuredModal(r.note); } }, "How is this measured? →") : null)));
 
   // At a glance: the three most relevant numbers (the big composite already leads when scored).
   const statCandidates = [];
@@ -1749,10 +1810,20 @@ function visitorId() {
 function isOptedOut() {
   try { return localStorage.getItem("dz_optout") === "1"; } catch (e) { return false; }
 }
+let _referrerSent = false;
 function trackView() {
   if (isOptedOut()) return;  // this device is excluded from metrics (owner opt-out)
   try {
-    const body = JSON.stringify({ visitor_id: visitorId(), path: (location.hash || "#/").split("?")[0] });
+    // Send the external referrer once per page load: it identifies WHO linked/cited us
+    // (a citation detector), never who the visitor is.
+    let referrer = "";
+    if (!_referrerSent && document.referrer) {
+      try {
+        if (new URL(document.referrer).origin !== location.origin) referrer = document.referrer.slice(0, 200);
+      } catch (e) { /* malformed referrer */ }
+      _referrerSent = true;
+    }
+    const body = JSON.stringify({ visitor_id: visitorId(), path: (location.hash || "#/").split("?")[0], referrer });
     fetch(API + "/api/collect", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true })
       .catch(() => {});
   } catch (e) { /* analytics is best-effort, never blocks the app */ }

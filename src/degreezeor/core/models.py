@@ -175,6 +175,9 @@ class AnalyticsEvent(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     visitor_id: Mapped[str] = mapped_column(String(40), index=True)
     path: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # External referrer (sent once per page load, only when cross-origin): surfaces WHO is
+    # citing/linking us — a real-time citation detector with no extra tracking.
+    referrer: Mapped[str | None] = mapped_column(String(200), nullable=True)
     ts: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True)
 

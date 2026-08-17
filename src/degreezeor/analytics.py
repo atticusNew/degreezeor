@@ -17,11 +17,14 @@ from sqlalchemy.orm import Session
 from degreezeor.core.models import AnalyticsEvent
 
 
-def record_event(session: Session, *, visitor_id: str, path: str | None) -> bool:
+def record_event(
+    session: Session, *, visitor_id: str, path: str | None, referrer: str | None = None,
+) -> bool:
     vid = (visitor_id or "").strip()[:40]
     if not vid:
         return False
-    session.add(AnalyticsEvent(visitor_id=vid, path=(path or "")[:200]))
+    session.add(AnalyticsEvent(visitor_id=vid, path=(path or "")[:200],
+                               referrer=(referrer or "").strip()[:200] or None))
     return True
 
 
@@ -104,6 +107,26 @@ def compute_metrics(session: Session) -> dict[str, Any]:
         ).all()
     ]
 
+    # Top external referrers (last 30 days), grouped by host: WHO is linking/citing us.
+    from urllib.parse import urlparse
+
+    ref_hosts: dict[str, dict[str, int]] = {}
+    for ref, pv, uv in session.execute(
+        select(AnalyticsEvent.referrer,
+               func.count(),
+               func.count(func.distinct(AnalyticsEvent.visitor_id)))
+        .where(AnalyticsEvent.ts >= month, AnalyticsEvent.referrer.is_not(None))
+        .group_by(AnalyticsEvent.referrer)
+    ).all():
+        host = urlparse(ref).netloc or ref
+        agg = ref_hosts.setdefault(host, {"visits": 0, "visitors": 0})
+        agg["visits"] += pv
+        agg["visitors"] += uv  # approximate across distinct referrer URLs of one host
+    top_referrers = sorted(
+        ({"host": h, **v} for h, v in ref_hosts.items()),
+        key=lambda r: -r["visits"],
+    )[:15]
+
     # Short daily series (last 14 days) of distinct visitors, for a growth sparkline.
     daily: list[dict[str, Any]] = []
     for i in range(13, -1, -1):
@@ -126,5 +149,6 @@ def compute_metrics(session: Session) -> dict[str, Any]:
         "day1_retention_returned": retained_d1,
         "day1_retention_rate": round(retained_d1 / len(cohort_ids), 3) if cohort_ids else 0.0,
         "top_pages_30d": top_pages,
+        "top_referrers_30d": top_referrers,
         "daily_visitors_14d": daily,
     }

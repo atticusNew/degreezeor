@@ -72,6 +72,12 @@ a.cta.ghost { background: transparent; color: var(--accent); border: 1px solid v
 a.cta:hover { text-decoration: none; filter: brightness(1.08); }
 .doc-downloads { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 16px; }
 
+/* Cite button: quiet, one-tap copy of a self-contained citation. */
+.cite-btn { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px;
+  font-weight: 600; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--accent-border);
+  background: var(--accent-soft); color: var(--accent); }
+.cite-btn:hover { filter: brightness(1.15); }
+
 /* Roll-call vote position badges. */
 .vbadge { display: inline-block; white-space: nowrap; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .vbadge.yea { color: var(--good); border-color: rgba(46,204,113,.4); background: rgba(46,204,113,.08); }

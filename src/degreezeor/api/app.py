@@ -264,6 +264,7 @@ def recent_activity(limit: int = 50, category: str | None = None) -> list[dict]:
 class CollectIn(BaseModel):
     visitor_id: str
     path: str = ""
+    referrer: str = ""
 
 
 @app.post("/api/collect")
@@ -272,7 +273,8 @@ def collect(payload: CollectIn) -> dict:
     from degreezeor.analytics import record_event
 
     with session_scope() as s:
-        ok = record_event(s, visitor_id=payload.visitor_id, path=payload.path)
+        ok = record_event(s, visitor_id=payload.visitor_id, path=payload.path,
+                          referrer=payload.referrer)
     return {"ok": ok}
 
 

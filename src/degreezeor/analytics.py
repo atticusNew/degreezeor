@@ -89,6 +89,21 @@ def compute_metrics(session: Session) -> dict[str, Any]:
             .where(AnalyticsEvent.visitor_id.in_(cohort_ids), AnalyticsEvent.ts >= cohort_end)
         ).scalar() or 0
 
+    # Top pages (last 30 days): pageviews + unique visitors per path. Separates serious
+    # evaluation (methodology/official pages) from landing-page bounces.
+    top_pages = [
+        {"path": path or "(unknown)", "pageviews": pv, "visitors": uv}
+        for path, pv, uv in session.execute(
+            select(AnalyticsEvent.path,
+                   func.count(),
+                   func.count(func.distinct(AnalyticsEvent.visitor_id)))
+            .where(AnalyticsEvent.ts >= month)
+            .group_by(AnalyticsEvent.path)
+            .order_by(func.count().desc())
+            .limit(15)
+        ).all()
+    ]
+
     # Short daily series (last 14 days) of distinct visitors, for a growth sparkline.
     daily: list[dict[str, Any]] = []
     for i in range(13, -1, -1):
@@ -110,5 +125,6 @@ def compute_metrics(session: Session) -> dict[str, Any]:
         "day1_retention_cohort": len(cohort_ids),
         "day1_retention_returned": retained_d1,
         "day1_retention_rate": round(retained_d1 / len(cohort_ids), 3) if cohort_ids else 0.0,
+        "top_pages_30d": top_pages,
         "daily_visitors_14d": daily,
     }

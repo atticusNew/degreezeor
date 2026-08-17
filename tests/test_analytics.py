@@ -29,6 +29,18 @@ def test_metrics_count_distinct_visitors_and_pageviews(session) -> None:
     assert len(m["daily_visitors_14d"]) == 14
 
 
+def test_top_pages_rank_by_pageviews_with_unique_visitors(session) -> None:
+    for vid, path in [("a", "#/methodology"), ("b", "#/methodology"), ("a", "#/methodology"),
+                      ("a", "#/"), ("c", "#/official/5")]:
+        record_event(session, visitor_id=vid, path=path)
+    session.flush()
+    top = compute_metrics(session)["top_pages_30d"]
+    assert top[0]["path"] == "#/methodology"
+    assert top[0]["pageviews"] == 3 and top[0]["visitors"] == 2  # a twice + b once
+    paths = {t["path"] for t in top}
+    assert {"#/", "#/official/5"} <= paths
+
+
 def test_forget_visitor_removes_own_device_from_unique_visitors(session) -> None:
     for vid in ("owner", "owner", "real_user"):
         record_event(session, visitor_id=vid, path="#/")

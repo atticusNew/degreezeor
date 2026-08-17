@@ -53,6 +53,17 @@ class CongressLegislatorsAdapter(SourceAdapter):
             content_hash=sha256_hex(content), retrieved_at=datetime.now(UTC),
         )
 
+    def current_bioguide_ids(self) -> set[str]:
+        """The Bioguide IDs of legislators CURRENTLY in office (the `legislators-current`
+        roster). Used only to flag 'in office' for display — never read by scoring."""
+        from degreezeor.ingestion.http import client
+
+        raw = client.get_bytes(f"{_BASE}/legislators-current.json")
+        return {
+            p["id"]["bioguide"] for p in json.loads(raw)
+            if p.get("id", {}).get("bioguide")
+        }
+
     def lis_to_bioguide(self) -> dict[str, str]:
         """Fetch (cache-first) + build the crosswalk, memoised for the process."""
         global _LIS_TO_BIOGUIDE

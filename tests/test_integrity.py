@@ -96,7 +96,7 @@ def test_party_invariance_means_are_identical_when_only_party_differs(session) -
         _scored_eu(session, mv, official_id=r_off, attribution=0.2, composite=comp,
                    confidence=0.7, gated=False)
 
-    report = party_symmetry_report(session)
+    report = party_symmetry_report(session, min_scored=2)
     by = {p.abbrev: p for p in report.parties}
     assert by["D"].mean_composite == by["R"].mean_composite
     assert report.composite_gap == 0
@@ -146,14 +146,15 @@ def test_systematic_composite_gap_is_flagged_for_review(session) -> None:
     rep = _party(session, "R", "Republican")
     d_off = _official(session, "Dee", dem)
     r_off = _official(session, "Arr", rep)
-    # >= min_scored (2) per party so the gap is comparable; large 50-point gap.
+    # >= min_scored per party so the gap is comparable; large 50-point gap. Pass an explicit
+    # small min_scored so the fixture exercises the flag logic without seeding the full default.
     for _ in range(2):
         _scored_eu(session, mv, official_id=d_off, attribution=0.2, composite=80.0,
                    confidence=0.7, gated=False)
         _scored_eu(session, mv, official_id=r_off, attribution=0.2, composite=30.0,
                    confidence=0.7, gated=False)
 
-    report = party_symmetry_report(session)
+    report = party_symmetry_report(session, min_scored=2)
     assert report.composite_gap == 50
     assert report.review_required is True
     assert any("gap" in r.lower() for r in report.review_reasons)

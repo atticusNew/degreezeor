@@ -24,11 +24,14 @@ from degreezeor.ingestion.http import client
 API = "https://api.census.gov/data"
 
 
-def parse_encoding(native_series_id: str) -> tuple[str, str]:
+def parse_encoding(native_series_id: str) -> tuple[str, str, str]:
+    """CENSUS|<dataset_path>|<variable>[|<geography>]. Geography defaults to national
+    ('us:*'); a 4th segment like 'state:06' selects a single state (for comparison designs)."""
     parts = native_series_id.split("|")
-    if len(parts) != 3 or parts[0] != "CENSUS":
+    if len(parts) not in (3, 4) or parts[0] != "CENSUS":
         raise ValueError(f"not a Census series id: {native_series_id!r}")
-    return parts[1], parts[2]  # (dataset_path, variable)
+    geo = parts[3] if len(parts) == 4 else "us:*"
+    return parts[1], parts[2], geo  # (dataset_path, variable, geography)
 
 
 class CensusAdapter(SourceAdapter):
@@ -39,11 +42,11 @@ class CensusAdapter(SourceAdapter):
 
     def fetch(self, native_identifier: str, *, start_year: int = 1990,
               end_year: int = 2100, **params: Any) -> RawFetch:
-        path, variable = parse_encoding(native_identifier)
+        path, variable, geo = parse_encoding(native_identifier)
         # Pre-encode with quote_plus (spaces -> '+') so the Census "time=from+X+to+Y"
         # range filter is accepted exactly as the API expects.
         query = urlencode({
-            "get": variable, "for": "us:*",
+            "get": variable, "for": geo,
             "time": f"from {start_year} to {end_year}",
         })
         public_url = f"{API}/{path}?{query}"  # key-less URL for the audit trail
@@ -56,7 +59,7 @@ class CensusAdapter(SourceAdapter):
 
     @staticmethod
     def parse_series(content: bytes, native_series_id: str) -> list[tuple[str, str]]:
-        _path, variable = parse_encoding(native_series_id)
+        _path, variable, _geo = parse_encoding(native_series_id)
         rows = json.loads(content)
         if not rows:
             return []

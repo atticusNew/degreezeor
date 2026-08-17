@@ -24,11 +24,22 @@ from degreezeor.ingestion.http import client
 API = "https://api.eia.gov/v2"
 
 
-def parse_encoding(native_series_id: str) -> tuple[str, str]:
+def parse_encoding(native_series_id: str) -> tuple[str, dict[str, str]]:
+    """EIA|<route>|<facets>. ``facets`` is either a single ``msn`` value (legacy national
+    series, e.g. 'TETCEUS') or a generic ``key=val;key=val`` spec (e.g. state CO2:
+    'stateId=CA;sectorId=TT;fuelId=TO'). Returns (route, {facet: value})."""
     parts = native_series_id.split("|")
     if len(parts) != 3 or parts[0] != "EIA":
         raise ValueError(f"not an EIA series id: {native_series_id!r}")
-    return parts[1], parts[2]  # (route, msn)
+    route, spec = parts[1], parts[2]
+    if "=" in spec:
+        facets = {}
+        for pair in spec.split(";"):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                facets[k.strip()] = v.strip()
+        return route, facets
+    return route, {"msn": spec}  # legacy national series
 
 
 class EIAAdapter(SourceAdapter):
@@ -39,9 +50,10 @@ class EIAAdapter(SourceAdapter):
 
     def fetch(self, native_identifier: str, *, start_year: int = 1990,
               end_year: int = 2100, **params: Any) -> RawFetch:
-        route, msn = parse_encoding(native_identifier)
+        route, facets = parse_encoding(native_identifier)
         q = [
-            ("frequency", "annual"), ("data[0]", "value"), ("facets[msn][]", msn),
+            ("frequency", "annual"), ("data[0]", "value"),
+            *[(f"facets[{k}][]", v) for k, v in facets.items()],
             ("start", str(start_year)), ("end", str(end_year)),
             ("sort[0][column]", "period"), ("sort[0][direction]", "asc"),
         ]

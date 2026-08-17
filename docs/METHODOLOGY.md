@@ -133,6 +133,28 @@ evidence."** This is the correct, humble behavior — not a failure.
 - **Official roll-up:** attribution-weighted mean of EU scores, always reported with **coverage**
   (fraction of actions that are scoreable) and confidence.
 
+## 8b. Two layers: "did it work?" vs. "what did they act on?"
+
+A scoreable unit requires an isolatable, measured outcome (§3). Most legislative behaviour does
+not meet that bar, yet voters reasonably ask *what an official acted on*. We therefore publish two
+clearly separated layers, never blended:
+
+- **Scored layer ("did it work?"):** composite scores and the factual component vector above. Only
+  EUs that pass the confidence gate (§7) receive a composite.
+- **Record layer ("what they acted on"):** the **unscored** legislative record — bills a member
+  **sponsored** and   **cosponsored** (Congress.gov), plus how they **voted** on recorded roll-call
+  votes (House: clerk.house.gov; Senate: senate.gov — keyless Tier 0, senators resolved via
+  the lis↔bioguide crosswalk), and for the executive, the **executive orders a president
+  signed** (Federal Register) — grouped by the objective category taxonomy. These are
+  source-anchored facts describing breadth and positions by topic. They are **never** fed into any
+  score, attribution, or the party-symmetry monitor; they exist purely so the public record of
+  activity is visible alongside (and visually distinct from) the rigorous scored layer. The
+  per-official voting record uses only comprehensive roll-calls (so it never double-counts the
+  attribution-only passage votes that feed the *scored* layer).
+
+The record layer is ingested recency-first and incrementally, capped per run so the per-key request
+budget is respected; repeated nightly runs fill in the remaining history.
+
 ## 9. Bias-minimization protocol
 
 1. Identical pipeline for all officials; **scoring code is party-blind** — enforced statically (no
@@ -163,6 +185,17 @@ evidence."** This is the correct, humble behavior — not a failure.
     choices — never an automated correction, and never a change to any individual score. Party is
     read here for audit only. (`/api/integrity/party-symmetry`, `degreezeor party-symmetry`, and the
     "Integrity" view.)
+14. **Display neutrality** — party is removed from the entire user-facing experience (no party
+    label, filter, or sort on officials); only the name and, where derivable from the public record,
+    the office (President, Governor, Senator, Representative) are shown. Party remains in the data
+    layer solely for the audit-only party-symmetry monitor (item 13). Score-bearing surfaces use a
+    neutral mauve tone, never green-as-good, red-as-bad, or party-blue. Actions are grouped into
+    objective topic **categories** (jobs and economy, cost and spending, health, public safety,
+    energy and environment, poverty and income, education) derived deterministically from each
+    action's official subject domain and the metric it was measured against; categories never feed
+    scoring. Official-to-official and action context is **descriptive only** (how a result sits next
+    to the typical scored result for its action type or category, shown only with a sufficient
+    sample), never a ranking.
 
 ## 10. What cannot be made fully empirical
 
@@ -181,7 +214,18 @@ sign disagreement across baselines, or confidence below the publish threshold.
   confidence gate; API + UI.
 - **Phase 2 (in progress):** **difference-in-differences & synthetic control shipped** (with
   tiered pooling and state-policy scoring on official BLS state series — e.g. the Kansas 2012 tax
-  cuts demo, which clears the gate and yields a real composite). **Executive orders shipped**
+  cuts demo, which clears the gate and yields a real composite; the curated state set now also
+  includes North Carolina 2013, Wisconsin 2011, Maine 2011, Indiana 2013, Ohio 2013, and Missouri
+  2014, each source-verified, with the synthetic-control pre-fit gate deciding which clear the gate
+  vs. honestly abstain). The comparison-design scorer also runs on **state wage** (BLS average
+  hourly earnings; minimum-wage laws in California, Massachusetts, Maryland), **state poverty/income**
+  (Census SAIPE; e.g. the California EITC), **state health coverage** (Census SAHIE uninsured rate;
+  e.g. California's ACA Medicaid expansion, which clears the gate), and **state emissions** (EIA
+  state CO2; e.g. California SB 350) — each measured against the policy's own stated goal with the
+  pre-registered sign (more jobs/wages/income, or less poverty/uninsured/CO2). The curated set spans
+  the most populous states first and both parties (for example Michigan 2011 business tax, New Jersey
+  2019 minimum wage, Virginia 2020 and Washington 2019 clean-energy laws), with the gate deciding
+  which clear vs. abstain. **Executive orders shipped**
   (Federal Register Tier-0 ingestion; the signing president carries high unilateral executive
   authority vs. shared law-signing). **Final agency rules (regulations) shipped** (Federal Register
   Tier-0; attributed to the administration in office on the rule's effective date). **Senate

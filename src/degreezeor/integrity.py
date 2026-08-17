@@ -40,7 +40,10 @@ from degreezeor.core.numeric import D, q_score
 # breach raises a review flag only. Chosen to be permissive (small samples are noisy).
 DEFAULT_COMPOSITE_GAP_THRESHOLD = D("15")  # points on the 0..100 composite
 DEFAULT_SHARE_GAP_THRESHOLD = D("0.25")  # difference in scored-share (0..1)
-DEFAULT_MIN_SCORED = 2  # require at least this many scored EUs per party to compare composites
+# Require a solid sample of scored EUs per party before comparing composites. On a small
+# scored set a large composite gap is noise, not a pattern, so we do not raise a review flag
+# (which would otherwise alarm readers prematurely). The check re-activates as coverage grows.
+DEFAULT_MIN_SCORED = 8
 # Require a meaningful sample of attributed EUs before judging a party's scored-SHARE.
 # A "systematic" coverage gap is only credible with enough data per party; on small samples
 # (a handful of attributed actions) a large share gap is statistical noise, not a pattern, so

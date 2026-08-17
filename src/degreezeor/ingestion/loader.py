@@ -17,6 +17,7 @@ from dateutil import parser as dtparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from degreezeor.categories import classify_executive_domain
 from degreezeor.core.hashing import sha256_hex
 from degreezeor.core.models import (
     Action,
@@ -202,6 +203,13 @@ def load_executive_order(session: Session, document_number: str) -> Action:
     signer = president_on(session, signing_date) if signing_date else None
     title = doc.get("title", "")
     abstract = _strip_html(doc.get("abstract") or "")
+    # EOs carry no policy area; classify a topic from the title+abstract so the record groups
+    # by category (deterministic keyword table). Falls back to a generic governance domain.
+    eo_domain = classify_executive_domain(f"{title}. {abstract}") or "Government Operations and Politics"
+
+    # Link to the Federal Register's official permalink (/d/<doc>), which always resolves;
+    # the bare /documents/<doc> form is not guaranteed for every document and can 404.
+    public_url = doc.get("html_url") or f"https://www.federalregister.gov/d/{document_number}"
 
     action = Action(
         type="eo",
@@ -209,10 +217,10 @@ def load_executive_order(session: Session, document_number: str) -> Action:
         action_date=signing_date,
         jurisdiction_id=jur.id,
         source_id=src.id,
-        source_url=fetch.source_url,
+        source_url=public_url,
         native_identifier=native_id,
         content_hash=fetch.content_hash,
-        domain="Economics and Public Finance",
+        domain=eo_domain,
         implemented=True,
     )
     session.add(action)
@@ -493,18 +501,29 @@ def load_observations(
         from degreezeor.ingestion.adapters.eia import eia_adapter
         return _load_annual_observations(session, metric, start_year, end_year,
                                          eia_adapter, ensure_eia_source)
+    if nsid.startswith("NAEP|"):
+        from degreezeor.ingestion.adapters.naep import naep_adapter
+        return _load_annual_observations(session, metric, start_year, end_year,
+                                         naep_adapter, ensure_naep_source)
     return _load_bls_observations(session, metric, start_year, end_year)
+
+
+def _name_needs_enrichment(full_name: str | None) -> bool:
+    """A vote-derived name that should be replaced with a full Congress.gov name:
+    a single token ("Adams"), or a last-name + tag like "Bishop (GA)" / "DeFazio [D-OR-4]"."""
+    if not full_name:
+        return False
+    return len(full_name.split()) == 1 or "(" in full_name or "[" in full_name
 
 
 def enrich_official_names(session: Session, limit: int | None = None) -> int:
     """Replace last-name-only (vote-derived) official names with full names from
     Congress.gov /member/{bioguide}. Idempotent; returns the number updated."""
-    # Officials whose name is a single token (e.g. "Adams") need a full name.
     candidates = [
         o for o in session.execute(
             select(Official).where(Official.bioguide_id.is_not(None))
         ).scalars().all()
-        if o.full_name and len(o.full_name.split()) == 1
+        if _name_needs_enrichment(o.full_name)
     ]
     updated = 0
     for o in candidates:
@@ -548,4 +567,11 @@ def ensure_eia_source(session: Session) -> DataSource:
     from degreezeor.ingestion.adapters.eia import eia_adapter
     return ensure_source(
         session, name=eia_adapter.name, tier=eia_adapter.tier, base_url=eia_adapter.base_url
+    )
+
+
+def ensure_naep_source(session: Session) -> DataSource:
+    from degreezeor.ingestion.adapters.naep import naep_adapter
+    return ensure_source(
+        session, name=naep_adapter.name, tier=naep_adapter.tier, base_url=naep_adapter.base_url
     )

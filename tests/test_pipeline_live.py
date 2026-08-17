@@ -131,6 +131,36 @@ def test_state_policy_synthetic_control_clears_gate_and_is_reproducible() -> Non
         s3.close()
 
 
+def test_new_outcome_adapters_score_and_reproduce() -> None:
+    """The newly vetted state outcome series (CDC overdose mortality -> health; NAEP grade-4
+    reading -> education) ingest, run through the comparison design, and reproduce bit-for-bit.
+    Status may be 'scored' or 'insufficient_evidence' (the gate decides); the invariant we
+    assert is determinism, plus that they reproduce on an independent re-run."""
+    import os
+
+    from degreezeor.pipeline import STATE_POLICIES, score_state_policy
+
+    os.environ["DZ_HTTP_CACHE"] = "1"
+    try:
+        for key in ("FL-2011-PILLMILL", "MS-2013-LBPA"):
+            s1 = _fresh_session()
+            try:
+                r1 = score_state_policy(s1, STATE_POLICIES[key])
+                s1.commit()
+            finally:
+                s1.close()
+            s2 = _fresh_session()
+            try:
+                r2 = score_state_policy(s2, STATE_POLICIES[key])
+                s2.commit()
+            finally:
+                s2.close()
+            assert r1.status in ("scored", "insufficient_evidence")
+            assert r1.reproducible_hash == r2.reproducible_hash, key
+    finally:
+        os.environ.pop("DZ_HTTP_CACHE", None)
+
+
 def test_dispute_reproducible_rerun_upholds_score() -> None:
     import os
 

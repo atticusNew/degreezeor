@@ -33,3 +33,17 @@ jobs:
         # CI gates: party-blindness, audit tamper, reproducibility logic,
         # confidence gate, and source-trail integrity.
         run: pytest -q
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Frontend syntax check (catches SPA parse errors)
+        run: node --check web/app.js && node --check web/config.js
+
+      - name: Migrations apply cleanly + DB matches models
+        run: |
+          python -c "from degreezeor.cli import main; main(['migrate'])"
+        env:
+          DZ_DATABASE_URL: "sqlite+pysqlite:///ci_migrate.sqlite"

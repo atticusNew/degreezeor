@@ -881,6 +881,183 @@ STATE_POLICIES: dict[str, StatePolicySpec] = {
         signer_name="Steve Beshear", signer_party="D",
         metric_kind="overdose",
     ),
+    # ---- Curation batch (2026-08): breadth across categories on ALREADY-VETTED adapters.
+    # Donor pools are decontaminated: states that adopted a comparable policy inside the
+    # treated state's evaluation window are excluded. Specs whose post-period official data
+    # has not published yet score automatically in a future nightly run (honest abstention
+    # until then). Provenance mix is deliberately balanced (R signers, D signers, ballots).
+    "OK-2021-MEDICAID": StatePolicySpec(
+        key="OK-2021-MEDICAID",
+        title="Oklahoma Medicaid expansion (State Question 802)",
+        state_fips="40",
+        state_name="Oklahoma",
+        # Non-expansion states throughout the window (coverage Jul 2021 + 24mo).
+        donor_fips=["48", "47", "28", "01", "13"],  # TX TN MS AL GA
+        source_url="https://www.sos.ok.gov/documents/questions/802.pdf",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act (voter State Question "
+            "802) to reduce the number of uninsured Oklahomans (coverage effective July 1, 2021)."
+        ),
+        enacted_year=2021, enacted_month=7, lag_window_months=24,
+        metric_kind="uninsured", sponsor_name="Oklahoma State Question 802",
+    ),
+    "SD-2023-MEDICAID": StatePolicySpec(
+        key="SD-2023-MEDICAID",
+        title="South Dakota Medicaid expansion (Constitutional Amendment D)",
+        state_fips="46",
+        state_name="South Dakota",
+        donor_fips=["56", "20", "48", "47", "28"],  # WY KS TX TN MS
+        source_url="https://sdsos.gov/elections-voting/upcoming-elections/general-information/2022-ballot-questions.aspx",
+        objective_text=(
+            "Expand Medicaid eligibility under the Affordable Care Act (voter Constitutional "
+            "Amendment D) to reduce the number of uninsured South Dakotans (coverage effective "
+            "July 1, 2023)."
+        ),
+        enacted_year=2023, enacted_month=7, lag_window_months=24,
+        metric_kind="uninsured", sponsor_name="South Dakota Constitutional Amendment D",
+    ),
+    "NC-2023-MEDICAID": StatePolicySpec(
+        key="NC-2023-MEDICAID",
+        title="North Carolina Medicaid expansion (HB 76)",
+        state_fips="37",
+        state_name="North Carolina",
+        donor_fips=["47", "13", "45", "28", "48"],  # TN GA SC MS TX (non-expansion in window)
+        source_url="https://www.ncleg.gov/BillLookUp/2023/H76",
+        objective_text=(
+            "Expand Medicaid eligibility to low-income adults to reduce the number of "
+            "uninsured North Carolinians (HB 76; coverage effective December 1, 2023)."
+        ),
+        enacted_year=2023, enacted_month=12, lag_window_months=24,
+        signer_name="Roy Cooper", signer_party="D",
+        metric_kind="uninsured",
+    ),
+    "FL-2020-MINWAGE": StatePolicySpec(
+        key="FL-2020-MINWAGE",
+        title="Florida minimum wage increase to $15 (Amendment 2)",
+        state_fips="12",
+        state_name="Florida",
+        # Federal-minimum states throughout the window (first step Sept 30, 2021 + 36mo).
+        donor_fips=["13", "47", "45", "48", "01"],  # GA TN SC TX AL
+        source_url="https://www.flsenate.gov/Laws/Constitution#A10S24",
+        objective_text=(
+            "Raise Florida's minimum wage in steps to $15 by 2026 (voter Amendment 2) to "
+            "increase pay for the state's lowest-wage workers (first increase Sept 30, 2021)."
+        ),
+        enacted_year=2021, enacted_month=9, lag_window_months=36,
+        metric_kind="wage", sponsor_name="Florida Amendment 2",
+    ),
+    "AZ-2016-PROP206": StatePolicySpec(
+        key="AZ-2016-PROP206",
+        title="Arizona minimum wage increase (Proposition 206)",
+        state_fips="04",
+        state_name="Arizona",
+        donor_fips=["48", "49", "40", "47", "13"],  # TX UT OK TN GA (federal minimum in window)
+        source_url="https://apps.azsos.gov/election/2016/info/PubPamphlet/english/Prop206.pdf",
+        objective_text=(
+            "Raise the state minimum wage (to $10 in 2017, rising to $12 by 2020) to increase "
+            "pay for Arizona's lowest-wage workers (voter Proposition 206)."
+        ),
+        enacted_year=2017, enacted_month=1, lag_window_months=36,
+        metric_kind="wage", sponsor_name="Arizona Proposition 206",
+    ),
+    "NY-2019-CLCPA": StatePolicySpec(
+        key="NY-2019-CLCPA",
+        title="New York Climate Leadership and Community Protection Act (S6599)",
+        state_fips="36",
+        state_name="New York",
+        # Large states without a comparable clean-energy/emissions mandate in the window.
+        donor_fips=["42", "39", "12", "48", "13"],  # PA OH FL TX GA
+        source_url="https://legislation.nysenate.gov/pdf/bills/2019/S6599",
+        objective_text=(
+            "Cut greenhouse gas emissions 40% by 2030 and 85% by 2050 (from 1990) and require "
+            "70% renewable electricity by 2030 (Climate Leadership and Community Protection Act)."
+        ),
+        enacted_year=2019, enacted_month=7, lag_window_months=36,
+        signer_name="Andrew M. Cuomo", signer_party="D",
+        metric_kind="energy",
+    ),
+    "IL-2021-CEJA": StatePolicySpec(
+        key="IL-2021-CEJA",
+        title="Illinois Climate and Equitable Jobs Act (SB 2408)",
+        state_fips="17",
+        state_name="Illinois",
+        donor_fips=["18", "29", "21", "55", "39"],  # IN MO KY WI OH (no comparable mandate in window)
+        source_url="https://www.ilga.gov/legislation/publicacts/fulltext.asp?Name=102-0662",
+        objective_text=(
+            "Transition to 100% clean energy by 2050 and cut power-sector carbon emissions "
+            "(Climate and Equitable Jobs Act)."
+        ),
+        enacted_year=2021, enacted_month=9, lag_window_months=24,
+        signer_name="JB Pritzker", signer_party="D",
+        metric_kind="energy",
+    ),
+    "TN-2012-PILLMILL": StatePolicySpec(
+        key="TN-2012-PILLMILL",
+        title="Tennessee Prescription Safety Act of 2012 (SB 2733)",
+        state_fips="47",
+        state_name="Tennessee",
+        # KY (2012), FL (2011), GA (2013) enacted comparable laws in-window -> excluded.
+        donor_fips=["01", "45", "51", "28", "05"],  # AL SC VA MS AR
+        source_url="https://wapp.capitol.tn.gov/apps/BillInfo/Default.aspx?BillNumber=SB2733&GA=107",
+        objective_text=(
+            "Tighten prescription-drug monitoring and prescriber requirements to reduce "
+            "prescription-drug abuse and overdose deaths in Tennessee (Prescription Safety Act)."
+        ),
+        enacted_year=2012, enacted_month=5, lag_window_months=48,
+        signer_name="Bill Haslam", signer_party="R",
+        metric_kind="overdose",
+    ),
+    "OH-2011-HB93": StatePolicySpec(
+        key="OH-2011-HB93",
+        title="Ohio 2011 prescription-drug ('pill mill') crackdown (HB 93)",
+        state_fips="39",
+        state_name="Ohio",
+        # KY/WV (2012) and IN (2013) enacted comparable laws in-window -> excluded.
+        donor_fips=["26", "42", "55", "17", "29"],  # MI PA WI IL MO
+        source_url="https://www.legislature.ohio.gov/legislation/129/hb93",
+        objective_text=(
+            "Shut down 'pill mill' pain clinics and tighten prescribing rules to reduce "
+            "prescription-drug overdose deaths in Ohio (HB 93)."
+        ),
+        enacted_year=2011, enacted_month=5, lag_window_months=48,
+        signer_name="John Kasich", signer_party="R",
+        metric_kind="overdose",
+    ),
+    "NC-2012-READ": StatePolicySpec(
+        key="NC-2012-READ",
+        title="North Carolina Read to Achieve (Excellent Public Schools Act, SL 2012-142)",
+        state_fips="37",
+        state_name="North Carolina",
+        # FL (2002, contaminates pre-fit), MS (2013), SC (2014) had literacy gates in/near
+        # the window -> excluded. Donors had no comparable early-literacy change 2000-2018.
+        donor_fips=["51", "21", "13", "24", "54"],  # VA KY GA MD WV
+        source_url="https://www.ncleg.gov/EnactedLegislation/SessionLaws/PDF/2011-2012/SL2012-142.pdf",
+        objective_text=(
+            "Improve early-grade reading achievement through screening, intervention, and a "
+            "third-grade reading gate (Read to Achieve), measured by fourth-grade reading "
+            "proficiency."
+        ),
+        enacted_year=2012, enacted_month=7, lag_window_months=72,
+        sponsor_name="Phil Berger", sponsor_party="R",
+        metric_kind="naep_reading4",
+    ),
+    "NJ-2015-EITC": StatePolicySpec(
+        key="NJ-2015-EITC",
+        title="New Jersey EITC increase to 30% of the federal credit (P.L.2015, c.73)",
+        state_fips="34",
+        state_name="New Jersey",
+        # Donor states with no state EITC change in the window (PA/TN/FL/GA: none; MO: none
+        # until 2021, outside the 2015+48mo window).
+        donor_fips=["42", "29", "47", "12", "13"],  # PA MO TN FL GA
+        source_url="https://pub.njleg.state.nj.us/Bills/2014/PL15/73_.PDF",
+        objective_text=(
+            "Raise New Jersey's Earned Income Tax Credit to 30% of the federal credit to "
+            "increase the incomes of the state's working poor and reduce poverty."
+        ),
+        enacted_year=2015, enacted_month=7, lag_window_months=48,
+        signer_name="Chris Christie", signer_party="R",
+        metric_kind="poverty",
+    ),
 }
 
 
@@ -950,6 +1127,36 @@ TARGET_SPECS: dict[str, TargetSpec] = {
         defc="Z", realized_kind="obligation", realized_source="general",
         target_value=550_000_000_000.0,
         target_source_url="https://www.congress.gov/bill/117th-congress/house-bill/3684",
+    ),
+    # American Rescue Plan (PL 117-2): DEFC 'V' per the official USAspending DEFC registry.
+    # COVID DEFC -> disaster endpoint; target_value=None = the law's own committed obligation
+    # ("did it outlay what it committed"), so no curated figure is needed.
+    "ARPA-DELIVERY": TargetSpec(
+        key="ARPA-DELIVERY",
+        congress=117, law_number=2, law_type="pub",
+        objective_text=(
+            "Disburse the committed American Rescue Plan Act emergency-relief funding "
+            "(delivery of obligated funds)."
+        ),
+        defc="V",
+        realized_kind="outlay",
+        target_value=None,  # committed_obligation mode: target = ARPA's own committed total
+        target_source_url="https://api.usaspending.gov/api/v2/disaster/award/amount/?def_codes=V",
+    ),
+    # CHIPS and Science Act (PL 117-167): DEFC '8' per the official USAspending DEFC registry
+    # (the act's emergency-designated appropriations). Headline semiconductor commitment
+    # ~$52.7B. The window-stability + commensurability guards reject the spec automatically
+    # if the DEFC total turns out not to be a clean delivery measure.
+    "CHIPS-DELIVERY": TargetSpec(
+        key="CHIPS-DELIVERY",
+        congress=117, law_number=167, law_type="pub",
+        objective_text=(
+            "Obligate the ~$52.7B in semiconductor incentives and R&D committed by the CHIPS "
+            "and Science Act (share of the headline commitment obligated to date)."
+        ),
+        defc="8", realized_kind="obligation", realized_source="general",
+        target_value=52_700_000_000.0,
+        target_source_url="https://www.congress.gov/bill/117th-congress/house-bill/4346",
     ),
 }
 
@@ -2264,6 +2471,13 @@ COURT_SURVIVAL_SPECS: dict[str, CourtSurvivalSpec] = {
         note="EO 14042 federal-contractor vaccine mandate was nationally enjoined, never "
              "enforced, and later revoked.",
     ),
+    "EO13768-SANCTUARY": CourtSurvivalSpec(
+        key="EO13768-SANCTUARY", eo_document_number="2017-02102", disposition="partial",
+        case_query="City and County of San Francisco v. Trump sanctuary jurisdictions 13768",
+        note="EO 13768: the Section 9(a) sanctuary-jurisdiction defunding provision was "
+             "permanently enjoined as unconstitutional (N.D. Cal. 2017, affirmed 9th Cir. "
+             "2018); the order's other enforcement-priority provisions stood.",
+    ),
 }
 
 
@@ -2894,7 +3108,7 @@ def refresh_all(
         if _isolated(session, lambda spec=spec: score_court_survival(session, spec),
                      label=f"court survival {spec.key}")))
     _stage("curated_targets", lambda: sum(
-        1 for key in ("CARES-DELIVERY", "IIJA-DELIVERY", "UKRAINE-2022-DELIVERY")
+        1 for key in TARGET_SPECS
         if _isolated(session, lambda key=key: score_target(session, TARGET_SPECS[key]),
                      label=f"curated target {key}")))
     # Enacted-law scoring: the current congress plus the two before it, so newly enacted

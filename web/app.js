@@ -1631,6 +1631,19 @@ async function renderAbout() {
       "signed, the budgets they ran, and asks one simple thing. Did the action do what it said it " +
       "would do?")));
 
+  // The canonical, quotable trust principles (mirrored verbatim in the white paper).
+  const PRINCIPLES = [
+    ["Party-blind by construction", "The scoring code never reads party affiliation \u2014 enforced by automated tests, not policy."],
+    ["Source-anchored", "Every number links to an official government source you can check yourself."],
+    ["Honest abstention", "When the evidence can't isolate an effect, we say \u201cinsufficient evidence\u201d \u2014 never a guess dressed as a score."],
+    ["Reproducible", "Every published score re-derives bit-for-bit, and the record is tamper-evident."],
+    ["Point-in-time honest", "Data updates nightly; every citation carries its retrieval date, so quotes stay true."],
+  ];
+  app.appendChild(el("div", { class: "card" },
+    el("h3", {}, "Trust principles"),
+    el("ul", { style: "margin:0;padding-left:18px;line-height:1.8" },
+      ...PRINCIPLES.map(([name, desc]) => el("li", {}, el("b", {}, name + " \u2014 "), desc)))));
+
   app.appendChild(el("div", { class: "card" },
     el("h3", {}, "How it works, in plain terms"),
     el("p", {},

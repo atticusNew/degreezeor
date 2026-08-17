@@ -22,6 +22,21 @@ DegreeZero exists to answer those two questions with official data, a fixed
 method, and a complete, auditable trail from every number back to its government
 source.
 
+## Trust principles, at a glance
+
+- **Party-blind by construction** — the scoring code never reads party affiliation;
+  enforced by automated tests, not policy.
+- **Source-anchored** — every number links to an official government source you can
+  check yourself.
+- **Honest abstention** — when the evidence can't isolate an effect, we say
+  "insufficient evidence" — never a guess dressed as a score.
+- **Reproducible** — every published score re-derives bit-for-bit, and the record is
+  tamper-evident.
+- **Point-in-time honest** — data updates nightly; every citation carries its
+  retrieval date, so quotes stay true.
+
+The rest of this paper is the detail behind those five sentences.
+
 ## 2. Design principle: procedural neutrality, not "balance"
 
 DegreeZero does not try to be "balanced" by splitting the difference between

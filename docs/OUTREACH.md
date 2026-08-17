@@ -185,3 +185,96 @@ These desks live for reproducible, source-anchored datasets.
 *Spread strategy in one line: make neutrality and reproducibility the story, give
 each audience a ready-made angle with sources, and let anyone re-derive every
 number themselves.*
+
+---
+
+## 7. Round 2 target list (wonks, operatives, statisticians, press — ~30)
+
+> Same rule as §2: verify each contact's current role/channel before sending. Prefer
+> published org emails, tip pages, and contact forms; LinkedIn/X DM as warm-up.
+
+**Civic-data platforms (integration or acquisition interest)**
+1. PILLARS — `hello@pillarsapp.us`; founder Caleb Adelman + growth lead Molly Sullivan (LinkedIn/X). See §8.
+2. GovTrack — founder Josh Tauberer; `hello@govtrack.us`.
+3. Ballotpedia — `editor@ballotpedia.org` (they license/aggregate data).
+4. Vote Smart — research contact form (votesmart.org).
+5. USAFacts — partnership/contact form (data-culture fit, Ballmer-funded).
+6. Plural (Open States) — contact form; they sell legislative data to lobbyists.
+7. Quorum / FiscalNote — product/partnership inboxes (lobbying-software buyers of data).
+8. AllSides — editorial contact (they profiled PILLARS; they cover nonpartisan tools).
+
+**Statisticians / methods academics (credibility multipliers)**
+9. MIT Election Data + Science Lab — `info@electionlab.mit.edu`.
+10. Andrew Gelman (Columbia) — public blog "Statistical Modeling"; comments/email; loves critiquing causal claims — invite the critique.
+11. Harvard IQSS / Ash Center — center contact pages.
+12. American Statistical Association — policy/media office; pitch a "statistics in the public interest" feature (Amstat News).
+13. PolMeth (Society for Political Methodology) — listserv/officers; ask for methodology feedback.
+14. Sam Wang (Princeton Election Consortium) — public contact.
+
+**Think tanks (balance the spectrum, pitch analysts not press offices)**
+15. Niskanen Center — "The Science of Politics" podcast (Matt Grossmann) — pitch an episode on reproducible accountability scoring.
+16. Brookings Governance Studies — scholar contact pages.
+17. AEI — governance/Congress scholars (e.g. Congress project staff).
+18. Cato — government-transparency scholars.
+19. R Street — governance program inbox.
+20. Bipartisan Policy Center — democracy program.
+21. New America — Political Reform program.
+22. Congressional Management Foundation — works directly with Hill offices on effectiveness; very on-mission.
+23. Center for Effective Lawmaking (UVA/Vanderbilt) — THE academic analogue (legislator effectiveness scores); propose comparing notes/cross-citation.
+
+**Operatives: campaign managers + lobbyists**
+24. AAPC (American Association of Political Consultants) — member newsletter/webinar pitch (campaign managers en masse).
+25. National Institute for Lobbying & Ethics — newsletter/program inbox (lobbyists want objective member records).
+26. Campaigns & Elections magazine — editorial tips (the trade press campaign managers read).
+27. State legislative staff orgs — NCSL contact (reaches every statehouse).
+
+**Press (Hill + data)**
+28. Politico Playbook / Congress team — tips inbox.
+29. The Hill / Roll Call / Punchbowl News — tips inboxes (Roll Call especially: Hill-institutional).
+30. Axios (politics/tech) — tips; Semafor Principals.
+31. GovExec / Route Fifty — cover gov-performance measurement.
+32. Hacker News "Show HN" + Product Hunt — the open-source/reproducibility angle reliably reaches wonks and builders (one post each, timed to a news hook).
+
+## 8. The PILLARS play (get on their radar → potential flip)
+
+**Why it fits:** PILLARS does *inputs* (votes, donors, bill summaries) for a consumer
+audience; DegreeZero does *outcomes* ("did it work?") with a reproducible, defensible
+methodology. Their own About page names the gap: "it's hard to track whether our
+politicians are keeping their promises." That is exactly the scored layer + the
+audit/reproducibility IP. Complement, not competitor.
+
+**Sequence (4–6 weeks):**
+1. **Warm-up (week 1):** follow/engage their socials; download the app; send genuinely
+   useful product feedback to `hello@pillarsapp.us` referencing something specific.
+   Founders answer feedback mail.
+2. **Value-first intro (week 1–2):** short email to Caleb (founder) + Molly (growth):
+   "We built the outcome-scoring layer you'd want for promise-tracking — pre-registered,
+   reproducible, source-anchored. Demo + white paper attached. Want a pilot feed?"
+   Offer a **free API pilot** (their app shows a "DegreeZero score" on a few officials).
+3. **Meeting → optionality:** if the pilot lands, the integration conversation naturally
+   becomes build-vs-buy. Never open with "acquire us"; open with "your users get
+   promise-tracking next quarter."
+4. **Create gentle competitive tension:** run the same integration conversation with
+   GovTrack/Ballotpedia/USAFacts (§7) so a flip isn't a single-buyer negotiation.
+5. **What they'd be buying:** the methodology + audit/reproducibility engine, the vetted
+   adapter pipeline, the scored dataset, and the neutrality test suite — not the MAU.
+   Position price accordingly (asset/IP sale or acqui-hire, not a traffic multiple).
+
+**Assets to attach:** white paper PDF, methodology PDF, a 90-second demo, one
+"insufficient evidence" example (the honesty mechanism is the differentiator), and a
+one-page integration sketch (their profile page + your score chip + source trail).
+
+## 9. Engagement-to-flip strategy (what actually moves the needle)
+
+The metrics story for a niche B2B/civic asset is **citations and named users, not MAU**.
+Priorities, in order:
+1. **Get cited 2–3 times** (a journalist using a score, a think-tank memo, a methods
+   blog post — even critical). Each citation is worth more than 1,000 visitors to an
+   acquirer. §7 items 9–23 exist for this.
+2. **One methodology review** by a named statistician/political scientist (offer them
+   a "break it" challenge — the dispute → deterministic re-run flow is the hook).
+3. **One trade-press piece** (Campaigns & Elections, Roll Call) framing it as "the
+   first reproducible scorecard."
+4. **Show HN / Product Hunt** once, with the open-source + reproducibility angle.
+5. Keep shipping the **"Recently scored" cadence** — an acquirer diligencing the repo
+   should see a living pipeline, which yours is.

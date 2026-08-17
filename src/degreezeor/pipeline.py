@@ -1569,7 +1569,8 @@ def _rescore_target_eu(session: Session, eu, action, metric) -> ScoreOutcome:
             realized = usaspending_adapter.parse_agency_budget(rfetch.content, int(fy))[realized_kind]
         elif prefix == "DEFCGEN":
             defc = parts[1]
-            rfetch = usaspending_adapter.fetch_general_obligations(defc, action.action_date.year - 1, 2025)
+            rfetch = usaspending_adapter.fetch_general_obligations(
+                defc, action.action_date.year - 1, delivery_end_year(action.action_date))
             realized = usaspending_adapter.parse_general_obligation(rfetch.content)
         else:
             defc, realized_kind = parts[1], parts[2]
@@ -1746,7 +1747,7 @@ def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
     if is_general:
         # Start at the fiscal year containing enactment (FY begins Oct 1 of year-1).
         rfetch = usaspending_adapter.fetch_general_obligations(
-            spec.defc, action.action_date.year - 1, 2025)
+            spec.defc, action.action_date.year - 1, delivery_end_year(action.action_date))
         land(session, rfetch)
         realized = usaspending_adapter.parse_general_obligation(rfetch.content)
         target_amount = spec.target_value  # curated appropriation (required for 'general')
@@ -1755,7 +1756,8 @@ def score_target(session: Session, spec: TargetSpec) -> ScoreOutcome:
         # (1) window-stability — the total must not change materially with the query window;
         # (2) commensurability — obligations must not exceed the appropriation (else the DEFC
         # total isn't a clean delivery measure). Fragile cases are rejected, not published.
-        wide = usaspending_adapter.fetch_general_obligations(spec.defc, action.action_date.year - 5, 2025)
+        wide = usaspending_adapter.fetch_general_obligations(
+            spec.defc, action.action_date.year - 5, delivery_end_year(action.action_date))
         land(session, wide)
         realized_wide = usaspending_adapter.parse_general_obligation(wide.content)
         denom = max(realized, realized_wide, 1.0)
@@ -2585,6 +2587,29 @@ def ingest_member_bills(
     return inserted
 
 
+def delivery_end_year(action_date: date) -> int:
+    """Deterministic end year for a target-mode delivery window: enactment year + 4, floored
+    at 2025 (the constant in force when the first delivery EUs were scored, preserving their
+    reproducibility hashes). Pinned to the ACTION date — never the wall clock — so scoring and
+    every future re-run fetch the identical window, while newer laws get windows that extend
+    past the old constant instead of being truncated."""
+    return max(2025, action_date.year + 4)
+
+
+def last_completed_fiscal_year(today: date | None = None) -> int:
+    """The most recent federal fiscal year with complete data (FY N ends Sept 30 of year N).
+    Derived from the date so nightly budget scoring never pins to a stale constant."""
+    t = today or date.today()
+    return t.year if t.month >= 10 else t.year - 1
+
+
+def current_congress(today: date | None = None) -> int:
+    """The sitting Congress, derived from the date (a new Congress convenes in early January
+    of each odd year), so law/bill scoring never pins to a stale constant."""
+    t = today or date.today()
+    return (t.year - 1789) // 2 + 1
+
+
 def _norm_legis_num(legis_num: str) -> str | None:
     """Normalize a Clerk ``legis-num`` ('H R 1', 'H RES 5') to our bill_number ('HR1', 'HRES5').
     Returns None for non-bill votes (QUORUM, MOTION, journal, etc.)."""
@@ -2776,14 +2801,20 @@ def ingest_senate_votes(
 
 
 def refresh_all(
-    session: Session, *, budget_fiscal_year: int = 2024, congress: int = 117,
+    session: Session, *, budget_fiscal_year: int | None = None, congress: int | None = None,
     law_limit: int = 25, eo_limit: int = 15,
 ) -> dict[str, int]:
     """Idempotent full ingestion/scoring pass — the production CRON entrypoint.
 
     Every scorer skips already-scored units, so this can run on a schedule without
     creating duplicates. Returns a per-stage count of evaluation units produced.
+    ``budget_fiscal_year`` / ``congress`` default to the current values derived from the
+    date, so the nightly cron keeps scoring new fiscal years and congresses automatically.
     """
+    if budget_fiscal_year is None:
+        budget_fiscal_year = last_completed_fiscal_year()
+    if congress is None:
+        congress = current_congress()
     counts: dict[str, int] = {}
 
     def _safe_rollback() -> None:
@@ -2866,7 +2897,20 @@ def refresh_all(
         1 for key in ("CARES-DELIVERY", "IIJA-DELIVERY", "UKRAINE-2022-DELIVERY")
         if _isolated(session, lambda key=key: score_target(session, TARGET_SPECS[key]),
                      label=f"curated target {key}")))
-    _stage("laws", lambda: len(batch_score_laws(session, congress, limit=law_limit)))
+    # Enacted-law scoring: the current congress plus the two before it, so newly enacted
+    # laws keep entering the scored layer as congresses roll over. Idempotent + cheap for
+    # fully-scored older congresses (already-scored laws count toward the limit).
+    def _laws() -> int:
+        total = 0
+        for c in (congress, congress - 1, congress - 2):
+            try:
+                total += len(batch_score_laws(session, c, limit=law_limit))
+                _safe_commit(f"laws congress {c}")
+            except Exception as exc:  # noqa: BLE001 - never fatal
+                log.warning("law scoring for congress %s skipped: %s", c, exc)
+                _safe_rollback()
+        return total
+    _stage("laws", _laws)
     _stage("executive_actions", lambda: ingest_executive_actions(session))
     _stage("executive_orders", lambda: len(batch_score_executive_orders(session, limit=eo_limit)))
     _stage("eo_signers_backfilled", lambda: backfill_eo_signers(session))

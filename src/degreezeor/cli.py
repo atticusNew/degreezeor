@@ -346,8 +346,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list").set_defaults(func=cmd_list)
 
     rf = sub.add_parser("refresh", help="idempotent full ingestion/scoring pass (cron entrypoint)")
-    rf.add_argument("--fiscal-year", type=int, default=2024)
-    rf.add_argument("--congress", type=int, default=117)
+    rf.add_argument("--fiscal-year", type=int, default=None,
+                    help="default: last completed fiscal year (derived from today)")
+    rf.add_argument("--congress", type=int, default=None,
+                    help="default: the sitting Congress (derived from today)")
     rf.add_argument("--law-limit", type=int, default=25)
     rf.add_argument("--eo-limit", type=int, default=15)
     rf.set_defaults(func=cmd_refresh)
